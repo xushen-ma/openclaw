@@ -6,6 +6,7 @@ import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
+import { resolveSmartResetReviewConfig } from "../../auto-reply/reply/smart-reset.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -56,24 +57,6 @@ import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import type { GatewayClient, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
 
-const DEFAULT_SMART_RESET_REVIEW_PROMPT =
-  "Review this conversation and save any important information before starting a fresh session.";
-
-function resolveSmartResetReviewConfig(cfg: ReturnType<typeof loadConfig>): {
-  enabled: boolean;
-  prompt: string;
-  wait: boolean;
-} {
-  const smartReset = cfg.session?.smartReset;
-  const enabled = smartReset?.enabled === true;
-  const prompt =
-    typeof smartReset?.prompt === "string" && smartReset.prompt.trim().length > 0
-      ? smartReset.prompt.trim()
-      : DEFAULT_SMART_RESET_REVIEW_PROMPT;
-  const wait = smartReset?.wait === true;
-  return { enabled, prompt, wait };
-}
-
 async function runBeforeResetPluginHook(params: {
   cfg: ReturnType<typeof loadConfig>;
   action: "new" | "reset";
@@ -85,7 +68,8 @@ async function runBeforeResetPluginHook(params: {
     return;
   }
   const smartReset = resolveSmartResetReviewConfig(params.cfg);
-  const sessionFile = params.sessionEntry?.sessionFile;
+  const shouldWaitForHook = smartReset.enabled && smartReset.wait;
+  const sessionFile = shouldWaitForHook ? params.sessionEntry?.sessionFile : undefined;
   const messages: unknown[] = [];
   if (sessionFile) {
     try {
@@ -109,7 +93,7 @@ async function runBeforeResetPluginHook(params: {
   }
 
   const run = async () => {
-    const runMode = smartReset.enabled && smartReset.wait ? "sync" : "async";
+    const runMode = shouldWaitForHook ? "sync" : "async";
     logVerbose(`before_reset: enter (${runMode})`);
     try {
       const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
@@ -133,7 +117,7 @@ async function runBeforeResetPluginHook(params: {
     }
   };
 
-  if (smartReset.enabled && smartReset.wait) {
+  if (shouldWaitForHook) {
     await run();
   } else {
     void run();

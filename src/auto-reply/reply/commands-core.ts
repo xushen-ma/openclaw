@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
@@ -37,35 +38,13 @@ import type {
   HandleCommandsParams,
 } from "./commands-types.js";
 import { routeReply } from "./route-reply.js";
+import { DEFAULT_SMART_RESET_REVIEW_PROMPT, resolveSmartResetReviewConfig } from "./smart-reset.js";
 
 let HANDLERS: CommandHandler[] | null = null;
 
 export type ResetCommandAction = "new" | "reset";
 
-export const DEFAULT_SMART_RESET_REVIEW_PROMPT =
-  "Review this conversation and save any important information before starting a fresh session.";
-
-function resolveSmartResetReviewConfig(cfg: unknown): {
-  enabled: boolean;
-  prompt: string;
-  wait: boolean;
-} {
-  const smartReset = (cfg as { session?: { smartReset?: unknown } } | undefined)?.session
-    ?.smartReset as
-    | {
-        enabled?: unknown;
-        prompt?: unknown;
-        wait?: unknown;
-      }
-    | undefined;
-  const enabled = smartReset?.enabled === true;
-  const prompt =
-    typeof smartReset?.prompt === "string" && smartReset.prompt.trim().length > 0
-      ? smartReset.prompt.trim()
-      : DEFAULT_SMART_RESET_REVIEW_PROMPT;
-  const wait = smartReset?.wait === true;
-  return { enabled, prompt, wait };
-}
+export { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 export async function emitResetCommandHooks(params: {
   action: ResetCommandAction;
@@ -149,7 +128,7 @@ export async function emitResetCommandHooks(params: {
             reviewPrompt: smartReset.enabled ? smartReset.prompt : undefined,
           },
           {
-            agentId: params.sessionKey?.split(":")[0] ?? "main",
+            agentId: resolveAgentIdFromSessionKey(params.sessionKey ?? "") ?? "main",
             sessionKey: params.sessionKey,
             sessionId: prevEntry?.sessionId,
             workspaceDir: params.workspaceDir,
