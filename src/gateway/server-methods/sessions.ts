@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
-import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
@@ -112,6 +112,7 @@ async function runBeforeResetPluginHook(params: {
         }
       }
 
+      const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
       await hookRunner.runBeforeReset(
         {
           sessionFile,
@@ -120,10 +121,10 @@ async function runBeforeResetPluginHook(params: {
           reviewPrompt: smartReset.enabled ? smartReset.prompt : undefined,
         },
         {
-          agentId: resolveAgentIdFromSessionKey(params.sessionKey),
+          agentId,
           sessionKey: params.sessionKey,
           sessionId: params.sessionEntry?.sessionId,
-          workspaceDir: params.cfg.workspaceDir || process.cwd(),
+          workspaceDir: resolveAgentWorkspaceDir(params.cfg, agentId),
         },
       );
     } catch (err: unknown) {

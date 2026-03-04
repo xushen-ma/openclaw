@@ -214,6 +214,7 @@ the workspace is writable. See [Memory](/concepts/memory) and
 - Per-channel overrides (optional): `resetByChannel` overrides the reset policy for a channel (applies to all session types for that channel and takes precedence over `reset`/`resetByType`).
 - Reset triggers: exact `/new` or `/reset` (plus any extras in `resetTriggers`) start a fresh session id and pass the remainder of the message through. `/new <model>` accepts a model alias, `provider/model`, or provider name (fuzzy match) to set the new session model. If `/new` or `/reset` is sent alone, OpenClaw runs a short “hello” greeting turn to confirm the reset.
 - Smart reset (optional): `session.smartReset` can pass a configurable `reviewPrompt` into the `before_reset` plugin hook before reset clears state. Set `wait: true` to block reset completion until the review hook finishes, or `wait: false` to run it in the background.
+- Coexistence with `session-memory`: both features can run together. Smart reset runs at reset-time (`before_reset`), while `session-memory` runs on `/new` command handling; they complement each other rather than conflict.
 - Manual reset: delete specific keys from the store or remove the JSONL transcript; the next message recreates them.
 - Isolated cron jobs always mint a fresh `sessionId` per run (no idle reuse).
 
