@@ -111,6 +111,8 @@ async function runBeforeResetPluginHook(params: {
   }
 
   const run = async () => {
+    const runMode = smartReset.enabled && smartReset.wait ? "sync" : "async";
+    logVerbose(`before_reset: enter (${runMode})`);
     try {
       const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
       await hookRunner.runBeforeReset(
@@ -127,6 +129,7 @@ async function runBeforeResetPluginHook(params: {
           workspaceDir: resolveAgentWorkspaceDir(params.cfg, agentId),
         },
       );
+      logVerbose("before_reset: complete");
     } catch (err: unknown) {
       logVerbose(`before_reset hook failed: ${String(err)}`);
     }
