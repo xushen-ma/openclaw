@@ -31,8 +31,13 @@ const subagentLifecycleHookMocks = vi.hoisted(() => ({
   runSubagentEnded: vi.fn(async () => {}),
 }));
 
+const pluginHookMocks = vi.hoisted(() => ({
+  runBeforeReset: vi.fn(async () => {}),
+}));
+
 const subagentLifecycleHookState = vi.hoisted(() => ({
   hasSubagentEndedHook: true,
+  hasBeforeResetHook: false,
 }));
 
 const threadBindingMocks = vi.hoisted(() => ({
@@ -80,9 +85,17 @@ vi.mock("../plugins/hook-runner-global.js", async (importOriginal) => {
   return {
     ...actual,
     getGlobalHookRunner: vi.fn(() => ({
-      hasHooks: (hookName: string) =>
-        hookName === "subagent_ended" && subagentLifecycleHookState.hasSubagentEndedHook,
+      hasHooks: (hookName: string) => {
+        if (hookName === "subagent_ended") {
+          return subagentLifecycleHookState.hasSubagentEndedHook;
+        }
+        if (hookName === "before_reset") {
+          return subagentLifecycleHookState.hasBeforeResetHook;
+        }
+        return false;
+      },
       runSubagentEnded: subagentLifecycleHookMocks.runSubagentEnded,
+      runBeforeReset: pluginHookMocks.runBeforeReset,
     })),
   };
 });
@@ -195,7 +208,9 @@ describe("gateway server sessions", () => {
     sessionCleanupMocks.stopSubagentsForRequester.mockClear();
     sessionHookMocks.triggerInternalHook.mockClear();
     subagentLifecycleHookMocks.runSubagentEnded.mockClear();
+    pluginHookMocks.runBeforeReset.mockClear();
     subagentLifecycleHookState.hasSubagentEndedHook = true;
+    subagentLifecycleHookState.hasBeforeResetHook = false;
     threadBindingMocks.unbindThreadBindingsBySessionKey.mockClear();
     acpRuntimeMocks.cancel.mockClear();
     acpRuntimeMocks.close.mockClear();
@@ -1137,6 +1152,7 @@ describe("gateway server sessions", () => {
   test("sessions.reset returns unavailable when active run does not stop", async () => {
     const { dir, storePath } = await seedActiveMainSession();
 
+    subagentLifecycleHookState.hasBeforeResetHook = true;
     embeddedRunMock.activeIds.add("sess-main");
     embeddedRunMock.waitResults.set("sess-main", false);
 
@@ -1148,6 +1164,7 @@ describe("gateway server sessions", () => {
     expect(reset.ok).toBe(false);
     expect(reset.error?.code).toBe("UNAVAILABLE");
     expect(reset.error?.message ?? "").toMatch(/still active/i);
+    expect(pluginHookMocks.runBeforeReset).not.toHaveBeenCalled();
     expectActiveRunCleanup(
       "agent:main:main",
       ["main", "agent:main:main", "sess-main"],
