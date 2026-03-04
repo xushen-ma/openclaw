@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { SessionEntry } from "../../config/sessions.js";
 
 const mocks = vi.hoisted(() => {
   const hookEvent = { messages: [] as string[] };
@@ -14,19 +15,19 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("node:fs/promises", () => ({
   default: {
-    readFile: (...args: unknown[]) => mocks.readFile(...args),
+    readFile: mocks.readFile,
   },
 }));
 
 vi.mock("../../hooks/internal-hooks.js", () => ({
-  createInternalHookEvent: (...args: unknown[]) => mocks.createInternalHookEvent(...args),
-  triggerInternalHook: (...args: unknown[]) => mocks.triggerInternalHook(...args),
+  createInternalHookEvent: mocks.createInternalHookEvent,
+  triggerInternalHook: mocks.triggerInternalHook,
 }));
 
 vi.mock("../../plugins/hook-runner-global.js", () => ({
   getGlobalHookRunner: () => ({
-    hasHooks: (...args: unknown[]) => mocks.hasHooks(...args),
-    runBeforeReset: (...args: unknown[]) => mocks.runBeforeReset(...args),
+    hasHooks: mocks.hasHooks,
+    runBeforeReset: mocks.runBeforeReset,
   }),
 }));
 
@@ -34,9 +35,24 @@ vi.mock("../../globals.js", () => ({
   logVerbose: vi.fn(),
 }));
 
-const { emitResetCommandHooks, DEFAULT_SMART_RESET_REVIEW_PROMPT } = await import("./commands-core.js");
+const { emitResetCommandHooks, DEFAULT_SMART_RESET_REVIEW_PROMPT } =
+  await import("./commands-core.js");
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 function makeParams(cfg: Record<string, unknown>) {
+  const entry: SessionEntry = {
+    sessionId: "s1",
+    updatedAt: Date.now(),
+  };
   return {
     action: "new" as const,
     ctx: {},
@@ -50,16 +66,16 @@ function makeParams(cfg: Record<string, unknown>) {
       resetHookTriggered: false,
     },
     sessionKey: "agent:main:discord:direct:u1",
-    sessionEntry: {},
-    previousSessionEntry: {},
+    sessionEntry: entry,
+    previousSessionEntry: entry,
     workspaceDir: "/tmp/workspace",
   };
 }
 
 describe("emitResetCommandHooks smart reset", () => {
   it("keeps default behavior unchanged when smart reset is disabled", async () => {
-    const deferred = Promise.withResolvers<void>();
-    mocks.runBeforeReset.mockImplementationOnce(() => deferred.promise);
+    const waitForHook = deferred<undefined>();
+    mocks.runBeforeReset.mockImplementationOnce(() => waitForHook.promise);
 
     await emitResetCommandHooks(makeParams({ session: {} }));
 
@@ -67,7 +83,7 @@ describe("emitResetCommandHooks smart reset", () => {
       expect.objectContaining({ reviewPrompt: undefined }),
       expect.anything(),
     );
-    deferred.resolve();
+    waitForHook.resolve(undefined);
   });
 
   it("invokes smart mode with default prompt when enabled", async () => {
@@ -92,9 +108,9 @@ describe("emitResetCommandHooks smart reset", () => {
 
   it("wait=true blocks until review completion", async () => {
     let finished = false;
-    const deferred = Promise.withResolvers<void>();
+    const waitForHook = deferred<undefined>();
     mocks.runBeforeReset.mockImplementationOnce(async () => {
-      await deferred.promise;
+      await waitForHook.promise;
       finished = true;
     });
 
@@ -104,16 +120,16 @@ describe("emitResetCommandHooks smart reset", () => {
 
     await Promise.resolve();
     expect(finished).toBe(false);
-    deferred.resolve();
+    waitForHook.resolve(undefined);
     await run;
     expect(finished).toBe(true);
   });
 
   it("wait=false is fire-and-forget", async () => {
-    const deferred = Promise.withResolvers<void>();
+    const waitForHook = deferred<undefined>();
     let finished = false;
     mocks.runBeforeReset.mockImplementationOnce(async () => {
-      await deferred.promise;
+      await waitForHook.promise;
       finished = true;
     });
 
@@ -122,7 +138,7 @@ describe("emitResetCommandHooks smart reset", () => {
     );
 
     expect(finished).toBe(false);
-    deferred.resolve();
+    waitForHook.resolve(undefined);
     await Promise.resolve();
   });
 });
