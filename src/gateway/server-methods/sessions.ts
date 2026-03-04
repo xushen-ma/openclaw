@@ -571,12 +571,6 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       },
     );
     await triggerInternalHook(hookEvent);
-    await runBeforeResetPluginHook({
-      cfg,
-      action: commandReason,
-      sessionKey: target.canonicalKey ?? key,
-      sessionEntry: entry,
-    });
     const mutationCleanupError = await cleanupSessionBeforeMutation({
       cfg,
       key,
@@ -590,6 +584,12 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, mutationCleanupError);
       return;
     }
+    await runBeforeResetPluginHook({
+      cfg,
+      action: commandReason,
+      sessionKey: target.canonicalKey ?? key,
+      sessionEntry: entry,
+    });
     let oldSessionId: string | undefined;
     let oldSessionFile: string | undefined;
     const next = await updateSessionStore(storePath, (store) => {
