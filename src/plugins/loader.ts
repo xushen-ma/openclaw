@@ -199,6 +199,11 @@ const pluginSdkScopedAliasEntries = [
     srcFile: "keyed-async-queue.ts",
     distFile: "keyed-async-queue.js",
   },
+  {
+    subpath: "smart-reset-memory",
+    srcFile: "smart-reset-memory.ts",
+    distFile: "smart-reset-memory.js",
+  },
 ] as const;
 
 const resolvePluginSdkScopedAliasMap = (): Record<string, string> => {
