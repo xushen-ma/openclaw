@@ -1,8 +1,5 @@
-import fs from "node:fs/promises";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
-import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
@@ -37,8 +34,9 @@ import type {
   CommandHandlerResult,
   HandleCommandsParams,
 } from "./commands-types.js";
+import { runBeforeResetPluginHook } from "./reset-hooks.js";
 import { routeReply } from "./route-reply.js";
-import { DEFAULT_SMART_RESET_REVIEW_PROMPT, resolveSmartResetReviewConfig } from "./smart-reset.js";
+import { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 let HANDLERS: CommandHandler[] | null = null;
 
@@ -92,60 +90,14 @@ export async function emitResetCommandHooks(params: {
   }
 
   // Fire before_reset plugin hook — extract memories before session history is lost
-  const hookRunner = getGlobalHookRunner();
-  if (hookRunner?.hasHooks("before_reset")) {
-    const prevEntry = params.previousSessionEntry;
-    const sessionFile = prevEntry?.sessionFile;
-    const smartReset = resolveSmartResetReviewConfig(params.cfg);
-    const runBeforeReset = async () => {
-      const runMode = smartReset.enabled && smartReset.wait ? "sync" : "async";
-      logVerbose(`before_reset: enter (${runMode})`);
-      try {
-        const messages: unknown[] = [];
-        if (sessionFile) {
-          const content = await fs.readFile(sessionFile, "utf-8");
-          for (const line of content.split("\n")) {
-            if (!line.trim()) {
-              continue;
-            }
-            try {
-              const entry = JSON.parse(line);
-              if (entry.type === "message" && entry.message) {
-                messages.push(entry.message);
-              }
-            } catch {
-              // skip malformed lines
-            }
-          }
-        } else {
-          logVerbose("before_reset: no session file available, firing hook with empty messages");
-        }
-        await hookRunner.runBeforeReset(
-          {
-            sessionFile,
-            messages,
-            reason: params.action,
-            reviewPrompt: smartReset.enabled ? smartReset.prompt : undefined,
-          },
-          {
-            agentId: resolveAgentIdFromSessionKey(params.sessionKey ?? "") ?? "main",
-            sessionKey: params.sessionKey,
-            sessionId: prevEntry?.sessionId,
-            workspaceDir: params.workspaceDir,
-          },
-        );
-        logVerbose("before_reset: complete");
-      } catch (err: unknown) {
-        logVerbose(`before_reset hook failed: ${String(err)}`);
-      }
-    };
-
-    if (smartReset.enabled && smartReset.wait) {
-      await runBeforeReset();
-    } else {
-      void runBeforeReset();
-    }
-  }
+  await runBeforeResetPluginHook({
+    cfg: params.cfg,
+    reason: params.action,
+    sessionKey: params.sessionKey ?? "",
+    sessionEntry: params.sessionEntry,
+    previousSessionEntry: params.previousSessionEntry,
+    workspaceDir: params.workspaceDir,
+  });
 }
 
 export async function handleCommands(params: HandleCommandsParams): Promise<CommandHandlerResult> {

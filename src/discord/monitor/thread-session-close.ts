@@ -1,5 +1,7 @@
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { resolveStorePath, updateSessionStore } from "../../config/sessions.js";
+import { loadSessionStore, resolveStorePath, updateSessionStore } from "../../config/sessions.js";
 
 /**
  * Marks every session entry in the store whose key contains {@link threadId}
@@ -40,8 +42,22 @@ export async function closeDiscordThreadSessions(params: {
   // how other Discord subsystems resolve their per-account sessions stores.
   const storePath = resolveStorePath(cfg.session?.store, { agentId: accountId });
 
-  let resetCount = 0;
+  const currentStore = loadSessionStore(storePath);
+  const sessionsToClose = Object.entries(currentStore).filter(
+    ([key, entry]) => Boolean(entry) && sessionKeyContainsThreadId(key),
+  );
 
+  for (const [key, entry] of sessionsToClose) {
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: "thread-archived",
+      sessionKey: key,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, accountId),
+    });
+  }
+
+  let resetCount = 0;
   await updateSessionStore(storePath, (store) => {
     for (const [key, entry] of Object.entries(store)) {
       if (!entry || !sessionKeyContainsThreadId(key)) {

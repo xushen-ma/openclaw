@@ -6,7 +6,7 @@ import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
-import { resolveSmartResetReviewConfig } from "../../auto-reply/reply/smart-reset.js";
+import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -18,12 +18,10 @@ import {
 import { unbindThreadBindingsBySessionKey } from "../../discord/monitor/thread-bindings.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import {
   isSubagentSessionKey,
   normalizeAgentId,
   parseAgentSessionKey,
-  resolveAgentIdFromSessionKey,
 } from "../../routing/session-key.js";
 import { GATEWAY_CLIENT_IDS } from "../protocol/client-info.js";
 import {
@@ -57,73 +55,6 @@ import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 import type { GatewayClient, GatewayRequestHandlers, RespondFn } from "./types.js";
 import { assertValidParams } from "./validation.js";
-
-async function runBeforeResetPluginHook(params: {
-  cfg: ReturnType<typeof loadConfig>;
-  action: "new" | "reset";
-  sessionKey: string;
-  sessionEntry?: SessionEntry;
-}): Promise<void> {
-  const hookRunner = getGlobalHookRunner();
-  if (!hookRunner?.hasHooks("before_reset")) {
-    return;
-  }
-  const smartReset = resolveSmartResetReviewConfig(params.cfg);
-  const shouldWaitForHook = smartReset.enabled && smartReset.wait;
-  const sessionFile = shouldWaitForHook ? params.sessionEntry?.sessionFile : undefined;
-  const messages: unknown[] = [];
-  if (sessionFile) {
-    try {
-      const content = await fs.promises.readFile(sessionFile, "utf-8");
-      for (const line of content.split("\n")) {
-        if (!line.trim()) {
-          continue;
-        }
-        try {
-          const entry = JSON.parse(line);
-          if (entry.type === "message" && entry.message) {
-            messages.push(entry.message);
-          }
-        } catch {
-          // skip malformed lines
-        }
-      }
-    } catch (err) {
-      logVerbose(`before_reset: failed to read session file: ${String(err)}`);
-    }
-  }
-
-  const run = async () => {
-    const runMode = shouldWaitForHook ? "sync" : "async";
-    logVerbose(`before_reset: enter (${runMode})`);
-    try {
-      const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
-      await hookRunner.runBeforeReset(
-        {
-          sessionFile,
-          messages,
-          reason: params.action,
-          reviewPrompt: smartReset.enabled ? smartReset.prompt : undefined,
-        },
-        {
-          agentId,
-          sessionKey: params.sessionKey,
-          sessionId: params.sessionEntry?.sessionId,
-          workspaceDir: resolveAgentWorkspaceDir(params.cfg, agentId),
-        },
-      );
-      logVerbose("before_reset: complete");
-    } catch (err: unknown) {
-      logVerbose(`before_reset hook failed: ${String(err)}`);
-    }
-  };
-
-  if (shouldWaitForHook) {
-    await run();
-  } else {
-    void run();
-  }
-}
 
 function requireSessionKey(key: unknown, respond: RespondFn): string | null {
   const raw =
@@ -555,11 +486,13 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, mutationCleanupError);
       return;
     }
+    const effectiveSessionKey = target.canonicalKey ?? key;
     await runBeforeResetPluginHook({
       cfg,
-      action: commandReason,
-      sessionKey: target.canonicalKey ?? key,
+      reason: commandReason,
+      sessionKey: effectiveSessionKey,
       sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
     });
     let oldSessionId: string | undefined;
     let oldSessionFile: string | undefined;
