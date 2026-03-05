@@ -31,6 +31,7 @@ import {
   type ResolvedMatrixAccount,
 } from "./matrix/accounts.js";
 import { resolveMatrixAuth } from "./matrix/client.js";
+import { ensureMatrixSdkInstalled } from "./matrix/deps.js";
 import { normalizeMatrixAllowList, normalizeMatrixUserId } from "./matrix/monitor/allowlist.js";
 import { probeMatrix } from "./matrix/probe.js";
 import { sendMessageMatrix } from "./matrix/send.js";
@@ -429,6 +430,8 @@ export const matrixPlugin: ChannelPlugin<ResolvedMatrixAccount> = {
   },
   gateway: {
     startAccount: async (ctx) => {
+      await ensureMatrixSdkInstalled({ runtime: ctx.runtime });
+
       const account = ctx.account;
       ctx.setStatus({
         accountId: account.accountId,
