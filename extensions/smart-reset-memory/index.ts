@@ -1,139 +1,96 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { resolveOpenClawAgentDir } from "../../src/agents/agent-paths.js";
-import { runEmbeddedPiAgent } from "../../src/agents/pi-embedded-runner.js";
-import { resolveDefaultModelRef } from "../../src/agents/tools/model-config.helpers.js";
-import { resolvePreferredOpenClawTmpDir } from "../../src/infra/tmp-openclaw-dir.js";
+import { randomUUID } from "node:crypto";
+import { dispatchInboundMessage } from "../../src/auto-reply/dispatch.js";
+import { createReplyDispatcher } from "../../src/auto-reply/reply/reply-dispatcher.js";
+import { resolveSmartResetReviewConfig } from "../../src/auto-reply/reply/smart-reset.js";
+import type { MsgContext } from "../../src/auto-reply/templating.js";
 import type { OpenClawPluginApi } from "../../src/plugins/types.js";
+import { INTERNAL_MESSAGE_CHANNEL } from "../../src/utils/message-channel.js";
 
-type HookMessage = {
-  role?: unknown;
-  content?: unknown;
-};
-
-function toText(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
+function buildReviewContext(params: {
+  reviewPrompt: string;
+  sessionKey: string;
+  runId: string;
+}): MsgContext {
+  return {
+    Body: params.reviewPrompt,
+    BodyForAgent: params.reviewPrompt,
+    BodyForCommands: params.reviewPrompt,
+    RawBody: params.reviewPrompt,
+    CommandBody: params.reviewPrompt,
+    SessionKey: params.sessionKey,
+    Provider: INTERNAL_MESSAGE_CHANNEL,
+    Surface: INTERNAL_MESSAGE_CHANNEL,
+    OriginatingChannel: INTERNAL_MESSAGE_CHANNEL,
+    ChatType: "direct",
+    CommandAuthorized: true,
+    MessageSid: params.runId,
+    SenderId: "smart-reset-memory",
+    SenderName: "Smart Reset Memory",
+    SenderUsername: "smart-reset-memory",
+  };
 }
 
-function formatMessage(message: unknown, index: number): string {
-  const msg = (message ?? {}) as HookMessage;
-  const role = typeof msg.role === "string" && msg.role.trim() ? msg.role.trim() : "unknown";
-  return `[${index + 1}] ${role}:\n${toText(msg.content)}`;
-}
+async function runFinalReviewTurn(params: {
+  api: OpenClawPluginApi;
+  reviewPrompt: string;
+  sessionKey: string;
+}): Promise<void> {
+  const runId = `smart-reset-review-${randomUUID()}`;
+  const ctx = buildReviewContext({
+    reviewPrompt: params.reviewPrompt,
+    sessionKey: params.sessionKey,
+    runId,
+  });
 
-function collectText(payloads: Array<{ text?: string; isError?: boolean }> | undefined): string {
-  return (payloads ?? [])
-    .filter((entry) => !entry.isError && typeof entry.text === "string" && entry.text.trim())
-    .map((entry) => entry.text?.trim() ?? "")
-    .join("\n")
-    .trim();
-}
+  const dispatcher = createReplyDispatcher({
+    deliver: async () => {
+      // Intentionally no-op: this review turn is for autonomous agent/tool actions,
+      // not for sending a user-facing reply before reset.
+    },
+  });
 
-function localDateString(now = new Date()): string {
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function localTimeString(now = new Date()): string {
-  const hour = String(now.getHours()).padStart(2, "0");
-  const minute = String(now.getMinutes()).padStart(2, "0");
-  return `${hour}:${minute}`;
-}
-
-async function appendMemoryEntry(params: {
-  workspaceDir: string;
-  reason?: string;
-  review: string;
-}): Promise<string> {
-  const date = localDateString();
-  const memoryDir = path.join(params.workspaceDir, "memory");
-  const memoryFile = path.join(memoryDir, `${date}.md`);
-  await fs.mkdir(memoryDir, { recursive: true });
-
-  const lines = [
-    `## Smart Reset Review (${localTimeString()})`,
-    params.reason ? `- Trigger: /${params.reason}` : "- Trigger: smart reset",
-    "",
-    params.review.trim(),
-    "",
-  ];
-
-  await fs.appendFile(memoryFile, `${lines.join("\n")}\n`, "utf8");
-  return memoryFile;
+  await dispatchInboundMessage({
+    ctx,
+    cfg: params.api.config,
+    dispatcher,
+    replyOptions: {
+      runId,
+      typingPolicy: "system_event",
+      suppressTyping: true,
+      suppressToolErrorWarnings: true,
+    },
+  });
 }
 
 export default function register(api: OpenClawPluginApi) {
   api.on("before_reset", async (event, ctx) => {
-    if (!event.reviewPrompt?.trim()) {
+    const reviewPrompt = event.reviewPrompt?.trim();
+    if (!reviewPrompt) {
       return;
     }
-    if (!ctx.workspaceDir?.trim()) {
-      api.logger.warn("smart-reset-memory: missing workspaceDir, skipping");
+    const sessionKey = ctx.sessionKey?.trim();
+    if (!sessionKey) {
+      api.logger.warn("smart-reset-memory: missing sessionKey, skipping");
       return;
     }
 
-    try {
-      const defaultModel = resolveDefaultModelRef(api.config);
-      const transcript = (event.messages ?? [])
-        .map((msg, idx) => formatMessage(msg, idx))
-        .join("\n\n");
-      const prompt = [
-        event.reviewPrompt.trim(),
-        "",
-        "Output requirements:",
-        "- Write concise markdown suitable for appending to a daily memory journal.",
-        "- Preserve key decisions, TODOs, commitments, preferences, and open questions.",
-        "- Avoid fluff. Include concrete details that help future sessions.",
-        "",
-        "Conversation transcript:",
-        transcript || "(no messages captured)",
-      ].join("\n");
-
-      const tmpDir = await fs.mkdtemp(
-        path.join(resolvePreferredOpenClawTmpDir(), "openclaw-smart-reset-"),
-      );
+    const smartReset = resolveSmartResetReviewConfig(api.config);
+    const run = async () => {
       try {
-        const runId = `smart-reset-${Date.now()}`;
-        const runResult = await runEmbeddedPiAgent({
-          sessionId: runId,
-          sessionFile: path.join(tmpDir, "session.json"),
-          workspaceDir: ctx.workspaceDir,
-          agentDir: resolveOpenClawAgentDir(),
-          config: api.config,
-          prompt,
-          timeoutMs: 60_000,
-          runId,
-          provider: defaultModel.provider,
-          model: defaultModel.model,
-          disableTools: true,
+        await runFinalReviewTurn({
+          api,
+          reviewPrompt,
+          sessionKey,
         });
-
-        const review = collectText(runResult.payloads);
-        if (!review) {
-          api.logger.warn("smart-reset-memory: LLM returned empty review, skipping write");
-          return;
-        }
-
-        const memoryFile = await appendMemoryEntry({
-          workspaceDir: ctx.workspaceDir,
-          reason: event.reason,
-          review,
-        });
-        api.logger.info(`smart-reset-memory: appended review to ${memoryFile}`);
-      } finally {
-        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
+      } catch (error) {
+        api.logger.warn(`smart-reset-memory: before_reset final turn failed (${String(error)})`);
       }
-    } catch (error) {
-      api.logger.warn(`smart-reset-memory: before_reset failed (${String(error)})`);
+    };
+
+    if (smartReset.wait) {
+      await run();
+    } else {
+      void run();
     }
   });
 }
