@@ -1,0 +1,12 @@
+{
+  "name": "@openclaw/smart-reset-memory",
+  "version": "2026.3.5",
+  "private": true,
+  "description": "OpenClaw smart-reset memory writer plugin",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

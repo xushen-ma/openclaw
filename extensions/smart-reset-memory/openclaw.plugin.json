@@ -1,0 +1,10 @@
+{
+  "id": "smart-reset-memory",
+  "name": "Smart Reset Memory",
+  "description": "Handles before_reset by reviewing the session with the LLM and appending markdown notes to memory/YYYY-MM-DD.md.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
