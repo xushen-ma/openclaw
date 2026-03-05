@@ -624,6 +624,7 @@ export { detectMime, extensionForMime, getFileExtension } from "../media/mime.js
 export { extractOriginalFilename } from "../media/store.js";
 export { listSkillCommandsForAgents } from "../auto-reply/skill-commands.js";
 export type { SkillCommandSpec } from "../agents/skills.js";
+export * from "./smart-reset-memory.js";
 
 // Channel: Discord
 export {
