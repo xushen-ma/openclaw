@@ -6,6 +6,24 @@ import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSmartResetReviewConfig } from "./smart-reset.js";
 
+const BEFORE_RESET_DEDUP_WINDOW_MS = 30_000;
+const beforeResetRunAtByKey = new Map<string, number>();
+
+const shouldSkipBeforeResetHook = (dedupeKey: string): boolean => {
+  const now = Date.now();
+  for (const [key, ts] of beforeResetRunAtByKey.entries()) {
+    if (now - ts > BEFORE_RESET_DEDUP_WINDOW_MS) {
+      beforeResetRunAtByKey.delete(key);
+    }
+  }
+  const lastRunAt = beforeResetRunAtByKey.get(dedupeKey);
+  if (typeof lastRunAt === "number" && now - lastRunAt <= BEFORE_RESET_DEDUP_WINDOW_MS) {
+    return true;
+  }
+  beforeResetRunAtByKey.set(dedupeKey, now);
+  return false;
+};
+
 export async function runBeforeResetPluginHook(params: {
   cfg: OpenClawConfig;
   reason: "new" | "reset" | "stale" | "expiry" | "thread-archived" | (string & {});
@@ -13,9 +31,15 @@ export async function runBeforeResetPluginHook(params: {
   sessionEntry?: SessionEntry;
   previousSessionEntry?: SessionEntry;
   workspaceDir: string;
+  dedupeKey?: string;
 }): Promise<void> {
   const hookRunner = getGlobalHookRunner();
   if (!hookRunner?.hasHooks("before_reset")) {
+    return;
+  }
+
+  if (params.dedupeKey && shouldSkipBeforeResetHook(params.dedupeKey)) {
+    logVerbose(`before_reset: dedup skip (session=${params.sessionKey}, reason=${params.reason})`);
     return;
   }
 

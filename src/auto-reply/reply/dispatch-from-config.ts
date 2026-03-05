@@ -355,6 +355,22 @@ export async function dispatchReplyFromConfig(params: {
       return { queuedFinal: false, counts };
     }
 
+    const resetAction = resolveResetActionFromContext(ctx);
+    if (resetAction && ctx.CommandSource === "native" && sessionStoreEntry.sessionKey) {
+      const agentId = resolveSessionAgentId({
+        sessionKey: sessionStoreEntry.sessionKey,
+        config: cfg,
+      });
+      await runBeforeResetPluginHook({
+        cfg,
+        reason: resetAction,
+        sessionKey: sessionStoreEntry.sessionKey,
+        sessionEntry: sessionStoreEntry.entry,
+        workspaceDir: resolveAgentWorkspaceDir(cfg, agentId),
+        dedupeKey: `dispatch-reset:${sessionStoreEntry.sessionKey.toLowerCase()}:${resetAction}:${sessionStoreEntry.entry?.sessionId ?? "none"}`,
+      });
+    }
+
     const shouldSendToolSummaries = ctx.ChatType !== "group" && ctx.CommandSource !== "native";
     const acpDispatch = await tryDispatchAcpReply({
       ctx,
@@ -374,20 +390,6 @@ export async function dispatchReplyFromConfig(params: {
       markIdle,
     });
     if (acpDispatch) {
-      const resetAction = resolveResetActionFromContext(ctx);
-      if (resetAction && ctx.CommandSource === "native" && sessionStoreEntry.sessionKey) {
-        const agentId = resolveSessionAgentId({
-          sessionKey: sessionStoreEntry.sessionKey,
-          config: cfg,
-        });
-        await runBeforeResetPluginHook({
-          cfg,
-          reason: resetAction,
-          sessionKey: sessionStoreEntry.sessionKey,
-          sessionEntry: sessionStoreEntry.entry,
-          workspaceDir: resolveAgentWorkspaceDir(cfg, agentId),
-        });
-      }
       return acpDispatch;
     }
 

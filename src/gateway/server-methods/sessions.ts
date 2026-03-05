@@ -473,6 +473,16 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       },
     );
     await triggerInternalHook(hookEvent);
+    const effectiveSessionKey = target.canonicalKey ?? key;
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: commandReason,
+      sessionKey: effectiveSessionKey,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
+      dedupeKey: `dispatch-reset:${effectiveSessionKey.toLowerCase()}:${commandReason}:${entry?.sessionId ?? "none"}`,
+    });
+
     const mutationCleanupError = await cleanupSessionBeforeMutation({
       cfg,
       key,
@@ -486,14 +496,6 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, mutationCleanupError);
       return;
     }
-    const effectiveSessionKey = target.canonicalKey ?? key;
-    await runBeforeResetPluginHook({
-      cfg,
-      reason: commandReason,
-      sessionKey: effectiveSessionKey,
-      sessionEntry: entry,
-      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
-    });
     let oldSessionId: string | undefined;
     let oldSessionFile: string | undefined;
     const next = await updateSessionStore(storePath, (store) => {
