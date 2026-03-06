@@ -450,14 +450,30 @@ export async function restartLaunchAgent({
   const domain = resolveGuiDomain();
   const label = resolveLaunchAgentLabel({ env: serviceEnv });
   const plistPath = resolveLaunchAgentPlistPath(serviceEnv);
+  const serviceId = `${domain}/${label}`;
 
-  const runtime = await execLaunchctl(["print", `${domain}/${label}`]);
+  const fastRestart = await execLaunchctl(["kickstart", "-k", serviceId]);
+  if (fastRestart.code === 0) {
+    const health = await execLaunchctl(["print", serviceId]);
+    if (health.code === 0) {
+      try {
+        stdout.write(`${formatLine("Restarted LaunchAgent", serviceId)}\n`);
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException)?.code !== "EPIPE") {
+          throw err;
+        }
+      }
+      return;
+    }
+  }
+
+  const runtime = await execLaunchctl(["print", serviceId]);
   const previousPid =
     runtime.code === 0
       ? parseLaunchctlPrint(runtime.stdout || runtime.stderr || "").pid
       : undefined;
 
-  const stop = await execLaunchctl(["bootout", `${domain}/${label}`]);
+  const stop = await execLaunchctl(["bootout", serviceId]);
   if (stop.code !== 0 && !isLaunchctlNotLoaded(stop)) {
     throw new Error(`launchctl bootout failed: ${stop.stderr || stop.stdout}`.trim());
   }
@@ -482,12 +498,12 @@ export async function restartLaunchAgent({
     throw new Error(`launchctl bootstrap failed: ${detail}`);
   }
 
-  const start = await execLaunchctl(["kickstart", "-k", `${domain}/${label}`]);
+  const start = await execLaunchctl(["kickstart", "-k", serviceId]);
   if (start.code !== 0) {
     throw new Error(`launchctl kickstart failed: ${start.stderr || start.stdout}`.trim());
   }
   try {
-    stdout.write(`${formatLine("Restarted LaunchAgent", `${domain}/${label}`)}\n`);
+    stdout.write(`${formatLine("Restarted LaunchAgent", serviceId)}\n`);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException)?.code !== "EPIPE") {
       throw err;
