@@ -3,7 +3,7 @@ type IdleAwareAgent = {
 };
 
 type ToolResultFlushManager = {
-  flushPendingToolResults?: (() => void) | undefined;
+  flushPendingToolResults?: (() => { insertedSyntheticCount: number }) | undefined;
   clearPendingToolResults?: (() => void) | undefined;
 };
 
@@ -45,14 +45,18 @@ export async function flushPendingToolResultsAfterIdle(opts: {
   sessionManager: ToolResultFlushManager | null | undefined;
   timeoutMs?: number;
   clearPendingOnTimeout?: boolean;
-}): Promise<void> {
+}): Promise<{ insertedSyntheticCount: number; timedOut: boolean }> {
   const timedOut = await waitForAgentIdleBestEffort(
     opts.agent,
     opts.timeoutMs ?? DEFAULT_WAIT_FOR_IDLE_TIMEOUT_MS,
   );
   if (timedOut && opts.clearPendingOnTimeout && opts.sessionManager?.clearPendingToolResults) {
     opts.sessionManager.clearPendingToolResults();
-    return;
+    return { insertedSyntheticCount: 0, timedOut: true };
   }
-  opts.sessionManager?.flushPendingToolResults?.();
+  const flushResult = opts.sessionManager?.flushPendingToolResults?.();
+  return {
+    insertedSyntheticCount: flushResult?.insertedSyntheticCount ?? 0,
+    timedOut: false,
+  };
 }

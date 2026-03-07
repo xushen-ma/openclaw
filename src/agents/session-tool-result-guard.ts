@@ -103,7 +103,7 @@ export function installSessionToolResultGuard(
     ) => PluginHookBeforeMessageWriteResult | undefined;
   },
 ): {
-  flushPendingToolResults: () => void;
+  flushPendingToolResults: () => { insertedSyntheticCount: number };
   clearPendingToolResults: () => void;
   getPendingIds: () => string[];
 } {
@@ -144,8 +144,9 @@ export function installSessionToolResultGuard(
   };
 
   const flushPendingToolResults = () => {
+    let insertedSyntheticCount = 0;
     if (pendingState.size() === 0) {
-      return;
+      return { insertedSyntheticCount };
     }
     if (allowSyntheticToolResults) {
       for (const [id, name] of pendingState.entries()) {
@@ -159,10 +160,12 @@ export function installSessionToolResultGuard(
         );
         if (flushed) {
           originalAppend(flushed as never);
+          insertedSyntheticCount += 1;
         }
       }
     }
     pendingState.clear();
+    return { insertedSyntheticCount };
   };
 
   const clearPendingToolResults = () => {

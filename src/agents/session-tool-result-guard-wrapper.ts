@@ -8,7 +8,7 @@ import { installSessionToolResultGuard } from "./session-tool-result-guard.js";
 
 export type GuardedSessionManager = SessionManager & {
   /** Flush any synthetic tool results for pending tool calls. Idempotent. */
-  flushPendingToolResults?: () => void;
+  flushPendingToolResults?: () => { insertedSyntheticCount: number };
   /** Clear pending tool calls without persisting synthetic tool results. Idempotent. */
   clearPendingToolResults?: () => void;
 };
