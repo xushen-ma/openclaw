@@ -1,7 +1,8 @@
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { loadSessionStore, resolveStorePath, updateSessionStore } from "../../config/sessions.js";
+import type { SessionEntry } from "../../config/sessions.js";
+import { resolveStorePath, updateSessionStore } from "../../config/sessions.js";
 
 /**
  * Marks every session entry in the store whose key contains {@link threadId}
@@ -42,10 +43,22 @@ export async function closeDiscordThreadSessions(params: {
   // how other Discord subsystems resolve their per-account sessions stores.
   const storePath = resolveStorePath(cfg.session?.store, { agentId: accountId });
 
-  const currentStore = loadSessionStore(storePath);
-  const sessionsToClose = Object.entries(currentStore).filter(
-    ([key, entry]) => Boolean(entry) && sessionKeyContainsThreadId(key),
-  );
+  const sessionsToClose: Array<[string, SessionEntry]> = [];
+
+  let resetCount = 0;
+  await updateSessionStore(storePath, (store) => {
+    for (const [key, entry] of Object.entries(store)) {
+      if (!entry || !sessionKeyContainsThreadId(key)) {
+        continue;
+      }
+      sessionsToClose.push([key, { ...entry }]);
+      // Setting updatedAt to 0 signals that this session is stale.
+      // evaluateSessionFreshness will create a new session on the next message.
+      entry.updatedAt = 0;
+      resetCount += 1;
+    }
+    return resetCount;
+  });
 
   for (const [key, entry] of sessionsToClose) {
     await runBeforeResetPluginHook({
@@ -56,20 +69,6 @@ export async function closeDiscordThreadSessions(params: {
       workspaceDir: resolveAgentWorkspaceDir(cfg, accountId),
     });
   }
-
-  let resetCount = 0;
-  await updateSessionStore(storePath, (store) => {
-    for (const [key, entry] of Object.entries(store)) {
-      if (!entry || !sessionKeyContainsThreadId(key)) {
-        continue;
-      }
-      // Setting updatedAt to 0 signals that this session is stale.
-      // evaluateSessionFreshness will create a new session on the next message.
-      entry.updatedAt = 0;
-      resetCount += 1;
-    }
-    return resetCount;
-  });
 
   return resetCount;
 }

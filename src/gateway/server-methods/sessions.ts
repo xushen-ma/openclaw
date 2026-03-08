@@ -7,6 +7,7 @@ import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-emb
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
+import { closeTrackedBrowserTabsForSessions } from "../../browser/session-tab-registry.js";
 import { loadConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -188,6 +189,19 @@ async function ensureSessionRuntimeCleanup(params: {
   target: ReturnType<typeof resolveGatewaySessionStoreTarget>;
   sessionId?: string;
 }) {
+  const closeTrackedBrowserTabs = async () => {
+    const closeKeys = new Set<string>([
+      params.key,
+      params.target.canonicalKey,
+      ...params.target.storeKeys,
+      params.sessionId ?? "",
+    ]);
+    return await closeTrackedBrowserTabsForSessions({
+      sessionKeys: [...closeKeys],
+      onWarn: (message) => logVerbose(message),
+    });
+  };
+
   const queueKeys = new Set<string>(params.target.storeKeys);
   queueKeys.add(params.target.canonicalKey);
   if (params.sessionId) {
@@ -197,12 +211,14 @@ async function ensureSessionRuntimeCleanup(params: {
   stopSubagentsForRequester({ cfg: params.cfg, requesterSessionKey: params.target.canonicalKey });
   if (!params.sessionId) {
     clearBootstrapSnapshot(params.target.canonicalKey);
+    await closeTrackedBrowserTabs();
     return undefined;
   }
   abortEmbeddedPiRun(params.sessionId);
   const ended = await waitForEmbeddedPiRunEnd(params.sessionId, 15_000);
   clearBootstrapSnapshot(params.target.canonicalKey);
   if (ended) {
+    await closeTrackedBrowserTabs();
     return undefined;
   }
   return errorShape(
@@ -475,14 +491,6 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     );
     await triggerInternalHook(hookEvent);
     const effectiveSessionKey = target.canonicalKey ?? key;
-    await runBeforeResetPluginHook({
-      cfg,
-      reason: commandReason,
-      sessionKey: effectiveSessionKey,
-      sessionEntry: entry,
-      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
-      dedupeKey: `dispatch-reset:${effectiveSessionKey.toLowerCase()}:${commandReason}:${entry?.sessionId ?? "none"}`,
-    });
 
     const mutationCleanupError = await cleanupSessionBeforeMutation({
       cfg,
@@ -497,6 +505,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, mutationCleanupError);
       return;
     }
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: commandReason,
+      sessionKey: effectiveSessionKey,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
+      dedupeKey: `dispatch-reset:${effectiveSessionKey.toLowerCase()}:${commandReason}:${entry?.sessionId ?? "none"}`,
+    });
     let oldSessionId: string | undefined;
     let oldSessionFile: string | undefined;
     const next = await updateSessionStore(storePath, (store) => {
