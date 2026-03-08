@@ -1601,8 +1601,8 @@ async function dispatchDiscordCommandInteraction(params: {
         ? `discord:group:${channelId}`
         : `discord:channel:${channelId}`,
     To: `slash:${user.id}`,
-    SessionKey: boundSessionKey ?? `agent:${effectiveRoute.agentId}:${sessionPrefix}:${user.id}`,
-    CommandTargetSessionKey: boundSessionKey ?? effectiveRoute.sessionKey,
+    SessionKey: boundSessionKey || `agent:${effectiveRoute.agentId}:${sessionPrefix}:${user.id}`,
+    CommandTargetSessionKey: boundSessionKey || effectiveRoute.sessionKey,
     AccountId: effectiveRoute.accountId,
     ChatType: isDirectMessage ? "direct" : isGroupDm ? "group" : "channel",
     ConversationLabel: conversationLabel,
