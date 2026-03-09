@@ -666,6 +666,15 @@ export type PluginHookBeforeCompactionEvent = {
   sessionFile?: string;
 };
 
+// before_reset hook — fired when /new or /reset clears a session
+export type PluginHookBeforeResetEvent = {
+  sessionFile?: string;
+  messages?: unknown[];
+  reason?: string;
+  /** Optional smart-reset review instruction to process before reset. */
+  reviewPrompt?: string;
+};
+
 export type PluginHookAfterCompactionEvent = {
   messageCount: number;
   tokenCount?: number;

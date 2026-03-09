@@ -1,4 +1,7 @@
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import type { SessionEntry } from "../../config/sessions.js";
 import { resolveStorePath, updateSessionStore } from "../../config/sessions.js";
 
 /**
@@ -40,13 +43,15 @@ export async function closeDiscordThreadSessions(params: {
   // how other Discord subsystems resolve their per-account sessions stores.
   const storePath = resolveStorePath(cfg.session?.store, { agentId: accountId });
 
-  let resetCount = 0;
+  const sessionsToClose: Array<[string, SessionEntry]> = [];
 
+  let resetCount = 0;
   await updateSessionStore(storePath, (store) => {
     for (const [key, entry] of Object.entries(store)) {
       if (!entry || !sessionKeyContainsThreadId(key)) {
         continue;
       }
+      sessionsToClose.push([key, { ...entry }]);
       // Setting updatedAt to 0 signals that this session is stale.
       // evaluateSessionFreshness will create a new session on the next message.
       entry.updatedAt = 0;
@@ -54,6 +59,16 @@ export async function closeDiscordThreadSessions(params: {
     }
     return resetCount;
   });
+
+  for (const [key, entry] of sessionsToClose) {
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: "thread-archived",
+      sessionKey: key,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, accountId),
+    });
+  }
 
   return resetCount;
 }

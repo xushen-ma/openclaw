@@ -90,7 +90,8 @@ describe("media store redirects", () => {
     expect(path.extname(saved.path)).toBe(".txt");
     expect(await fs.readFile(saved.path, "utf8")).toBe("redirected");
     const stat = await fs.stat(saved.path);
-    const expectedMode = process.platform === "win32" ? 0o666 : 0o644;
+    const baseMode = process.platform === "win32" ? 0o666 : 0o644;
+    const expectedMode = baseMode & ~process.umask();
     expect(stat.mode & 0o777).toBe(expectedMode);
   });
 
