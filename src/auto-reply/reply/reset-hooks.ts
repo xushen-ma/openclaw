@@ -27,7 +27,7 @@ const shouldSkipBeforeResetHook = (dedupeKey: string): boolean => {
 export async function runBeforeResetPluginHook(params: {
   cfg: OpenClawConfig;
   reason: "new" | "reset" | "stale" | "expiry" | "thread-archived" | (string & {});
-  sessionKey: string;
+  sessionKey: string | undefined;
   sessionEntry?: SessionEntry;
   previousSessionEntry?: SessionEntry;
   workspaceDir: string;
