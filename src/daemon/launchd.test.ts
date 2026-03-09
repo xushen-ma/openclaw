@@ -120,39 +120,6 @@ describe("launchd runtime parsing", () => {
       lastExitReason: "exited",
     });
   });
-
-  it("does not set pid when pid = 0", () => {
-    const output = ["state = running", "pid = 0"].join("\n");
-    const info = parseLaunchctlPrint(output);
-    expect(info.pid).toBeUndefined();
-    expect(info.state).toBe("running");
-  });
-
-  it("sets pid for positive values", () => {
-    const output = ["state = running", "pid = 1234"].join("\n");
-    const info = parseLaunchctlPrint(output);
-    expect(info.pid).toBe(1234);
-  });
-
-  it("does not set pid for negative values", () => {
-    const output = ["state = waiting", "pid = -1"].join("\n");
-    const info = parseLaunchctlPrint(output);
-    expect(info.pid).toBeUndefined();
-    expect(info.state).toBe("waiting");
-  });
-
-  it("rejects pid and exit status values with junk suffixes", () => {
-    const output = [
-      "state = waiting",
-      "pid = 123abc",
-      "last exit status = 7ms",
-      "last exit reason = exited",
-    ].join("\n");
-    expect(parseLaunchctlPrint(output)).toEqual({
-      state: "waiting",
-      lastExitReason: "exited",
-    });
-  });
 });
 
 describe("launchctl list detection", () => {
@@ -319,11 +286,9 @@ describe("launchd install", () => {
     );
   });
 
-  it("falls back to bootout-bootstrap-kickstart when initial kickstart fails", async () => {
+  it("uses bootout-bootstrap-kickstart flow by default", async () => {
     const env = createDefaultLaunchdEnv();
     state.printOutput = ["state = running", "pid = 4242"].join("\n");
-    state.kickstartFailuresRemaining = 1;
-    state.kickstartError = "Could not find service";
     const killSpy = vi.spyOn(process, "kill");
     killSpy
       .mockImplementationOnce(() => true)
@@ -346,53 +311,23 @@ describe("launchd install", () => {
       const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
       const label = "ai.openclaw.gateway";
       const plistPath = resolveLaunchAgentPlistPath(env);
-      const firstKickstartIndex = state.launchctlCalls.findIndex(
-        (c) => c[0] === "kickstart" && c[1] === "-k" && c[2] === `${domain}/${label}`,
-      );
       const bootoutIndex = state.launchctlCalls.findIndex(
         (c) => c[0] === "bootout" && c[1] === `${domain}/${label}`,
       );
       const bootstrapIndex = state.launchctlCalls.findIndex(
         (c) => c[0] === "bootstrap" && c[1] === domain && c[2] === plistPath,
       );
-      const secondKickstartIndex = state.launchctlCalls.findLastIndex(
+      const kickstartIndex = state.launchctlCalls.findIndex(
         (c) => c[0] === "kickstart" && c[1] === "-k" && c[2] === `${domain}/${label}`,
       );
-      expect(firstKickstartIndex).toBeGreaterThanOrEqual(0);
-      expect(bootoutIndex).toBeGreaterThan(firstKickstartIndex);
+
+      expect(bootoutIndex).toBeGreaterThanOrEqual(0);
       expect(bootstrapIndex).toBeGreaterThan(bootoutIndex);
-      expect(secondKickstartIndex).toBeGreaterThan(bootstrapIndex);
+      expect(kickstartIndex).toBeGreaterThan(bootstrapIndex);
     } finally {
       vi.useRealTimers();
       killSpy.mockRestore();
     }
-  });
-
-  it("falls back when kickstart succeeds but service remains unloaded", async () => {
-    const env = createDefaultLaunchdEnv();
-    state.printCode = 1;
-
-    await restartLaunchAgent({
-      env,
-      stdout: new PassThrough(),
-    });
-
-    const domain = typeof process.getuid === "function" ? `gui/${process.getuid()}` : "gui/501";
-    const label = "ai.openclaw.gateway";
-    const plistPath = resolveLaunchAgentPlistPath(env);
-    const kickstartIndex = state.launchctlCalls.findIndex(
-      (c) => c[0] === "kickstart" && c[1] === "-k" && c[2] === `${domain}/${label}`,
-    );
-    const bootoutIndex = state.launchctlCalls.findIndex(
-      (c) => c[0] === "bootout" && c[1] === `${domain}/${label}`,
-    );
-    const bootstrapIndex = state.launchctlCalls.findIndex(
-      (c) => c[0] === "bootstrap" && c[1] === domain && c[2] === plistPath,
-    );
-
-    expect(kickstartIndex).toBeGreaterThanOrEqual(0);
-    expect(bootoutIndex).toBeGreaterThan(kickstartIndex);
-    expect(bootstrapIndex).toBeGreaterThan(bootoutIndex);
   });
 
   it("shows actionable guidance when launchctl gui domain does not support bootstrap", async () => {

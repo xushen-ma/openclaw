@@ -1,6 +1,5 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { parseStrictInteger, parseStrictPositiveInteger } from "../infra/parse-finite-number.js";
 import {
   GATEWAY_LAUNCH_AGENT_LABEL,
   resolveGatewayServiceDescription,
@@ -128,15 +127,15 @@ export function parseLaunchctlPrint(output: string): LaunchctlPrintInfo {
   }
   const pidValue = entries.pid;
   if (pidValue) {
-    const pid = parseStrictPositiveInteger(pidValue);
-    if (pid !== undefined) {
+    const pid = Number.parseInt(pidValue, 10);
+    if (Number.isFinite(pid)) {
       info.pid = pid;
     }
   }
   const exitStatusValue = entries["last exit status"];
   if (exitStatusValue) {
-    const status = parseStrictInteger(exitStatusValue);
-    if (status !== undefined) {
+    const status = Number.parseInt(exitStatusValue, 10);
+    if (Number.isFinite(status)) {
       info.lastExitStatus = status;
     }
   }
@@ -454,8 +453,8 @@ export async function restartLaunchAgent({
   const plistPath = resolveLaunchAgentPlistPath(serviceEnv);
   const serviceId = `${domain}/${label}`;
 
-  const fastRestart = await execLaunchctl(["kickstart", "-k", serviceId]);
   if (fast) {
+    const fastRestart = await execLaunchctl(["kickstart", "-k", serviceId]);
     if (fastRestart.code !== 0) {
       throw new Error(
         "Fast restart failed — service may not be loaded. Run `openclaw gateway restart` (without --fast) to do a full reload.",
@@ -477,20 +476,6 @@ export async function restartLaunchAgent({
       }
     }
     return;
-  }
-
-  if (fastRestart.code === 0) {
-    const health = await execLaunchctl(["print", serviceId]);
-    if (health.code === 0) {
-      try {
-        stdout.write(`${formatLine("Restarted LaunchAgent", serviceId)}\n`);
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException)?.code !== "EPIPE") {
-          throw err;
-        }
-      }
-      return;
-    }
   }
 
   const runtime = await execLaunchctl(["print", serviceId]);
