@@ -491,6 +491,7 @@ export async function installLaunchAgent({
 export async function restartLaunchAgent({
   stdout,
   env,
+  fast,
 }: GatewayServiceControlArgs): Promise<GatewayServiceRestartResult> {
   const serviceEnv = env ?? (process.env as GatewayServiceEnv);
   const domain = resolveGuiDomain();
@@ -512,6 +513,17 @@ export async function restartLaunchAgent({
     }
     writeLaunchAgentActionLine(stdout, "Scheduled LaunchAgent restart", serviceTarget);
     return { outcome: "scheduled" };
+  }
+
+  if (fast) {
+    const fastRestart = await execLaunchctl(["kickstart", "-k", serviceTarget]);
+    if (fastRestart.code !== 0) {
+      throw new Error(
+        "Fast restart failed — service may not be loaded. Run `openclaw gateway restart` (without --fast) to do a full reload.",
+      );
+    }
+    writeLaunchAgentActionLine(stdout, "Restarted LaunchAgent (fast)", serviceTarget);
+    return { outcome: "completed" };
   }
 
   const start = await execLaunchctl(["kickstart", "-k", serviceTarget]);

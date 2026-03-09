@@ -225,7 +225,11 @@ export async function runServiceStart(params: {
   }
 
   try {
-    const restartResult = await params.service.restart({ env: process.env, stdout });
+    const restartResult = await params.service.restart({
+      env: process.env,
+      stdout,
+      fast: (params.opts as { fast?: boolean } | undefined)?.fast,
+    });
     const restartStatus = describeGatewayServiceRestart(params.serviceNoun, restartResult);
     if (restartStatus.scheduled) {
       emit({
@@ -435,7 +439,11 @@ export async function runServiceRestart(params: {
   try {
     let restartResult: GatewayServiceRestartResult = { outcome: "completed" };
     if (loaded) {
-      restartResult = await params.service.restart({ env: process.env, stdout });
+      restartResult = await params.service.restart({
+        env: process.env,
+        stdout,
+        fast: (params.opts as { fast?: boolean } | undefined)?.fast,
+      });
     }
     let restartStatus = describeGatewayServiceRestart(params.serviceNoun, restartResult);
     if (restartStatus.scheduled) {
