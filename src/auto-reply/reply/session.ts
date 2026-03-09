@@ -4,7 +4,7 @@ import {
   buildTelegramTopicConversationId,
   parseTelegramChatIdFromTarget,
 } from "../../acp/conversation-id.js";
-import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshotOnSessionRollover } from "../../agents/bootstrap-cache.js";
 import { normalizeChatType } from "../../channels/chat-type.js";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -40,6 +40,7 @@ import type { MsgContext, TemplateContext } from "../templating.js";
 import { resolveEffectiveResetTargetSessionKey } from "./acp-reset-target.js";
 import { normalizeInboundTextNewlines } from "./inbound-text.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
+import { runBeforeResetPluginHook } from "./reset-hooks.js";
 import {
   maybeRetireLegacyMainDeliveryRoute,
   resolveLastChannelRaw,
@@ -376,6 +377,15 @@ export async function initSessionState(params: {
     persistedProviderOverride = entry.providerOverride;
     persistedLabel = entry.label;
   } else {
+    if (entry && !resetTriggered) {
+      await runBeforeResetPluginHook({
+        cfg,
+        reason: "stale",
+        sessionKey,
+        sessionEntry: entry,
+        workspaceDir: resolveAgentWorkspaceDir(cfg, agentId),
+      });
+    }
     sessionId = crypto.randomUUID();
     isNewSession = true;
     systemSent = false;
