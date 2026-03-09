@@ -1,0 +1,11 @@
+{
+  "id": "smart-reset-memory",
+  "kind": "hook",
+  "name": "Smart Reset Memory",
+  "description": "Runs a final agent review turn before session reset to save important context to memory.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
