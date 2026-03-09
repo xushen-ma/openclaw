@@ -12,11 +12,7 @@
  */
 
 import crypto from "crypto";
-import type {
-  OpenClawPluginApi,
-  AgentMessage,
-  PluginAgentInvokeOptions,
-} from "openclaw/plugin-sdk";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 
 // Configuration defaults
 const DEFAULT_TOKEN = "airi-secret-token-change-me";
@@ -25,7 +21,8 @@ const DEFAULT_CONTEXT =
   "You are currently serving the AIRI system. Keep responses natural and conversational — suitable for real-time voice interaction.";
 
 // Session storage for AIRI conversation history (in-memory)
-const sessionHistory = new Map<string, AgentMessage[]>();
+// Using simple format for compatibility with invokeAgent
+const sessionHistory = new Map<string, Array<{ role: string; content: string }>>();
 
 // Resolve config from plugin config or environment
 function resolveConfig(api: OpenClawPluginApi) {
@@ -119,31 +116,24 @@ const plugin = {
         // Session isolation: use conversation ID or generate new session key
         const sessionKey = conversationId ? `airi:${conversationId}` : undefined; // Let invokeAgent generate a new session
 
-        // Build messages with AIRI context
-        const systemMessage: AgentMessage = {
-          role: "system",
-          content: CONFIG.contextInject,
-        };
+        // Build messages with AIRI context - use simple object format for invokeAgent
+        const systemMessage = { role: "system" as const, content: CONFIG.contextInject };
 
         // Get existing conversation history if session exists
-        let conversationHistory: AgentMessage[] = [];
+        let conversationHistory: Array<{ role: string; content: string }> = [];
         const historyKey = conversationId ? `airi:${conversationId}` : null;
         if (historyKey && sessionHistory.has(historyKey)) {
           conversationHistory = sessionHistory.get(historyKey) || [];
         }
 
         // Add new user messages
-        const userMessages: AgentMessage[] = (messages || []).map((m: any) => ({
+        const userMessages = (messages || []).map((m: any) => ({
           role: m.role || "user",
           content: m.content || "",
         }));
 
         // Combine: system + history + new messages
-        const allMessages: AgentMessage[] = [
-          systemMessage,
-          ...conversationHistory,
-          ...userMessages,
-        ];
+        const allMessages = [systemMessage, ...conversationHistory, ...userMessages];
 
         if (stream) {
           // Streaming response using invokeAgentStream
@@ -159,10 +149,13 @@ const plugin = {
 
           try {
             // Use the native invokeAgentStream API
+            // Use the native invokeAgentStream API
+            if (!api.invokeAgentStream) {
+              throw new Error("invokeAgentStream is not available");
+            }
             const streamResponse = await api.invokeAgentStream({
               agentId,
               messages: allMessages,
-              stream: true,
               sessionKey,
               timeoutSeconds: 60,
             });
@@ -190,6 +183,9 @@ const plugin = {
           // Non-streaming response using invokeAgent
           try {
             // Use the native invokeAgent API
+            if (!api.invokeAgent) {
+              throw new Error("invokeAgent is not available");
+            }
             const result = await api.invokeAgent({
               agentId,
               messages: allMessages,
@@ -201,14 +197,14 @@ const plugin = {
               throw new Error(result.error || "Agent execution failed");
             }
 
-            const responseContent = result.content;
+            const responseContent = result.content || "";
 
             // Store the conversation for session continuity
             if (historyKey) {
-              const updatedHistory: AgentMessage[] = [
+              const updatedHistory = [
                 ...conversationHistory,
                 ...userMessages,
-                { role: "assistant", content: responseContent },
+                { role: "assistant" as const, content: responseContent },
               ];
               sessionHistory.set(historyKey, updatedHistory);
             }
@@ -268,7 +264,7 @@ const plugin = {
         res.end(
           JSON.stringify({
             object: "list",
-            data: CONFIG.allowedAgents.map((id) => ({
+            data: CONFIG.allowedAgents.map((id: string) => ({
               id,
               object: "model",
               created: Date.now(),

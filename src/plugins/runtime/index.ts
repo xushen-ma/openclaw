@@ -32,12 +32,17 @@ function createUnavailableSubagentRuntime(): PluginRuntime["subagent"] {
   const unavailable = () => {
     throw new Error("Plugin runtime subagent methods are only available during a gateway request.");
   };
+  const unavailableWithReturn = (_opts?: unknown) => {
+    throw new Error("Plugin runtime subagent methods are only available during a gateway request.");
+  };
   return {
     run: unavailable,
     waitForRun: unavailable,
     getSessionMessages: unavailable,
     getSession: unavailable,
     deleteSession: unavailable,
+    invokeAgent: unavailableWithReturn,
+    invokeAgentStream: unavailableWithReturn,
   };
 }
 
