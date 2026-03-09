@@ -13,6 +13,7 @@ export interface PluginAgentInvokeOptions {
   mode?: "run" | "session";
   timeoutSeconds?: number;
   stream?: boolean;
+  idempotencyKey?: string;
 }
 
 export interface PluginAgentInvokeResult {

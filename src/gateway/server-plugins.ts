@@ -239,6 +239,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
       const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
       const message = params.prompt || messagesToPrompt(params.messages);
       const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
+      const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
 
       if (!message) {
         return { success: false, error: "No message or prompt provided" };
@@ -252,6 +253,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
             sessionKey,
             message,
             agentId,
+            idempotencyKey,
             deliver: false, // Avoid channel ambiguity
           },
         );
@@ -333,6 +335,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
           const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
           const message = params.prompt || messagesToPrompt(params.messages);
           const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
+          const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
 
           if (!message) {
             const errorChunk = encoder.encode(
@@ -351,6 +354,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
             sessionKey,
             message,
             agentId,
+            idempotencyKey,
             deliver: false, // Avoid channel ambiguity
           });
 

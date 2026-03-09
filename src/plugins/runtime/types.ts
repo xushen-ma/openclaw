@@ -12,6 +12,7 @@ export type PluginAgentInvokeRuntimeParams = {
   timeoutSeconds?: number;
   stream?: boolean;
   prompt?: string; // Alternative to messages - treated as user message
+  idempotencyKey?: string;
 };
 
 export type PluginAgentInvokeRuntimeResult = {
