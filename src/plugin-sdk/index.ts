@@ -103,6 +103,9 @@ export type {
   PluginLogger,
   ProviderAuthContext,
   ProviderAuthResult,
+  AgentMessage,
+  PluginAgentInvokeOptions,
+  PluginAgentInvokeResult,
 } from "../plugins/types.js";
 export type {
   GatewayRequestHandler,
