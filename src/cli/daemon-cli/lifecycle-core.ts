@@ -20,6 +20,7 @@ import {
 
 type DaemonLifecycleOptions = {
   json?: boolean;
+  fast?: boolean;
 };
 
 type RestartPostCheckContext = {
@@ -403,7 +404,7 @@ export async function runServiceRestart(params: {
 
   try {
     if (loaded) {
-      await params.service.restart({ env: process.env, stdout });
+      await params.service.restart({ env: process.env, stdout, fast: params.opts?.fast });
     }
     if (params.postRestartCheck) {
       await params.postRestartCheck({ json, stdout, warnings, fail });
