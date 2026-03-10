@@ -18,7 +18,6 @@ import {
 } from "./commands-info.js";
 import { handleModelsCommand } from "./commands-models.js";
 import { handlePluginCommand } from "./commands-plugin.js";
-import { handleSaveCommand } from "./commands-save.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
@@ -35,11 +34,15 @@ import type {
   CommandHandlerResult,
   HandleCommandsParams,
 } from "./commands-types.js";
+import { runBeforeResetPluginHook } from "./reset-hooks.js";
 import { routeReply } from "./route-reply.js";
+import { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 let HANDLERS: CommandHandler[] | null = null;
 
 export type ResetCommandAction = "new" | "reset";
+
+export { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 export async function emitResetCommandHooks(params: {
   action: ResetCommandAction;
@@ -86,6 +89,16 @@ export async function emitResetCommandHooks(params: {
       });
     }
   }
+
+  // Fire before_reset plugin hook — extract memories before session history is lost
+  await runBeforeResetPluginHook({
+    cfg: params.cfg,
+    reason: params.action,
+    sessionKey: params.sessionKey,
+    sessionEntry: params.sessionEntry,
+    previousSessionEntry: params.previousSessionEntry,
+    workspaceDir: params.workspaceDir,
+  });
 }
 
 export async function handleCommands(params: HandleCommandsParams): Promise<CommandHandlerResult> {
@@ -115,7 +128,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleModelsCommand,
       handleStopCommand,
       handleCompactCommand,
-      handleSaveCommand,
       handleAbortTrigger,
     ];
   }

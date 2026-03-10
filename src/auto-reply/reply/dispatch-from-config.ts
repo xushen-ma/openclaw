@@ -1,4 +1,4 @@
-import { resolveSessionAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveSessionAgentId } from "../../agents/agent-scope.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   loadSessionStore,
@@ -33,6 +33,7 @@ import { shouldBypassAcpDispatchForCommand, tryDispatchAcpReply } from "./dispat
 import { shouldSkipDuplicateInbound } from "./inbound-dedupe.js";
 import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
 import { shouldSuppressReasoningPayload } from "./reply-payloads.js";
+import { runBeforeResetPluginHook } from "./reset-hooks.js";
 import { isRoutableChannel, routeReply } from "./route-reply.js";
 import { resolveRunTypingPolicy } from "./typing-policy.js";
 
@@ -68,6 +69,24 @@ const isInboundAudioContext = (ctx: FinalizedMsgContext): boolean => {
     return true;
   }
   return AUDIO_HEADER_RE.test(trimmed);
+};
+
+const resolveResetActionFromContext = (ctx: FinalizedMsgContext): "new" | "reset" | undefined => {
+  const commandBody =
+    typeof ctx.BodyForCommands === "string"
+      ? ctx.BodyForCommands
+      : typeof ctx.CommandBody === "string"
+        ? ctx.CommandBody
+        : typeof ctx.RawBody === "string"
+          ? ctx.RawBody
+          : typeof ctx.Body === "string"
+            ? ctx.Body
+            : "";
+  const match = commandBody.trim().match(/^\/(new|reset)(?:\s|$)/i);
+  if (!match) {
+    return undefined;
+  }
+  return match[1]?.toLowerCase() === "reset" ? "reset" : "new";
 };
 
 const resolveSessionStoreLookup = (
@@ -334,6 +353,22 @@ export async function dispatchReplyFromConfig(params: {
       recordProcessed("completed", { reason: "send_policy_deny" });
       markIdle("message_completed");
       return { queuedFinal: false, counts };
+    }
+
+    const resetAction = resolveResetActionFromContext(ctx);
+    if (resetAction && ctx.CommandSource === "native" && sessionStoreEntry.sessionKey) {
+      const agentId = resolveSessionAgentId({
+        sessionKey: sessionStoreEntry.sessionKey,
+        config: cfg,
+      });
+      await runBeforeResetPluginHook({
+        cfg,
+        reason: resetAction,
+        sessionKey: sessionStoreEntry.sessionKey,
+        sessionEntry: sessionStoreEntry.entry,
+        workspaceDir: resolveAgentWorkspaceDir(cfg, agentId),
+        dedupeKey: `dispatch-reset:${sessionStoreEntry.sessionKey.toLowerCase()}:${resetAction}:${sessionStoreEntry.entry?.sessionId ?? "none"}`,
+      });
     }
 
     const shouldSendToolSummaries = ctx.ChatType !== "group" && ctx.CommandSource !== "native";
