@@ -1,7 +1,7 @@
 import { resetAcpSessionInPlace } from "../../acp/persistent-bindings.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { isAcpSessionKey } from "../../routing/session-key.js";
+import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
@@ -63,6 +63,9 @@ export async function emitResetCommandHooks(params: {
     commandSource: params.command.surface,
     senderId: params.command.senderId,
     workspaceDir: params.workspaceDir,
+    // Keep compatibility with legacy before_reset hook context shape.
+    agentId: resolveAgentIdFromSessionKey(params.sessionKey),
+    sessionId: params.previousSessionEntry?.sessionId ?? params.sessionEntry?.sessionId,
     cfg: params.cfg, // Pass config for LLM slug generation
   });
   await triggerInternalHook(hookEvent);
