@@ -1,19 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { HookRunner } from "../../plugins/hooks.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as internalHooks from "../../hooks/internal-hooks.js";
 import type { HandleCommandsParams } from "./commands-types.js";
-
-const hookRunnerMocks = vi.hoisted(() => ({
-  hasHooks: vi.fn<HookRunner["hasHooks"]>(),
-  runBeforeReset: vi.fn<HookRunner["runBeforeReset"]>(),
-}));
-
-vi.mock("../../plugins/hook-runner-global.js", () => ({
-  getGlobalHookRunner: () =>
-    ({
-      hasHooks: hookRunnerMocks.hasHooks,
-      runBeforeReset: hookRunnerMocks.runBeforeReset,
-    }) as unknown as HookRunner,
-}));
 
 const { emitResetCommandHooks } = await import("./commands-core.js");
 
@@ -28,6 +15,8 @@ describe("emitResetCommandHooks", () => {
       resetHookTriggered: false,
     } as HandleCommandsParams["command"];
 
+    const hookSpy = vi.spyOn(internalHooks, "triggerInternalHook").mockResolvedValue(undefined);
+
     await emitResetCommandHooks({
       action: "new",
       ctx: {} as HandleCommandsParams["ctx"],
@@ -40,17 +29,10 @@ describe("emitResetCommandHooks", () => {
       workspaceDir: "/tmp/openclaw-workspace",
     });
 
-    await vi.waitFor(() => expect(hookRunnerMocks.runBeforeReset).toHaveBeenCalledTimes(1));
-    const [, ctx] = hookRunnerMocks.runBeforeReset.mock.calls[0] ?? [];
-    return ctx;
+    expect(hookSpy).toHaveBeenCalledTimes(1);
+    const [event] = hookSpy.mock.calls[0] ?? [];
+    return event?.context;
   }
-
-  beforeEach(() => {
-    hookRunnerMocks.hasHooks.mockReset();
-    hookRunnerMocks.runBeforeReset.mockReset();
-    hookRunnerMocks.hasHooks.mockImplementation((hookName) => hookName === "before_reset");
-    hookRunnerMocks.runBeforeReset.mockResolvedValue(undefined);
-  });
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -60,7 +42,6 @@ describe("emitResetCommandHooks", () => {
     const ctx = await runBeforeResetContext("agent:navi:main");
     expect(ctx).toMatchObject({
       agentId: "navi",
-      sessionKey: "agent:navi:main",
       sessionId: "prev-session",
       workspaceDir: "/tmp/openclaw-workspace",
     });
@@ -70,7 +51,6 @@ describe("emitResetCommandHooks", () => {
     const ctx = await runBeforeResetContext(undefined);
     expect(ctx).toMatchObject({
       agentId: "main",
-      sessionKey: undefined,
       sessionId: "prev-session",
       workspaceDir: "/tmp/openclaw-workspace",
     });
@@ -80,7 +60,6 @@ describe("emitResetCommandHooks", () => {
     const ctx = await runBeforeResetContext("agent:main:main");
     expect(ctx).toMatchObject({
       agentId: "main",
-      sessionKey: "agent:main:main",
       sessionId: "prev-session",
       workspaceDir: "/tmp/openclaw-workspace",
     });
