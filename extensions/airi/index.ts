@@ -198,6 +198,7 @@ const plugin = {
             }
 
             const responseContent = result.content || "";
+            const responseReplyTag = result.replyTag;
 
             // Store the conversation for session continuity
             if (historyKey) {
@@ -224,6 +225,7 @@ const plugin = {
                     finish_reason: "stop",
                   },
                 ],
+                ...(responseReplyTag?.hasReplyTag ? { replyTag: responseReplyTag } : {}),
                 usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
               }),
             );
