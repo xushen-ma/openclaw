@@ -5,7 +5,7 @@ import type { CommandHandler } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 
 const DEFAULT_SAVE_PROMPT =
-  "Review this conversation and save any important context, decisions, and insights to memory. Update memory/YYYY-MM-DD.md with a log of what happened today. Update MEMORY.md with anything worth keeping long-term. Be concise — capture what matters, skip the noise.";
+  "Review this conversation and save any important context, decisions, and insights to memory. Update memory/YYYY-MM-DD.md with a log of what happened today. Update MEMORY.md with anything worth keeping long-term. Be concise — capture what matters, skip the noise. After finishing, send a brief confirmation message to the user: reply with 'Saved to memory.' if you wrote anything, or 'Nothing important to save.' if there was nothing worth recording.";
 
 function formatDateStampInTimezone(nowMs: number, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
