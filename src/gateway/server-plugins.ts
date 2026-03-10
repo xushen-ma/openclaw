@@ -138,6 +138,18 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
     return `agent:${agentId}:${raw}`;
   };
 
+  const ensureInvokeSessionKey = (
+    agentId: string,
+    sessionKey: string | undefined,
+    idempotencyKey: string,
+  ): string => {
+    const scoped = toAgentScopedSessionKey(agentId, sessionKey);
+    if (scoped) {
+      return scoped;
+    }
+    return `agent:${agentId}:plugin-invoke:${idempotencyKey}`;
+  };
+
   const normalizeMessageContent = (content: unknown): string => {
     if (typeof content === "string") {
       return content;
@@ -152,6 +164,9 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
             return "";
           }
           const record = block as Record<string, unknown>;
+          if (record.type === "text" && typeof record.text === "string") {
+            return record.text;
+          }
           if (typeof record.text === "string") {
             return record.text;
           }
@@ -236,10 +251,10 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
      */
     async invokeAgent(params): Promise<PluginAgentInvokeRuntimeResult> {
       const agentId = params.agentId?.trim() || "kiki";
-      const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
       const message = params.prompt || messagesToPrompt(params.messages);
       const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
       const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
+      const sessionKey = ensureInvokeSessionKey(agentId, params.sessionKey, idempotencyKey);
 
       if (!message) {
         return { success: false, error: "No message or prompt provided" };
@@ -259,7 +274,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
         );
 
         const runId = runPayload?.runId;
-        const resultSessionKey = runPayload?.sessionKey || sessionKey || `plugin:${Date.now()}`;
+        const resultSessionKey = runPayload?.sessionKey || sessionKey;
 
         if (!runId) {
           return { success: false, error: "Failed to get runId from agent invocation" };
@@ -332,10 +347,10 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
         let streamController = controller;
         try {
           const agentId = params.agentId?.trim() || "kiki";
-          const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
           const message = params.prompt || messagesToPrompt(params.messages);
           const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
           const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
+          const sessionKey = ensureInvokeSessionKey(agentId, params.sessionKey, idempotencyKey);
 
           if (!message) {
             const errorChunk = encoder.encode(
@@ -367,7 +382,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
             return;
           }
 
-          const resultSessionKey = runPayload.sessionKey || sessionKey || `plugin:${Date.now()}`;
+          const resultSessionKey = runPayload.sessionKey || sessionKey;
 
           // Poll for session messages and stream them
           const pollInterval = 500;
