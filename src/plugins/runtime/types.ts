@@ -15,19 +15,12 @@ export type PluginAgentInvokeRuntimeParams = {
   idempotencyKey?: string;
 };
 
-export type PluginAgentInvokeReplyTagMetadata = {
-  hasReplyTag: boolean;
-  replyToId?: string;
-  replyToCurrent: boolean;
-};
-
 export type PluginAgentInvokeRuntimeResult = {
   success: boolean;
   error?: string;
   content?: string;
   messages?: unknown[];
   sessionKey?: string;
-  replyTag?: PluginAgentInvokeReplyTagMetadata;
 };
 
 // ── Subagent runtime types ──────────────────────────────────────────

@@ -1,3 +1,5 @@
+import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
+import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry } from "../../config/sessions.js";
 import { resolveStorePath, updateSessionStore } from "../../config/sessions.js";
@@ -57,6 +59,16 @@ export async function closeDiscordThreadSessions(params: {
     }
     return resetCount;
   });
+
+  for (const [key, entry] of sessionsToClose) {
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: "thread-archived",
+      sessionKey: key,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, accountId),
+    });
+  }
 
   return resetCount;
 }

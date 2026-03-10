@@ -2,12 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { loadConfig } from "../config/config.js";
 import { loadOpenClawPlugins } from "../plugins/loader.js";
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
-import type {
-  PluginAgentInvokeReplyTagMetadata,
-  PluginRuntime,
-  PluginAgentInvokeRuntimeResult,
-} from "../plugins/runtime/types.js";
-import { parseInlineDirectives } from "../utils/directive-tags.js";
+import type { PluginRuntime, PluginAgentInvokeRuntimeResult } from "../plugins/runtime/types.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "./protocol/client-info.js";
 import type { ErrorShape } from "./protocol/index.js";
 import { PROTOCOL_VERSION } from "./protocol/index.js";
@@ -193,40 +188,18 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
     }
   };
 
-  const extractReplyTagMetadata = (
-    text: string,
-  ): { content: string; replyTag: PluginAgentInvokeReplyTagMetadata } => {
-    const parsed = parseInlineDirectives(text, {
-      stripReplyTags: true,
-      stripAudioTag: false,
-    });
-    return {
-      content: parsed.text,
-      replyTag: {
-        hasReplyTag: parsed.hasReplyTag,
-        replyToId: parsed.replyToId,
-        replyToCurrent: parsed.replyToCurrent,
-      },
-    };
-  };
-
-  const extractContentFromMessages = (
-    messages: unknown[],
-  ): { content: string; replyTag: PluginAgentInvokeReplyTagMetadata } => {
+  const extractContentFromMessages = (messages: unknown[]): string => {
     if (!messages || messages.length === 0) {
-      return {
-        content: "",
-        replyTag: { hasReplyTag: false, replyToCurrent: false },
-      };
+      return "";
     }
     const asRecords = messages as Array<Record<string, unknown>>;
     const assistantMsgs = asRecords.filter((m) => m?.role === "assistant" || m?.role === "agent");
     if (assistantMsgs.length > 0) {
       const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
-      return extractReplyTagMetadata(normalizeMessageContent(lastAssistant?.content));
+      return normalizeMessageContent(lastAssistant?.content);
     }
     const lastMsg = asRecords[asRecords.length - 1];
-    return extractReplyTagMetadata(normalizeMessageContent(lastMsg?.content));
+    return normalizeMessageContent(lastMsg?.content);
   };
 
   return {
@@ -338,14 +311,13 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
           limit: 20,
         });
 
-        const { content, replyTag } = extractContentFromMessages(sessionMsgs.messages || []);
+        const content = extractContentFromMessages(sessionMsgs.messages || []);
 
         return {
           success: true,
           content,
           messages: sessionMsgs.messages,
           sessionKey: resultSessionKey,
-          replyTag,
         };
       } catch (err) {
         const error = err instanceof Error ? err.message : String(err);
@@ -434,9 +406,7 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
 
               if (assistantMsgs.length > 0) {
                 const latestMsg = assistantMsgs[assistantMsgs.length - 1];
-                const { content: newContent } = extractReplyTagMetadata(
-                  normalizeMessageContent(latestMsg?.content),
-                );
+                const newContent = normalizeMessageContent(latestMsg?.content);
 
                 if (newContent !== lastContent) {
                   const delta = newContent.slice(lastContent.length);
@@ -462,15 +432,12 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
                 });
                 const finalList = finalMsgs.messages as Array<Record<string, unknown>>;
                 const finalMsg = finalList[finalList.length - 1];
-                const { content: finalContent, replyTag } = extractReplyTagMetadata(
-                  normalizeMessageContent(finalMsg?.content) || lastContent,
-                );
+                const finalContent = normalizeMessageContent(finalMsg?.content) || lastContent;
 
                 if (finalContent === lastContent) {
                   const finishChunk = encoder.encode(
                     `data: ${JSON.stringify({
                       choices: [{ delta: { finish_reason: "stop" } }],
-                      ...(replyTag.hasReplyTag ? { replyTag } : {}),
                     })}\n\n`,
                   );
                   streamController?.enqueue(finishChunk);
@@ -487,11 +454,9 @@ function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
 
           // Send final content
           if (lastContent) {
-            const { replyTag } = extractReplyTagMetadata(lastContent);
             const chunk = encoder.encode(
               `data: ${JSON.stringify({
                 choices: [{ delta: { content: lastContent, finish_reason: "stop" } }],
-                ...(replyTag.hasReplyTag ? { replyTag } : {}),
               })}\n\n`,
             );
             streamController?.enqueue(chunk);

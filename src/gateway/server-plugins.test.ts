@@ -148,7 +148,6 @@ describe("loadGatewayPlugins", () => {
 
     expect(result?.success).toBe(true);
     expect(result?.content).toBe("Hello\nworld");
-    expect(result?.replyTag).toEqual({ hasReplyTag: false, replyToCurrent: false });
     expect(result?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
 
     const agentCall = handleGatewayRequest.mock.calls[0]?.[0] as
@@ -156,55 +155,6 @@ describe("loadGatewayPlugins", () => {
       | undefined;
     const agentParams = agentCall?.req?.params as { sessionKey?: string } | undefined;
     expect(agentParams?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
-  });
-
-  test("invokeAgent strips reply tags and returns reply-tag metadata", async () => {
-    const serverPlugins = await importServerPluginsModule();
-    const runtime = createSubagentRuntime(serverPlugins);
-    serverPlugins.setFallbackGatewayContext(createTestContext("invoke-agent-reply-tag"));
-
-    handleGatewayRequest.mockImplementationOnce(async (opts: HandleGatewayRequestOptions) => {
-      if (opts.req.method === "agent") {
-        opts.respond(true, { runId: "run-1" });
-        return;
-      }
-      opts.respond(true, {});
-    });
-    handleGatewayRequest.mockImplementationOnce(async (opts: HandleGatewayRequestOptions) => {
-      if (opts.req.method === "agent.wait") {
-        opts.respond(true, { status: "ok" });
-        return;
-      }
-      opts.respond(true, {});
-    });
-    handleGatewayRequest.mockImplementationOnce(async (opts: HandleGatewayRequestOptions) => {
-      if (opts.req.method === "sessions.get") {
-        opts.respond(true, {
-          messages: [
-            {
-              role: "assistant",
-              content: "On it [[reply_to:msg-42]]",
-            },
-          ],
-        });
-        return;
-      }
-      opts.respond(true, {});
-    });
-
-    const result = await runtime.invokeAgent?.({
-      agentId: "kiki",
-      prompt: "say yes",
-      idempotencyKey: "idem-rt",
-    });
-
-    expect(result?.success).toBe(true);
-    expect(result?.content).toBe("On it");
-    expect(result?.replyTag).toEqual({
-      hasReplyTag: true,
-      replyToId: "msg-42",
-      replyToCurrent: false,
-    });
   });
 
   test("invokeAgentStream emits content deltas from assistant text", async () => {
