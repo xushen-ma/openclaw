@@ -16,12 +16,19 @@ export interface PluginAgentInvokeOptions {
   idempotencyKey?: string;
 }
 
+export interface PluginAgentInvokeReplyTagMetadata {
+  hasReplyTag: boolean;
+  replyToId?: string;
+  replyToCurrent: boolean;
+}
+
 export interface PluginAgentInvokeResult {
   success: boolean;
   error?: string;
   content?: string;
   messages?: AgentMessage[];
   sessionKey?: string;
+  replyTag?: PluginAgentInvokeReplyTagMetadata;
 }
 import type { Command } from "commander";
 import type {
@@ -664,15 +671,6 @@ export type PluginHookBeforeCompactionEvent = {
    *  before compaction starts, so plugins can read this file asynchronously
    *  and process in parallel with the compaction LLM call. */
   sessionFile?: string;
-};
-
-// before_reset hook — fired when /new or /reset clears a session
-export type PluginHookBeforeResetEvent = {
-  sessionFile?: string;
-  messages?: unknown[];
-  reason?: string;
-  /** Optional smart-reset review instruction to process before reset. */
-  reviewPrompt?: string;
 };
 
 export type PluginHookAfterCompactionEvent = {
