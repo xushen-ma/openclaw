@@ -150,8 +150,11 @@ describe("loadGatewayPlugins", () => {
     expect(result?.content).toBe("Hello\nworld");
     expect(result?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
 
-    const agentCall = handleGatewayRequest.mock.calls[0]?.[0];
-    expect(agentCall?.req?.params?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
+    const agentCall = handleGatewayRequest.mock.calls[0]?.[0] as
+      | HandleGatewayRequestOptions
+      | undefined;
+    const agentParams = agentCall?.req?.params as { sessionKey?: string } | undefined;
+    expect(agentParams?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
   });
 
   test("invokeAgentStream emits content deltas from assistant text", async () => {
