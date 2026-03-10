@@ -16,12 +16,19 @@ export interface PluginAgentInvokeOptions {
   idempotencyKey?: string;
 }
 
+export interface PluginAgentInvokeReplyTagMetadata {
+  hasReplyTag: boolean;
+  replyToId?: string;
+  replyToCurrent: boolean;
+}
+
 export interface PluginAgentInvokeResult {
   success: boolean;
   error?: string;
   content?: string;
   messages?: AgentMessage[];
   sessionKey?: string;
+  replyTag?: PluginAgentInvokeReplyTagMetadata;
 }
 import type { Command } from "commander";
 import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
