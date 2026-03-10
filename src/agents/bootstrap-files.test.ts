@@ -99,6 +99,18 @@ describe("resolveBootstrapContextForRun", () => {
     expect(extra?.content).toBe("extra");
   });
 
+  it("includes TEAM.md in context files on default runs", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
+    await fs.writeFile(path.join(workspaceDir, "TEAM.md"), "# Team context", "utf8");
+
+    const result = await resolveBootstrapContextForRun({ workspaceDir });
+    const team = result.contextFiles.find(
+      (file) => file.path === path.join(workspaceDir, "TEAM.md"),
+    );
+
+    expect(team?.content).toContain("Team context");
+  });
+
   it("uses heartbeat-only bootstrap files in lightweight heartbeat mode", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
     await fs.writeFile(path.join(workspaceDir, "HEARTBEAT.md"), "check inbox", "utf8");
