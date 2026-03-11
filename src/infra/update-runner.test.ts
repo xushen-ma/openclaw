@@ -234,6 +234,8 @@ describe("runGatewayUpdate", () => {
     await setupGitCheckout();
     const { runner, calls } = createRunner({
       ...buildGitWorktreeProbeResponses(),
+      [`git -C ${tempDir} remote get-url upstream`]: { code: 1, stderr: "missing" },
+      [`git -C ${tempDir} rev-list --left-right --count HEAD...origin/main`]: { stdout: "0\t0" },
       [`git -C ${tempDir} rev-parse --abbrev-ref --symbolic-full-name @{upstream}`]: {
         stdout: "origin/main",
       },
@@ -249,6 +251,66 @@ describe("runGatewayUpdate", () => {
     expect(result.status).toBe("error");
     expect(result.reason).toBe("rebase-failed");
     expect(calls.some((call) => call.includes("rebase --abort"))).toBe(true);
+  });
+
+  it("uses fork reset flow when .openclaw-fork marker exists", async () => {
+    await setupGitCheckout();
+    await setupUiIndex();
+    await fs.writeFile(path.join(tempDir, ".openclaw-fork"), "\n", "utf-8");
+    const doctorNodePath = await resolveStableNodePath(process.execPath);
+
+    const { runner, calls } = createRunner({
+      ...buildGitWorktreeProbeResponses(),
+      [`git -C ${tempDir} remote get-url upstream`]: { code: 1, stderr: "missing" },
+      [`git -C ${tempDir} rev-list --left-right --count HEAD...origin/main`]: { stdout: "0\t0" },
+      [`git -C ${tempDir} fetch origin`]: { stdout: "" },
+      [`git -C ${tempDir} rev-parse origin/main`]: { stdout: "originsha123" },
+      [`git -C ${tempDir} reset --hard origin/main`]: { stdout: "HEAD is now at originsha123" },
+      "pnpm install": { stdout: "" },
+      "pnpm build": { stdout: "" },
+      "pnpm ui:build": { stdout: "" },
+      [`${doctorNodePath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`]: {
+        stdout: "",
+      },
+      [`git -C ${tempDir} rev-parse HEAD`]: { stdout: "abc123" },
+    });
+
+    const result = await runWithRunner(runner);
+
+    expect(result.status).toBe("ok");
+    expect(calls).toContain(`git -C ${tempDir} fetch origin`);
+    expect(calls).toContain(`git -C ${tempDir} reset --hard origin/main`);
+    expect(calls.some((call) => call.includes("rebase"))).toBe(false);
+    expect(result.steps.some((step) => step.name === "fork mode")).toBe(true);
+    expect(result.steps.some((step) => step.name === "old HEAD")).toBe(true);
+  });
+
+  it("uses fork reset flow when branches are diverged", async () => {
+    await setupGitCheckout();
+    await setupUiIndex();
+    const doctorNodePath = await resolveStableNodePath(process.execPath);
+
+    const { runner, calls } = createRunner({
+      ...buildGitWorktreeProbeResponses(),
+      [`git -C ${tempDir} remote get-url upstream`]: { code: 1, stderr: "missing" },
+      [`git -C ${tempDir} rev-list --left-right --count HEAD...origin/main`]: { stdout: "3\t2" },
+      [`git -C ${tempDir} fetch origin`]: { stdout: "" },
+      [`git -C ${tempDir} rev-parse origin/main`]: { stdout: "divergedsha" },
+      [`git -C ${tempDir} reset --hard origin/main`]: { stdout: "HEAD is now at divergedsha" },
+      "pnpm install": { stdout: "" },
+      "pnpm build": { stdout: "" },
+      "pnpm ui:build": { stdout: "" },
+      [`${doctorNodePath} ${path.join(tempDir, "openclaw.mjs")} doctor --non-interactive --fix`]: {
+        stdout: "",
+      },
+      [`git -C ${tempDir} rev-parse HEAD`]: { stdout: "abc123" },
+    });
+
+    const result = await runWithRunner(runner);
+
+    expect(result.status).toBe("ok");
+    expect(calls).toContain(`git -C ${tempDir} reset --hard origin/main`);
+    expect(calls.some((call) => call.includes("rebase"))).toBe(false);
   });
 
   it("returns error and stops early when deps install fails", async () => {
