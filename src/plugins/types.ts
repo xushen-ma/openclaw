@@ -1,5 +1,28 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+
+// Re-export AgentMessage for plugin developers
+export type { AgentMessage } from "@mariozechner/pi-agent-core";
+
+// Agent invocation types (used by plugin-sdk/agent-invoke.ts)
+export interface PluginAgentInvokeOptions {
+  agentId: string;
+  prompt?: string;
+  messages?: Array<{ role: string; content: string }>;
+  sessionKey?: string;
+  mode?: "run" | "session";
+  timeoutSeconds?: number;
+  stream?: boolean;
+  idempotencyKey?: string;
+}
+
+export interface PluginAgentInvokeResult {
+  success: boolean;
+  error?: string;
+  content?: string;
+  messages?: AgentMessage[];
+  sessionKey?: string;
+}
 import type { Command } from "commander";
 import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
@@ -303,6 +326,10 @@ export type OpenClawPluginApi = {
     handler: PluginHookHandlerMap[K],
     opts?: { priority?: number },
   ) => void;
+  /** Invoke an agent directly (non-streaming) */
+  invokeAgent?: (opts: PluginAgentInvokeOptions) => Promise<PluginAgentInvokeResult>;
+  /** Invoke an agent with streaming response */
+  invokeAgentStream?: (opts: PluginAgentInvokeOptions) => Promise<ReadableStream<Uint8Array>>;
 };
 
 export type PluginOrigin = "bundled" | "global" | "workspace" | "config";

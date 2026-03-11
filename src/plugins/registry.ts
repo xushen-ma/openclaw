@@ -580,6 +580,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       hookPolicy?: PluginTypedHookPolicy;
     },
   ): OpenClawPluginApi => {
+    // Get the subagent runtime from registryParams.runtime
+    const runtime = registryParams.runtime;
+    const subagentRuntime = runtime?.subagent;
+
     return {
       id: record.id,
       name: record.name,
@@ -588,7 +592,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       source: record.source,
       config: params.config,
       pluginConfig: params.pluginConfig,
-      runtime: registryParams.runtime,
+      runtime,
       logger: normalizeLogger(registryParams.logger),
       registerTool: (tool, opts) => registerTool(record, tool, opts),
       registerHook: (events, handler, opts) =>
@@ -604,6 +608,17 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       resolvePath: (input: string) => resolveUserPath(input),
       on: (hookName, handler, opts) =>
         registerTypedHook(record, hookName, handler, opts, params.hookPolicy),
+      // Wire up invokeAgent and invokeAgentStream from the runtime
+      // Cast to the expected types for plugin API compatibility
+      invokeAgent: subagentRuntime?.invokeAgent
+        ? async (opts) =>
+            subagentRuntime.invokeAgent(opts) as Promise<
+              import("./types.js").PluginAgentInvokeResult
+            >
+        : undefined,
+      invokeAgentStream: subagentRuntime?.invokeAgentStream
+        ? async (opts) => subagentRuntime.invokeAgentStream(opts)
+        : undefined,
     };
   };
 
