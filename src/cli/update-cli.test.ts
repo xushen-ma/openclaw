@@ -363,6 +363,60 @@ describe("update-cli", () => {
     expect(logs.join("\n")).toContain("No changes were applied.");
   });
 
+  it("updateCommand --dry-run reports fork reset target when fork is detected", async () => {
+    vi.mocked(defaultRuntime.log).mockClear();
+    pathExists.mockImplementation(async (candidate: string) =>
+      candidate.endsWith(".openclaw-fork"),
+    );
+    vi.mocked(runCommandWithTimeout).mockImplementation(async (argv: string[]) => {
+      const key = argv.join(" ");
+      if (key.includes("remote get-url upstream")) {
+        return {
+          stdout: "git@github.com:xushen/openclaw.git",
+          stderr: "",
+          code: 0,
+          signal: null,
+          killed: false,
+          termination: "exit",
+        };
+      }
+      if (key.includes("rev-list --left-right --count")) {
+        return {
+          stdout: "1\t1",
+          stderr: "",
+          code: 0,
+          signal: null,
+          killed: false,
+          termination: "exit",
+        };
+      }
+      if (key.includes("rev-parse origin/main")) {
+        return {
+          stdout: "deadbeef",
+          stderr: "",
+          code: 0,
+          signal: null,
+          killed: false,
+          termination: "exit",
+        };
+      }
+      return {
+        stdout: "",
+        stderr: "",
+        code: 0,
+        signal: null,
+        killed: false,
+        termination: "exit",
+      };
+    });
+
+    await updateCommand({ dryRun: true });
+
+    const logs = vi.mocked(defaultRuntime.log).mock.calls.map((call) => String(call[0]));
+    expect(logs.join("\n")).toContain("would reset to origin/main@deadbeef");
+    expect(runGatewayUpdate).not.toHaveBeenCalled();
+  });
+
   it("updateStatusCommand prints table output", async () => {
     await updateStatusCommand({ json: false });
 

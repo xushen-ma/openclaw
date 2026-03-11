@@ -115,6 +115,59 @@ function formatCommandFailure(stdout: string, stderr: string): string {
   return detail.split("\n").slice(-3).join("\n");
 }
 
+async function detectForkDryRunPlan(params: {
+  root: string;
+  timeoutMs: number;
+  branch: string;
+}): Promise<{ detected: boolean; targetSha: string | null }> {
+  const marker = await pathExists(path.join(params.root, ".openclaw-fork"));
+
+  const upstream = await runCommandWithTimeout(
+    ["git", "-C", params.root, "remote", "get-url", "upstream"],
+    {
+      timeoutMs: params.timeoutMs,
+    },
+  ).catch(() => null);
+  const hasUpstreamRemote = upstream?.code === 0;
+
+  const divergence = await runCommandWithTimeout(
+    [
+      "git",
+      "-C",
+      params.root,
+      "rev-list",
+      "--left-right",
+      "--count",
+      `HEAD...origin/${params.branch}`,
+    ],
+    {
+      timeoutMs: params.timeoutMs,
+    },
+  ).catch(() => null);
+  let diverged = false;
+  if (divergence?.code === 0) {
+    const [aheadRaw, behindRaw] = divergence.stdout.trim().split(/\s+/);
+    const ahead = Number.parseInt(aheadRaw ?? "0", 10);
+    const behind = Number.parseInt(behindRaw ?? "0", 10);
+    diverged = Number.isFinite(ahead) && Number.isFinite(behind) && ahead > 0 && behind > 0;
+  }
+
+  const detected = marker || hasUpstreamRemote || diverged;
+  if (!detected) {
+    return { detected: false, targetSha: null };
+  }
+
+  const targetRef = `origin/${params.branch}`;
+  const target = await runCommandWithTimeout(["git", "-C", params.root, "rev-parse", targetRef], {
+    timeoutMs: params.timeoutMs,
+  }).catch(() => null);
+
+  return {
+    detected: true,
+    targetSha: target?.code === 0 ? target.stdout.trim() || null : null,
+  };
+}
+
 type UpdateDryRunPreview = {
   dryRun: true;
   root: string;
@@ -716,7 +769,22 @@ export async function updateCommand(opts: UpdateCommandOptions): Promise<void> {
     } else if (switchToPackage) {
       actions.push(`Switch install mode from git to package manager (${mode})`);
     } else if (updateInstallKind === "git") {
-      actions.push(`Run git update flow on channel ${channel} (fetch/rebase/build/doctor)`);
+      if (channel === "dev") {
+        const forkPlan = await detectForkDryRunPlan({
+          root,
+          timeoutMs: timeoutMs ?? 20 * 60_000,
+          branch: "main",
+        });
+        if (forkPlan.detected) {
+          actions.push(
+            `Run git update flow on channel ${channel} (fork detected, would reset to origin/main${forkPlan.targetSha ? `@${forkPlan.targetSha}` : ""}, then build/doctor)`,
+          );
+        } else {
+          actions.push(`Run git update flow on channel ${channel} (fetch/rebase/build/doctor)`);
+        }
+      } else {
+        actions.push(`Run git update flow on channel ${channel} (fetch/rebase/build/doctor)`);
+      }
     } else {
       actions.push(`Run global package manager update with spec openclaw@${tag}`);
     }
