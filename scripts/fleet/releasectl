@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="$ROOT_DIR/scripts/fleet"
+INTERNAL_DIR="$SCRIPT_DIR/internal"
+
+# shellcheck disable=SC1091
+source "$INTERNAL_DIR/permissions.sh"
+
+usage() {
+  cat <<'EOF'
+releasectl - governed release helper
+
+Usage:
+  releasectl repair-perms [--repo <path>] [--dry-run]
+  releasectl deploy|staging-deploy|rollback [args...]
+
+Commands:
+  repair-perms    Normalize file/dir permissions for governed repos.
+  deploy          Run internal deploy flow, then normalize permissions.
+  staging-deploy  Run internal staging deploy flow, then normalize permissions.
+  rollback        Run internal rollback flow, then normalize permissions.
+
+Notes:
+  - Keeps write authority with oc-release workflow; this command only repairs
+    read/execute visibility drift (e.g., 0600/0700 leftovers).
+  - No ownership changes are performed.
+EOF
+}
+
+repo_root="$ROOT_DIR"
+dry_run=0
+
+parse_common_flags() {
+  while (($#)); do
+    case "$1" in
+      --repo)
+        repo_root="$2"
+        shift 2
+        ;;
+      --dry-run)
+        dry_run=1
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "error: unknown flag: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+}
+
+run_with_post_normalize() {
+  local internal_script="$1"
+  shift
+  local script_path="$INTERNAL_DIR/$internal_script"
+  if [[ ! -x "$script_path" ]]; then
+    echo "error: missing internal command: $script_path" >&2
+    return 1
+  fi
+
+  "$script_path" "$@"
+  normalize_repo_permissions "$repo_root" "apply"
+}
+
+command="${1:-}" || true
+if [[ -z "$command" ]]; then
+  usage
+  exit 2
+fi
+shift || true
+
+case "$command" in
+  repair-perms)
+    parse_common_flags "$@"
+    if [[ "$dry_run" -eq 1 ]]; then
+      normalize_repo_permissions "$repo_root" "dry-run"
+    else
+      normalize_repo_permissions "$repo_root" "apply"
+    fi
+    ;;
+  deploy)
+    run_with_post_normalize "deploy.sh" "$@"
+    ;;
+  staging-deploy)
+    run_with_post_normalize "deploy.sh" "$@"
+    ;;
+  rollback)
+    run_with_post_normalize "rollback.sh" "$@"
+    ;;
+  *)
+    echo "error: unknown command: $command" >&2
+    usage
+    exit 2
+    ;;
+esac
