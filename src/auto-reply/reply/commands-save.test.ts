@@ -29,7 +29,7 @@ describe("handleSaveCommand", () => {
 
     expect(result).toEqual({
       shouldContinue: false,
-      reply: "Saving this conversation to memory now.",
+      reply: { text: "Saving this conversation to memory now." },
     });
     expect(enqueueSystemEventMock).toHaveBeenCalledTimes(1);
     expect(enqueueSystemEventMock.mock.calls[0]?.[0]).toContain("memory/2026-03-10.md");
@@ -55,7 +55,7 @@ describe("handleSaveCommand", () => {
 
     expect(result).toEqual({
       shouldContinue: false,
-      reply: "Saving this conversation to memory now.",
+      reply: { text: "Saving this conversation to memory now." },
     });
     const prompt = enqueueSystemEventMock.mock.calls.at(-1)?.[0] as string;
     expect(prompt).toContain("Additional instructions: remember the deployment discussion");
@@ -81,7 +81,10 @@ describe("handleSaveCommand", () => {
 
     const result = await handleSaveCommand(params, true);
 
-    expect(result).toEqual({ shouldContinue: false, reply: "Right away — saving it." });
+    expect(result).toEqual({
+      shouldContinue: false,
+      reply: { text: "Right away — saving it." },
+    });
     expect(enqueueSystemEventMock.mock.calls.at(-1)?.[0]).toContain("memory/2026-03-10.md");
     expect(enqueueSystemEventMock.mock.calls.at(-1)?.[0]).not.toContain(
       "capture what matters, skip the noise",

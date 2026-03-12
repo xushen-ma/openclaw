@@ -84,5 +84,5 @@ export const handleSaveCommand: CommandHandler = async (params) => {
     : basePrompt;
 
   enqueueSystemEvent(prompt, { sessionKey: params.sessionKey });
-  return { shouldContinue: false, reply: configuredConfirmation };
+  return { shouldContinue: false, reply: { text: configuredConfirmation } };
 };
