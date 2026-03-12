@@ -151,6 +151,13 @@ export type CommandsConfig = {
   debug?: boolean;
   /** Allow restart commands/tools (default: true). */
   restart?: boolean;
+  /** Configuration for the /save command prompt and visible confirmation reply. */
+  save?: {
+    /** Prompt template sent as a system event when /save is invoked. */
+    prompt?: string;
+    /** Short visible reply sent immediately after /save is queued. */
+    confirmation?: string;
+  };
   /** Enforce access-group allowlists/policies for commands (default: true). */
   useAccessGroups?: boolean;
   /** Explicit owner allowlist for owner-only tools/commands (channel-native IDs). */
