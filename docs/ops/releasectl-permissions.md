@@ -31,8 +31,14 @@ scripts/fleet/releasectl repair-perms --repo /Users/openclaw/workspace/openclaw 
 ## What it enforces
 
 - directories: `0755`
-- regular files: `0644`
-- git-tracked executable files: `0755`
+- regular files: `0644` baseline
+- git-tracked executable files: restored to git index mode (`0755`)
+- runtime entrypoints: keeps executable mode for
+  - `node_modules/.bin` targets
+  - shebang-based files under `dist/`
+
+This avoids blanket `chmod 755` drift on tracked source/docs/config files while
+preserving runtime executability where it is required.
 
 The repair command does **not** modify ownership and does not grant broad write
 permissions.
