@@ -1051,6 +1051,12 @@ export const FIELD_HELP: Record<string, string> = {
   "commands.config": "Allow /config chat command to read/write config on disk (default: false).",
   "commands.debug": "Allow /debug chat command for runtime-only overrides (default: false).",
   "commands.restart": "Allow /restart and gateway restart tool actions (default: true).",
+  "commands.save":
+    "Controls the explicit /save command behavior, including the prompt template queued into the session and the short visible confirmation reply sent immediately after the command is accepted.",
+  "commands.save.prompt":
+    "Prompt template used for the /save system event. Use YYYY-MM-DD where the current local date should be inserted automatically, and keep the instructions focused on what should be written to memory.",
+  "commands.save.confirmation":
+    "Short visible confirmation sent immediately after /save is queued so the user can see that the save request was accepted. Keep this brief and user-facing.",
   "commands.useAccessGroups": "Enforce access-group allowlists/policies for commands.",
   "commands.ownerAllowFrom":
     "Explicit owner allowlist for owner-only tools/commands. Use channel-native IDs (optionally prefixed like \"whatsapp:+15551234567\"). '*' is ignored.",

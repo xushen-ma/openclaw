@@ -5,7 +5,9 @@ import type { CommandHandler } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 
 const DEFAULT_SAVE_PROMPT =
-  "Review this conversation and save any important context, decisions, and insights to memory. Update memory/YYYY-MM-DD.md with a log of what happened today. Update MEMORY.md with anything worth keeping long-term. Be concise — capture what matters, skip the noise.";
+  "Review this conversation and save any important context, decisions, and insights to memory. Update memory/YYYY-MM-DD.md with a log of what happened today. Update MEMORY.md with anything worth keeping long-term. Be concise — capture what matters, skip the noise. After saving, send a short visible confirmation reply to the user that the save completed.";
+
+const DEFAULT_SAVE_CONFIRMATION = "Saving this conversation to memory now.";
 
 function formatDateStampInTimezone(nowMs: number, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -73,11 +75,14 @@ export const handleSaveCommand: CommandHandler = async (params) => {
   });
   const timezone = resolveUserTimezone(params.cfg.agents?.defaults?.userTimezone);
   const dateStamp = formatDateStampInTimezone(Date.now(), timezone);
-  const basePrompt = DEFAULT_SAVE_PROMPT.replaceAll("YYYY-MM-DD", dateStamp);
+  const configuredPrompt = params.cfg.commands?.save?.prompt?.trim() || DEFAULT_SAVE_PROMPT;
+  const configuredConfirmation =
+    params.cfg.commands?.save?.confirmation?.trim() || DEFAULT_SAVE_CONFIRMATION;
+  const basePrompt = configuredPrompt.replaceAll("YYYY-MM-DD", dateStamp);
   const prompt = customInstructions
     ? `${basePrompt}\n\nAdditional instructions: ${customInstructions}`
     : basePrompt;
 
   enqueueSystemEvent(prompt, { sessionKey: params.sessionKey });
-  return { shouldContinue: false };
+  return { shouldContinue: false, reply: configuredConfirmation };
 };
