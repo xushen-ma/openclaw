@@ -229,7 +229,8 @@ async function downloadToFile(
             }
           });
           pipeline(res, out)
-            .then(() => {
+            .then(async () => {
+              await fs.chmod(dest, MEDIA_FILE_MODE).catch(() => undefined);
               const sniffBuffer = Buffer.concat(sniffChunks, Math.min(sniffLen, 16384));
               const rawHeader = res.headers["content-type"];
               const headerMime = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
@@ -324,6 +325,7 @@ export async function saveMediaSource(
     const id = ext ? `${baseId}${ext}` : baseId;
     const finalDest = path.join(dir, id);
     await fs.rename(tempDest, finalDest);
+    await fs.chmod(finalDest, MEDIA_FILE_MODE).catch(() => undefined);
     return { id, path: finalDest, size, contentType: mime };
   }
   // local path
