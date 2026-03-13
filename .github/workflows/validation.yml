@@ -1,0 +1,157 @@
+name: Validation Branch
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  create-validation-branch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      validation_sha: ${{ steps.create-branch.outputs.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create validation branch
+        id: create-branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          SHA=$(git rev-parse HEAD)
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          
+          # Create validation branch from current main
+          git checkout -b validation
+          git push -f origin validation
+          
+          echo "Created validation branch at $SHA"
+
+  sanity-check:
+    needs: create-validation-branch
+    runs-on: macos-latest
+    outputs:
+      result: ${{ steps.sanity.outputs.result }}
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v4
+        with:
+          ref: validation
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Run sanity check
+        id: sanity
+        run: |
+          if ./scripts/fleet/sanity-check.sh --ci; then
+            echo "result=pass" >> $GITHUB_OUTPUT
+            echo "✅ Sanity check passed"
+          else
+            echo "result=fail" >> $GITHUB_OUTPUT
+            echo "❌ Sanity check failed"
+            exit 1
+          fi
+        env:
+          CI: true
+
+  promote-on-success:
+    needs: [create-validation-branch, sanity-check]
+    runs-on: ubuntu-latest
+    if: needs.sanity-check.outputs.result == 'pass'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate version tag
+        id: version
+        run: |
+          # Get latest upstream base tag
+          UPSTREAM_BASE=$(git describe --tags --match 'v20*' --abbrev=0 origin/main 2>/dev/null || echo "v$(date +%Y.%m.%d)")
+          
+          # Count existing fork tags for this base
+          BASE_NAME="${UPSTREAM_BASE}-x"
+          EXISTING=$(git tag -l "${BASE_NAME}.*" | wc -l)
+          NEXT=$((EXISTING + 1))
+          
+          VERSION="${BASE_NAME}.${NEXT}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION"
+
+      - name: Tag and fast-forward main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          SHA="${{ needs.create-validation-branch.outputs.validation_sha }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          
+          # Tag the validated commit
+          git tag "$VERSION" "$SHA"
+          git push origin "$VERSION"
+          
+          # Fast-forward main (validation branch already at this commit)
+          git checkout main
+          git merge --ff-only validation
+          git push origin main
+          
+          echo "✅ Tagged $VERSION and fast-forwarded main"
+
+      - name: Notify success
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ needs.create-validation-branch.outputs.validation_sha }}'.substring(0, 7);
+            const version = '${{ steps.version.outputs.version }}';
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: '${{ needs.create-validation-branch.outputs.validation_sha }}',
+              body: `✅ **Validation passed**\n\nVersion: \`${version}\`\nSHA: \`${sha}\`\n\nAuto-deployed to staging environment.`
+            });
+
+  cleanup-on-failure:
+    needs: [create-validation-branch, sanity-check]
+    runs-on: ubuntu-latest
+    if: failure() && needs.sanity-check.outputs.result == 'fail'
+    permissions:
+      contents: write
+    steps:
+      - name: Delete validation branch
+        run: |
+          git push origin --delete validation || true
+          echo "❌ Validation failed - validation branch discarded"
+
+      - name: Notify PR author
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sha = '${{ needs.create-validation-branch.outputs.validation_sha }}'.substring(0, 7);
+            github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: '${{ needs.create-validation-branch.outputs.validation_sha }}',
+              body: `❌ **Validation failed**\n\nSHA: \`${sha}\`\n\nThe validation branch has been discarded. Please fix the issue and open a new PR.`
+            });

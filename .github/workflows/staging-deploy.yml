@@ -1,0 +1,51 @@
+name: Auto-Deploy to Staging
+
+on:
+  push:
+    tags:
+      - 'v*-x.*'
+
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy-to-staging:
+    runs-on: self-hosted
+    steps:
+      - name: Deploy to staging environment
+        run: |
+          echo "Deploying ${{ github.ref_name }} to staging..."
+          
+          # Use releasectl to deploy to staging
+          /usr/local/lib/openclaw-fleet/releasectl staging-deploy --sha "${{ github.sha }}"
+          
+          echo "✅ Staging deployment complete"
+
+      - name: Verify staging
+        run: |
+          # Basic health check
+          if [[ -f ~/workspace/openclaw-staging/dist/index.js ]]; then
+            echo "✅ Staging build exists"
+          else
+            echo "❌ Staging build missing"
+            exit 1
+          fi
+
+      - name: Notify Fleet
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const version = '${{ github.ref_name }}';
+            const sha = '${{ github.sha }}'.substring(0, 7);
+            
+            // Create a release note
+            await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: version,
+              name: `Staging Release ${version}`,
+              body: `Auto-deployed to staging environment.\n\n- Version: \`${version}\`\n- SHA: \`${sha}\`\n- Staging: \`~/workspace/openclaw-staging/\``,
+              draft: false,
+              prerelease: true
+            });
