@@ -5,7 +5,6 @@ import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/ses
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
-import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
 import { handleAllowlistCommand } from "./commands-allowlist.js";
 import { handleApproveCommand } from "./commands-approve.js";
 import { handleBashCommand } from "./commands-bash.js";
@@ -38,11 +37,15 @@ import type {
   CommandHandlerResult,
   HandleCommandsParams,
 } from "./commands-types.js";
+import { runBeforeResetPluginHook } from "./reset-hooks.js";
 import { routeReply } from "./route-reply.js";
+import { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 let HANDLERS: CommandHandler[] | null = null;
 
 export type ResetCommandAction = "new" | "reset";
+
+export { DEFAULT_SMART_RESET_REVIEW_PROMPT } from "./smart-reset.js";
 
 export async function emitResetCommandHooks(params: {
   action: ResetCommandAction;
@@ -92,6 +95,17 @@ export async function emitResetCommandHooks(params: {
       });
     }
   }
+
+
+  // Fire before_reset plugin hook — extract memories before session history is lost
+  await runBeforeResetPluginHook({
+    cfg: params.cfg,
+    reason: params.action,
+    sessionKey: params.sessionKey,
+    sessionEntry: params.sessionEntry,
+    previousSessionEntry: params.previousSessionEntry,
+    workspaceDir: params.workspaceDir,
+  });
 }
 
 function applyAcpResetTailContext(ctx: HandleCommandsParams["ctx"], resetTail: string): void {
@@ -171,74 +185,6 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
   // Trigger internal hook for reset/new commands
   if (resetRequested && params.command.isAuthorizedSender) {
     const commandAction: ResetCommandAction = resetMatch?.[1] === "reset" ? "reset" : "new";
-    const resetTail =
-      resetMatch != null
-        ? params.command.commandBodyNormalized.slice(resetMatch[0].length).trimStart()
-        : "";
-    const boundAcpSessionKey = resolveBoundAcpThreadSessionKey(params);
-    const boundAcpKey =
-      boundAcpSessionKey && isAcpSessionKey(boundAcpSessionKey)
-        ? boundAcpSessionKey.trim()
-        : undefined;
-    if (boundAcpKey) {
-      const resetResult = await resetAcpSessionInPlace({
-        cfg: params.cfg,
-        sessionKey: boundAcpKey,
-        reason: commandAction,
-      });
-      if (!resetResult.ok && !resetResult.skipped) {
-        logVerbose(
-          `acp reset-in-place failed for ${boundAcpKey}: ${resetResult.error ?? "unknown error"}`,
-        );
-      }
-      if (resetResult.ok) {
-        const hookSessionEntry =
-          boundAcpKey === params.sessionKey
-            ? params.sessionEntry
-            : resolveSessionEntryForHookSessionKey(params.sessionStore, boundAcpKey);
-        const hookPreviousSessionEntry =
-          boundAcpKey === params.sessionKey
-            ? params.previousSessionEntry
-            : resolveSessionEntryForHookSessionKey(params.sessionStore, boundAcpKey);
-        await emitResetCommandHooks({
-          action: commandAction,
-          ctx: params.ctx,
-          cfg: params.cfg,
-          command: params.command,
-          sessionKey: boundAcpKey,
-          sessionEntry: hookSessionEntry,
-          previousSessionEntry: hookPreviousSessionEntry,
-          workspaceDir: params.workspaceDir,
-        });
-        if (resetTail) {
-          applyAcpResetTailContext(params.ctx, resetTail);
-          if (params.rootCtx && params.rootCtx !== params.ctx) {
-            applyAcpResetTailContext(params.rootCtx, resetTail);
-          }
-          return {
-            shouldContinue: false,
-          };
-        }
-        return {
-          shouldContinue: false,
-          reply: { text: "✅ ACP session reset in place." },
-        };
-      }
-      if (resetResult.skipped) {
-        return {
-          shouldContinue: false,
-          reply: {
-            text: "⚠️ ACP session reset unavailable for this bound conversation. Rebind with /acp bind or /acp spawn.",
-          },
-        };
-      }
-      return {
-        shouldContinue: false,
-        reply: {
-          text: "⚠️ ACP session reset failed. Check /acp status and try again.",
-        },
-      };
-    }
     await emitResetCommandHooks({
       action: commandAction,
       ctx: params.ctx,

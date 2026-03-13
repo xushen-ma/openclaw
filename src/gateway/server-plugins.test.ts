@@ -152,9 +152,10 @@ describe("loadGatewayPlugins", () => {
     expect(result?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
 
     const agentCall = handleGatewayRequest.mock.calls[0]?.[0] as
-      | { req?: { params?: { sessionKey?: string } } }
+      | HandleGatewayRequestOptions
       | undefined;
-    const agentParams = agentCall?.req?.params;
+    const agentParams = agentCall?.req?.params as { sessionKey?: string } | undefined;
+
     expect(agentParams?.sessionKey).toBe("agent:kiki:plugin-invoke:idem-123");
   });
 
@@ -267,6 +268,7 @@ describe("loadGatewayPlugins", () => {
     expect(output).toContain('"content":"hello"');
     expect(output).toContain('"finish_reason":"stop"');
   });
+
 
   test("logs plugin errors with details", async () => {
     const { loadGatewayPlugins } = await importServerPluginsModule();

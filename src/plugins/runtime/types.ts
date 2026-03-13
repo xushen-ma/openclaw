@@ -12,6 +12,7 @@ export type PluginAgentInvokeRuntimeParams = {
   timeoutSeconds?: number;
   stream?: boolean;
   prompt?: string;
+
   idempotencyKey?: string;
 };
 
@@ -90,6 +91,7 @@ export type PluginRuntime = PluginRuntimeCore & {
       params: PluginAgentInvokeRuntimeParams,
     ) => Promise<PluginAgentInvokeRuntimeResult>;
     /** Invoke an agent with streaming response. */
+
     invokeAgentStream: (
       params: PluginAgentInvokeRuntimeParams,
     ) => Promise<ReadableStream<Uint8Array>>;

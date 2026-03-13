@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { getAcpSessionManager } from "../../acp/control-plane/manager.js";
-import { resolveDefaultAgentId } from "../../agents/agent-scope.js";
+import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { clearBootstrapSnapshot } from "../../agents/bootstrap-cache.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
+import { runBeforeResetPluginHook } from "../../auto-reply/reply/reset-hooks.js";
 import { closeTrackedBrowserTabsForSessions } from "../../browser/session-tab-registry.js";
 import { loadConfig } from "../../config/config.js";
 import {
@@ -489,6 +490,8 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       },
     );
     await triggerInternalHook(hookEvent);
+    const effectiveSessionKey = target.canonicalKey ?? key;
+
     const mutationCleanupError = await cleanupSessionBeforeMutation({
       cfg,
       key,
@@ -502,6 +505,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       respond(false, undefined, mutationCleanupError);
       return;
     }
+    await runBeforeResetPluginHook({
+      cfg,
+      reason: commandReason,
+      sessionKey: effectiveSessionKey,
+      sessionEntry: entry,
+      workspaceDir: resolveAgentWorkspaceDir(cfg, target.agentId),
+      dedupeKey: `dispatch-reset:${effectiveSessionKey.toLowerCase()}:${commandReason}:${entry?.sessionId ?? "none"}`,
+    });
     let oldSessionId: string | undefined;
     let oldSessionFile: string | undefined;
     const next = await updateSessionStore(storePath, (store) => {
