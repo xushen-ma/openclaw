@@ -16,6 +16,10 @@
         "type": "string",
         "description": "Default agent ID"
       },
+      "sessionKey": {
+        "type": "string",
+        "description": "Stable AIRI session key to use when X-Conversation-Id is absent"
+      },
       "allowedAgents": {
         "type": "array",
         "items": { "type": "string" },

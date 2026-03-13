@@ -18,6 +18,7 @@ import type {
   PluginHookBeforeModelResolveResult,
   PluginHookBeforePromptBuildEvent,
   PluginHookBeforePromptBuildResult,
+  PluginHookBeforeResetEvent,
   PluginHookBeforeCompactionEvent,
   PluginHookLlmInputEvent,
   PluginHookLlmOutputEvent,
@@ -60,6 +61,7 @@ export type {
   PluginHookBeforeModelResolveResult,
   PluginHookBeforePromptBuildEvent,
   PluginHookBeforePromptBuildResult,
+  PluginHookBeforeResetEvent,
   PluginHookLlmInputEvent,
   PluginHookLlmOutputEvent,
   PluginHookAgentEndEvent,
@@ -611,6 +613,17 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
   }
 
   /**
+   * Run before_reset hook.
+   * Fired when /new or /reset clears a session.
+   */
+  async function runBeforeReset(
+    event: PluginHookBeforeResetEvent,
+    ctx: PluginHookAgentContext,
+  ): Promise<void> {
+    return runVoidHook("before_reset", event, ctx);
+  }
+
+  /**
    * Run subagent_spawning hook.
    * Runs sequentially so channel plugins can deterministically provision session bindings.
    */
@@ -731,6 +744,7 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
     // Session hooks
     runSessionStart,
     runSessionEnd,
+    runBeforeReset,
     runSubagentSpawning,
     runSubagentDeliveryTarget,
     runSubagentSpawned,

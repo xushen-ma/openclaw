@@ -48,7 +48,6 @@ import type { PluginRuntime } from "./runtime/types.js";
 
 export type { PluginRuntime } from "./runtime/types.js";
 export type { AnyAgentTool } from "../agents/tools/common.js";
-export type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 export interface PluginAgentInvokeOptions {
   agentId: string;
