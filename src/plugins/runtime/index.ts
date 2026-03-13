@@ -1,8 +1,4 @@
 import { createRequire } from "node:module";
-import {
-  getApiKeyForModel as getApiKeyForModelRaw,
-  resolveApiKeyForProvider as resolveApiKeyForProviderRaw,
-} from "../../agents/model-auth.js";
 import { resolveStateDir } from "../../config/paths.js";
 import { transcribeAudioFile } from "../../media-understanding/transcribe-audio.js";
 import { textToSpeechTelephony } from "../../tts/tts.js";
@@ -13,6 +9,7 @@ import { createRuntimeLogging } from "./runtime-logging.js";
 import { createRuntimeMedia } from "./runtime-media.js";
 import { createRuntimeSystem } from "./runtime-system.js";
 import { createRuntimeTools } from "./runtime-tools.js";
+import { createRuntimeModelAuth } from "./runtime-modelauth.js";
 import type { PluginRuntime } from "./types.js";
 
 let cachedVersion: string | null = null;
@@ -66,26 +63,9 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     tools: createRuntimeTools(),
     channel: createRuntimeChannel(),
     events: createRuntimeEvents(),
+    modelAuth: createRuntimeModelAuth(),
     logging: createRuntimeLogging(),
     state: { resolveStateDir },
-    modelAuth: {
-      // Wrap model-auth helpers so plugins cannot steer credential lookups:
-      // - agentDir / store: stripped (prevents reading other agents' stores)
-      // - profileId / preferredProfile: stripped (prevents cross-provider
-      //   credential access via profile steering)
-      // Plugins only specify provider/model; the core auth pipeline picks
-      // the appropriate credential automatically.
-      getApiKeyForModel: (params) =>
-        getApiKeyForModelRaw({
-          model: params.model,
-          cfg: params.cfg,
-        }),
-      resolveApiKeyForProvider: (params) =>
-        resolveApiKeyForProviderRaw({
-          provider: params.provider,
-          cfg: params.cfg,
-        }),
-    },
   } satisfies PluginRuntime;
 
   return runtime;

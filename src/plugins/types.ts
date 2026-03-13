@@ -1,28 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-
-// Re-export AgentMessage for plugin developers
-export type { AgentMessage } from "@mariozechner/pi-agent-core";
-
-// Agent invocation types (used by plugin-sdk/agent-invoke.ts)
-export interface PluginAgentInvokeOptions {
-  agentId: string;
-  prompt?: string;
-  messages?: Array<{ role: string; content: string }>;
-  sessionKey?: string;
-  mode?: "run" | "session";
-  timeoutSeconds?: number;
-  stream?: boolean;
-  idempotencyKey?: string;
-}
-
-export interface PluginAgentInvokeResult {
-  success: boolean;
-  error?: string;
-  content?: string;
-  messages?: AgentMessage[];
-  sessionKey?: string;
-}
 import type { Command } from "commander";
 import type { AuthProfileCredential, OAuthCredential } from "../agents/auth-profiles/types.js";
 import type { AnyAgentTool } from "../agents/tools/common.js";
@@ -41,6 +18,33 @@ import type { PluginRuntime } from "./runtime/types.js";
 
 export type { PluginRuntime } from "./runtime/types.js";
 export type { AnyAgentTool } from "../agents/tools/common.js";
+export type { AgentMessage } from "@mariozechner/pi-agent-core";
+
+export interface PluginAgentInvokeOptions {
+  agentId: string;
+  prompt?: string;
+  messages?: Array<{ role: string; content: string }>;
+  sessionKey?: string;
+  mode?: "run" | "session";
+  timeoutSeconds?: number;
+  stream?: boolean;
+  idempotencyKey?: string;
+}
+
+export interface PluginAgentInvokeReplyTagMetadata {
+  hasReplyTag: boolean;
+  replyToId?: string;
+  replyToCurrent: boolean;
+}
+
+export interface PluginAgentInvokeResult {
+  success: boolean;
+  error?: string;
+  content?: string;
+  messages?: AgentMessage[];
+  sessionKey?: string;
+  replyTag?: PluginAgentInvokeReplyTagMetadata;
+}
 
 export type PluginLogger = {
   debug?: (message: string) => void;
@@ -326,9 +330,9 @@ export type OpenClawPluginApi = {
     handler: PluginHookHandlerMap[K],
     opts?: { priority?: number },
   ) => void;
-  /** Invoke an agent directly (non-streaming) */
+  /** Invoke an agent directly (non-streaming). */
   invokeAgent?: (opts: PluginAgentInvokeOptions) => Promise<PluginAgentInvokeResult>;
-  /** Invoke an agent with streaming response */
+  /** Invoke an agent with streaming response. */
   invokeAgentStream?: (opts: PluginAgentInvokeOptions) => Promise<ReadableStream<Uint8Array>>;
 };
 
@@ -354,6 +358,7 @@ export type PluginHookName =
   | "agent_end"
   | "before_compaction"
   | "after_compaction"
+  | "before_reset"
   | "message_received"
   | "message_sending"
   | "message_sent"
@@ -379,6 +384,7 @@ export const PLUGIN_HOOK_NAMES = [
   "agent_end",
   "before_compaction",
   "after_compaction",
+  "before_reset",
   "message_received",
   "message_sending",
   "message_sent",
@@ -561,6 +567,15 @@ export type PluginHookBeforeCompactionEvent = {
    *  before compaction starts, so plugins can read this file asynchronously
    *  and process in parallel with the compaction LLM call. */
   sessionFile?: string;
+};
+
+// before_reset hook — fired when /new or /reset clears a session
+export type PluginHookBeforeResetEvent = {
+  sessionFile?: string;
+  messages?: unknown[];
+  reason?: string;
+  /** Optional smart-reset review instruction to process before reset. */
+  reviewPrompt?: string;
 };
 
 export type PluginHookAfterCompactionEvent = {
@@ -830,6 +845,10 @@ export type PluginHookHandlerMap = {
   ) => Promise<void> | void;
   after_compaction: (
     event: PluginHookAfterCompactionEvent,
+    ctx: PluginHookAgentContext,
+  ) => Promise<void> | void;
+  before_reset: (
+    event: PluginHookBeforeResetEvent,
     ctx: PluginHookAgentContext,
   ) => Promise<void> | void;
   message_received: (

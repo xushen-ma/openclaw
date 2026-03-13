@@ -11,8 +11,14 @@ export type PluginAgentInvokeRuntimeParams = {
   sessionKey?: string;
   timeoutSeconds?: number;
   stream?: boolean;
-  prompt?: string; // Alternative to messages - treated as user message
+  prompt?: string;
   idempotencyKey?: string;
+};
+
+export type PluginAgentInvokeReplyTagMetadata = {
+  hasReplyTag: boolean;
+  replyToId?: string;
+  replyToCurrent: boolean;
 };
 
 export type PluginAgentInvokeRuntimeResult = {
@@ -21,6 +27,7 @@ export type PluginAgentInvokeRuntimeResult = {
   content?: string;
   messages?: unknown[];
   sessionKey?: string;
+  replyTag?: PluginAgentInvokeReplyTagMetadata;
 };
 
 // ── Subagent runtime types ──────────────────────────────────────────
@@ -78,11 +85,11 @@ export type PluginRuntime = PluginRuntimeCore & {
     /** @deprecated Use getSessionMessages. */
     getSession: (params: SubagentGetSessionParams) => Promise<SubagentGetSessionResult>;
     deleteSession: (params: SubagentDeleteSessionParams) => Promise<void>;
-    /** Invoke an agent directly (non-streaming) */
+    /** Invoke an agent directly (non-streaming). */
     invokeAgent: (
       params: PluginAgentInvokeRuntimeParams,
     ) => Promise<PluginAgentInvokeRuntimeResult>;
-    /** Invoke an agent with streaming response */
+    /** Invoke an agent with streaming response. */
     invokeAgentStream: (
       params: PluginAgentInvokeRuntimeParams,
     ) => Promise<ReadableStream<Uint8Array>>;
