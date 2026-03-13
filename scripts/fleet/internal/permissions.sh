@@ -5,7 +5,7 @@ set -euo pipefail
 # - Directories: 0755
 # - Regular files: 0644 baseline
 # - Git-tracked executable files: restored to 0755 from index mode
-# - Runtime executable entrypoints (node_modules/.bin targets + dist shebang files): 0755
+# - Runtime executable entrypoints (node_modules/.bin targets + package.json bin targets + dist shebang files): 0755
 #
 # This keeps oc-release as the writer while ensuring normal users retain
 # read/execute access needed for runtime and tooling operations without
@@ -64,6 +64,36 @@ normalize_repo_permissions() {
         runtime_exec_targets+=("$bin_path")
       fi
     done < <(find "$bin_dir" -mindepth 1 -maxdepth 1 -print0)
+  fi
+
+  local node_modules_dir="$repo_root/node_modules"
+  if [[ -d "$node_modules_dir" ]]; then
+    while IFS= read -r -d '' pkg_json; do
+      while IFS= read -r rel_bin; do
+        [[ -n "$rel_bin" ]] || continue
+        local candidate
+        candidate="$(python3 -c 'import os,sys; print(os.path.realpath(os.path.join(sys.argv[1], sys.argv[2])))' "$(dirname "$pkg_json")" "$rel_bin" 2>/dev/null || true)"
+        if [[ -n "$candidate" && -f "$candidate" ]]; then
+          runtime_exec_targets+=("$candidate")
+        fi
+      done < <(python3 - "$pkg_json" <<'PY'
+import json,sys
+p = sys.argv[1]
+try:
+    with open(p, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+except Exception:
+    sys.exit(0)
+bins = data.get('bin')
+if isinstance(bins, str):
+    print(bins)
+elif isinstance(bins, dict):
+    for v in bins.values():
+        if isinstance(v, str):
+            print(v)
+PY
+)
+    done < <(find "$node_modules_dir" -xdev -type f -name package.json -print0)
   fi
 
   local dist_dir="$repo_root/dist"

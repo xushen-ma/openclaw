@@ -50,6 +50,28 @@ describe("releasectl permission normalization", () => {
 
     fs.symlinkSync(path.join("..", "pkg", "bin", "cli.js"), path.join(dotBin, "cli"));
 
+    const pnpmScopedPkg = path.join(
+      repo,
+      "node_modules",
+      ".pnpm",
+      "@esbuild+darwin-arm64@0.99.0",
+      "node_modules",
+      "@esbuild",
+      "darwin-arm64",
+    );
+    fs.mkdirSync(path.join(pnpmScopedPkg, "bin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(pnpmScopedPkg, "package.json"),
+      JSON.stringify({
+        name: "@esbuild/darwin-arm64",
+        version: "0.99.0",
+        bin: { esbuild: "bin/esbuild" },
+      }),
+    );
+    const nativeEsbuild = path.join(pnpmScopedPkg, "bin", "esbuild");
+    fs.writeFileSync(nativeEsbuild, "\u007fELFmockbinary");
+    fs.chmodSync(nativeEsbuild, 0o600);
+
     const distCli = path.join(repo, "dist", "runtime.mjs");
     fs.mkdirSync(path.dirname(distCli), { recursive: true });
     fs.writeFileSync(distCli, '#!/usr/bin/env node\nconsole.log("dist")\n');
@@ -67,6 +89,7 @@ describe("releasectl permission normalization", () => {
     expect(modeOf(path.join(repo, "docs", "note.txt"))).toBe(0o644);
     expect(modeOf(path.join(repo, "scripts", "tool.sh"))).toBe(0o755);
     expect(modeOf(realCli)).toBe(0o755);
+    expect(modeOf(nativeEsbuild)).toBe(0o755);
     expect(modeOf(distCli)).toBe(0o755);
   });
 });
