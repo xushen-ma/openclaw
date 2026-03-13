@@ -88,8 +88,15 @@ jobs:
       - name: Generate version tag
         id: version
         run: |
-          # Get latest upstream base tag
-          UPSTREAM_BASE=$(git describe --tags --match 'v20*' --abbrev=0 origin/main 2>/dev/null || echo "v$(date +%Y.%m.%d)")
+          # Get latest upstream base tag from fork tags (vYYYY.M.D-x.N format)
+          # Extract base version from existing fork tags, default to v2026.3.11
+          LATEST_FORK_TAG=$(git tag -l 'v*-x.*' --sort=-v:refname | head -1)
+          if [[ -n "$LATEST_FORK_TAG" ]]; then
+            # Extract base from v2026.3.11-x.5 -> v2026.3.11
+            UPSTREAM_BASE=$(echo "$LATEST_FORK_TAG" | sed -E 's/^(v[0-9]+\.[0-9]+\.[0-9]+)-x\.[0-9]+$/\1/')
+          else
+            UPSTREAM_BASE="v2026.3.11"  # Fallback to known fork base
+          fi
           
           # Count existing fork tags for this base
           BASE_NAME="${UPSTREAM_BASE}-x"
@@ -98,7 +105,8 @@ jobs:
           
           VERSION="${BASE_NAME}.${NEXT}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Generated version: $VERSION"
+          echo "base=$UPSTREAM_BASE" >> $GITHUB_OUTPUT
+          echo "Generated version: $VERSION (base: $UPSTREAM_BASE)"
 
       - name: Tag and fast-forward main
         run: |
