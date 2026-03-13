@@ -77,8 +77,20 @@ describe("releasectl permission normalization", () => {
     fs.writeFileSync(distCli, '#!/usr/bin/env node\nconsole.log("dist")\n');
     fs.chmodSync(distCli, 0o600);
 
+    const extensionRoot = path.join(repo, "extensions", "demo-ext");
+    const extensionManifest = path.join(extensionRoot, "openclaw.plugin.json");
+    const extensionData = path.join(extensionRoot, "data", "cache.json");
+    fs.mkdirSync(path.dirname(extensionData), { recursive: true });
+    fs.writeFileSync(extensionManifest, '{"id":"demo-ext"}\n');
+    fs.writeFileSync(extensionData, '{"ok":true}\n');
+
     fs.chmodSync(path.join(repo, "docs", "note.txt"), 0o755);
     fs.chmodSync(path.join(repo, "scripts", "tool.sh"), 0o644);
+    fs.chmodSync(path.join(repo, "extensions"), 0o700);
+    fs.chmodSync(extensionRoot, 0o700);
+    fs.chmodSync(path.join(extensionRoot, "data"), 0o700);
+    fs.chmodSync(extensionManifest, 0o600);
+    fs.chmodSync(extensionData, 0o600);
 
     execFileSync(
       "bash",
@@ -91,5 +103,10 @@ describe("releasectl permission normalization", () => {
     expect(modeOf(realCli)).toBe(0o755);
     expect(modeOf(nativeEsbuild)).toBe(0o755);
     expect(modeOf(distCli)).toBe(0o755);
+    expect(modeOf(path.join(repo, "extensions"))).toBe(0o755);
+    expect(modeOf(extensionRoot)).toBe(0o755);
+    expect(modeOf(path.join(extensionRoot, "data"))).toBe(0o755);
+    expect(modeOf(extensionManifest)).toBe(0o644);
+    expect(modeOf(extensionData)).toBe(0o644);
   });
 });

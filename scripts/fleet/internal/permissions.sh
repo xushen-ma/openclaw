@@ -6,6 +6,7 @@ set -euo pipefail
 # - Regular files: 0644 baseline
 # - Git-tracked executable files: restored to 0755 from index mode
 # - Runtime executable entrypoints (node_modules/.bin targets + package.json bin targets + dist shebang files): 0755
+# - Extension directories remain traversable (0755) and openclaw.plugin.json manifests readable (0644)
 #
 # This keeps oc-release as the writer while ensuring normal users retain
 # read/execute access needed for runtime and tooling operations without
@@ -105,11 +106,26 @@ PY
     done < <(find "$dist_dir" -xdev -type f -print0)
   fi
 
+  local -a extension_dir_targets=()
+  local -a extension_manifest_targets=()
+  local extensions_dir="$repo_root/extensions"
+  if [[ -d "$extensions_dir" ]]; then
+    while IFS= read -r -d '' extension_dir_path; do
+      extension_dir_targets+=("$extension_dir_path")
+    done < <(find "$extensions_dir" -xdev -type d -print0)
+
+    while IFS= read -r -d '' manifest_path; do
+      extension_manifest_targets+=("$manifest_path")
+    done < <(find "$extensions_dir" -xdev -type f -name 'openclaw.plugin.json' -print0)
+  fi
+
   if [[ "$mode" == "dry-run" ]]; then
     echo "[dry-run] normalize dirs to 0755: $dir_count"
     echo "[dry-run] normalize files to 0644 baseline: $file_count"
     echo "[dry-run] restore git executable files to 0755: ${#tracked_exec_targets[@]}"
     echo "[dry-run] restore runtime entrypoint files to 0755: ${#runtime_exec_targets[@]}"
+    echo "[dry-run] normalize extension dirs to 0755: ${#extension_dir_targets[@]}"
+    echo "[dry-run] normalize extension manifests to 0644: ${#extension_manifest_targets[@]}"
     return 0
   fi
 
@@ -128,6 +144,14 @@ PY
 
   if ((${#runtime_exec_targets[@]} > 0)); then
     "$chmod_bin" 755 "${runtime_exec_targets[@]}"
+  fi
+
+  if ((${#extension_dir_targets[@]} > 0)); then
+    "$chmod_bin" 755 "${extension_dir_targets[@]}"
+  fi
+
+  if ((${#extension_manifest_targets[@]} > 0)); then
+    "$chmod_bin" 644 "${extension_manifest_targets[@]}"
   fi
 
   echo "normalized permissions in $repo_root"
