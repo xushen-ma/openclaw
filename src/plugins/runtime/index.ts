@@ -9,6 +9,7 @@ import { createRuntimeLogging } from "./runtime-logging.js";
 import { createRuntimeMedia } from "./runtime-media.js";
 import { createRuntimeSystem } from "./runtime-system.js";
 import { createRuntimeTools } from "./runtime-tools.js";
+import { createRuntimeModelAuth } from "./runtime-modelauth.js";
 import type { PluginRuntime } from "./types.js";
 
 let cachedVersion: string | null = null;
@@ -62,6 +63,7 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     tools: createRuntimeTools(),
     channel: createRuntimeChannel(),
     events: createRuntimeEvents(),
+    modelAuth: createRuntimeModelAuth(),
     logging: createRuntimeLogging(),
     state: { resolveStateDir },
   } satisfies PluginRuntime;
