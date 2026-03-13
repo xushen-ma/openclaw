@@ -43,11 +43,19 @@ jobs:
     outputs:
       result: ${{ steps.sanity.outputs.result }}
     steps:
-      - name: Checkout validation branch
+      - name: Checkout main (for scripts)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          path: main-scripts
+
+      - name: Checkout validation branch (for code)
         uses: actions/checkout@v4
         with:
           ref: validation
           fetch-depth: 0
+          path: validation-code
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,6 +70,11 @@ jobs:
       - name: Run sanity check
         id: sanity
         run: |
+          # Copy sanity-check script from main to validation code
+          cp main-scripts/scripts/fleet/sanity-check.sh validation-code/scripts/fleet/sanity-check.sh
+          chmod +x validation-code/scripts/fleet/sanity-check.sh
+          
+          cd validation-code
           if ./scripts/fleet/sanity-check.sh --ci; then
             echo "result=pass" >> $GITHUB_OUTPUT
             echo "✅ Sanity check passed"
