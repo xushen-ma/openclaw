@@ -1,5 +1,3 @@
-import { defineConfig } from "tsdown";
-
 const env = {
   NODE_ENV: "production",
 };
@@ -87,7 +85,7 @@ const pluginSdkEntrypoints = [
   "keyed-async-queue",
 ] as const;
 
-export default defineConfig([
+export default [
   nodeBuildConfig({
     entry: "src/index.ts",
   }),
@@ -128,4 +126,4 @@ export default defineConfig([
   nodeBuildConfig({
     entry: ["src/hooks/bundled/*/handler.ts", "src/hooks/llm-slug-generator.ts"],
   }),
-]);
+];
