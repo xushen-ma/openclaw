@@ -1,15 +1,13 @@
 import { getApiKeyForModel, resolveApiKeyForProvider } from "../../agents/model-auth.js";
 import type { PluginRuntimeCore } from "./types-core.js";
 
+type GetApiKeyForModelParams = Parameters<typeof getApiKeyForModel>[0];
+type ResolveApiKeyForProviderParams = Parameters<typeof resolveApiKeyForProvider>[0];
+
 export function createRuntimeModelAuth(): PluginRuntimeCore["modelAuth"] {
   return {
-    getApiKeyForModel: async (params: { model: any; cfg?: any }) => {
-      const { model, cfg } = params;
-      return getApiKeyForModel({ model, cfg });
-    },
-    resolveApiKeyForProvider: async (params: { provider: string; cfg?: any }) => {
-      const { provider, cfg } = params;
-      return resolveApiKeyForProvider({ provider, cfg });
-    },
+    getApiKeyForModel: async (params: GetApiKeyForModelParams) => getApiKeyForModel(params),
+    resolveApiKeyForProvider: async (params: ResolveApiKeyForProviderParams) =>
+      resolveApiKeyForProvider(params),
   };
 }

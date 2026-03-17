@@ -1,7 +1,6 @@
-import { resetAcpSessionInPlace } from "../../acp/persistent-bindings.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
-import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
+import { resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
@@ -105,40 +104,6 @@ export async function emitResetCommandHooks(params: {
     previousSessionEntry: params.previousSessionEntry,
     workspaceDir: params.workspaceDir,
   });
-}
-
-function applyAcpResetTailContext(ctx: HandleCommandsParams["ctx"], resetTail: string): void {
-  const mutableCtx = ctx as Record<string, unknown>;
-  mutableCtx.Body = resetTail;
-  mutableCtx.RawBody = resetTail;
-  mutableCtx.CommandBody = resetTail;
-  mutableCtx.BodyForCommands = resetTail;
-  mutableCtx.BodyForAgent = resetTail;
-  mutableCtx.BodyStripped = resetTail;
-  mutableCtx.AcpDispatchTailAfterReset = true;
-}
-
-function resolveSessionEntryForHookSessionKey(
-  sessionStore: HandleCommandsParams["sessionStore"] | undefined,
-  sessionKey: string,
-): HandleCommandsParams["sessionEntry"] | undefined {
-  if (!sessionStore) {
-    return undefined;
-  }
-  const directEntry = sessionStore[sessionKey];
-  if (directEntry) {
-    return directEntry;
-  }
-  const normalizedTarget = sessionKey.trim().toLowerCase();
-  if (!normalizedTarget) {
-    return undefined;
-  }
-  for (const [candidateKey, candidateEntry] of Object.entries(sessionStore)) {
-    if (candidateKey.trim().toLowerCase() === normalizedTarget) {
-      return candidateEntry;
-    }
-  }
-  return undefined;
 }
 
 export async function handleCommands(params: HandleCommandsParams): Promise<CommandHandlerResult> {
