@@ -114,12 +114,13 @@ const plugin = {
         const agentId = requestedModel;
 
         // Session isolation: prefer conversation ID, otherwise use a stable configured or per-agent session key
-        const configuredStableSessionKey = typeof (CONFIG as any).sessionKey === "string" && (CONFIG as any).sessionKey.trim()
-          ? (CONFIG as any).sessionKey.trim()
-          : null;
+        const configuredStableSessionKey =
+          typeof (CONFIG as any).sessionKey === "string" && (CONFIG as any).sessionKey.trim()
+            ? (CONFIG as any).sessionKey.trim()
+            : null;
         const sessionKey = conversationId
           ? `airi:${conversationId}`
-          : (configuredStableSessionKey || `airi:${agentId}`);
+          : configuredStableSessionKey || `airi:${agentId}`;
 
         // Build messages with AIRI context - use simple object format for invokeAgent
         const systemMessage = { role: "system" as const, content: CONFIG.contextInject };

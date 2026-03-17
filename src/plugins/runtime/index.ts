@@ -7,9 +7,9 @@ import { createRuntimeConfig } from "./runtime-config.js";
 import { createRuntimeEvents } from "./runtime-events.js";
 import { createRuntimeLogging } from "./runtime-logging.js";
 import { createRuntimeMedia } from "./runtime-media.js";
+import { createRuntimeModelAuth } from "./runtime-modelauth.js";
 import { createRuntimeSystem } from "./runtime-system.js";
 import { createRuntimeTools } from "./runtime-tools.js";
-import { createRuntimeModelAuth } from "./runtime-modelauth.js";
 import type { PluginRuntime } from "./types.js";
 
 let cachedVersion: string | null = null;

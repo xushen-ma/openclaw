@@ -3,7 +3,7 @@ name: Auto-Deploy to Staging
 on:
   push:
     tags:
-      - 'v*-x.*'
+      - "v*-x.*"
 
 concurrency:
   group: staging-deploy
@@ -16,10 +16,10 @@ jobs:
       - name: Deploy to staging environment
         run: |
           echo "Deploying ${{ github.ref_name }} to staging..."
-          
+
           # Use releasectl to deploy to staging
           /usr/local/lib/openclaw-fleet/releasectl staging-deploy --sha "${{ github.sha }}"
-          
+
           echo "✅ Staging deployment complete"
 
       - name: Verify staging
@@ -38,7 +38,7 @@ jobs:
           script: |
             const version = '${{ github.ref_name }}';
             const sha = '${{ github.sha }}'.substring(0, 7);
-            
+
             // Create a release note
             await github.rest.repos.createRelease({
               owner: context.repo.owner,
