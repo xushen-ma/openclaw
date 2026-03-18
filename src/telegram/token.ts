@@ -1,6 +1,6 @@
 import type { BaseTokenResolution } from "../channels/plugins/types.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { normalizeResolvedSecretInputString } from "../config/types.secrets.js";
+import { normalizeSecretInputString } from "../config/types.secrets.js";
 import type { TelegramAccountConfig } from "../config/types.telegram.js";
 import { tryReadSecretFileSync } from "../infra/secret-file.js";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "../routing/session-key.js";
@@ -60,10 +60,7 @@ export function resolveTelegramToken(
     return { token: "", source: "none" };
   }
 
-  const accountToken = normalizeResolvedSecretInputString({
-    value: accountCfg?.botToken,
-    path: `channels.telegram.accounts.${accountId}.botToken`,
-  });
+  const accountToken = normalizeSecretInputString(accountCfg?.botToken);
   if (accountToken) {
     return { token: accountToken, source: "config" };
   }
@@ -81,10 +78,7 @@ export function resolveTelegramToken(
     return { token: "", source: "none" };
   }
 
-  const configToken = normalizeResolvedSecretInputString({
-    value: telegramCfg?.botToken,
-    path: "channels.telegram.botToken",
-  });
+  const configToken = normalizeSecretInputString(telegramCfg?.botToken);
   if (configToken) {
     return { token: configToken, source: "config" };
   }
