@@ -39,6 +39,7 @@ describe("handleSaveCommand", () => {
     expect(enqueueSystemEventMock.mock.calls[0]?.[0]).not.toContain("Additional instructions:");
     expect(enqueueSystemEventMock).toHaveBeenCalledWith(expect.any(String), {
       sessionKey: "agent:main:main",
+      contextKey: "cron:save",
     });
 
     vi.useRealTimers();

@@ -84,7 +84,7 @@ export const handleSaveCommand: CommandHandler = async (params) => {
     ? `${basePrompt}\n\nAdditional instructions: ${customInstructions}`
     : basePrompt;
 
-  enqueueSystemEvent(prompt, { sessionKey: params.sessionKey });
-  requestHeartbeatNow({ reason: "save-command", sessionKey: params.sessionKey, coalesceMs: 200 });
+  enqueueSystemEvent(prompt, { sessionKey: params.sessionKey, contextKey: "cron:save" });
+  requestHeartbeatNow({ reason: "cron", sessionKey: params.sessionKey, coalesceMs: 200 });
   return { shouldContinue: false, reply: { text: configuredConfirmation } };
 };
