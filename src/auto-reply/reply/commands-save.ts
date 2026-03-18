@@ -1,5 +1,6 @@
 import { resolveUserTimezone } from "../../agents/date-time.js";
 import { logVerbose } from "../../globals.js";
+import { requestHeartbeatNow } from "../../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import type { CommandHandler } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
@@ -84,5 +85,6 @@ export const handleSaveCommand: CommandHandler = async (params) => {
     : basePrompt;
 
   enqueueSystemEvent(prompt, { sessionKey: params.sessionKey });
+  requestHeartbeatNow({ reason: "save-command", sessionKey: params.sessionKey, coalesceMs: 200 });
   return { shouldContinue: false, reply: { text: configuredConfirmation } };
 };
