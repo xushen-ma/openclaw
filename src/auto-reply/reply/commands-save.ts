@@ -1,4 +1,5 @@
 import { resolveUserTimezone } from "../../agents/date-time.js";
+import { saveSessionStore } from "../../config/sessions.js";
 import { logVerbose } from "../../globals.js";
 import { requestHeartbeatNow } from "../../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
@@ -85,6 +86,19 @@ export const handleSaveCommand: CommandHandler = async (params) => {
     : basePrompt;
 
   enqueueSystemEvent(prompt, { sessionKey: params.sessionKey, contextKey: "cron:save" });
+
+  // Ensure the session entry has lastTo set so the heartbeat runner can deliver
+  // the save completion reply back to the originating channel. Some session types
+  // (e.g. Discord DMs) may not persist lastTo on the entry — patch it from ctx if missing.
+  if (params.sessionStore && params.storePath && params.sessionKey) {
+    const entry = params.sessionStore[params.sessionKey];
+    const ctxTo = params.ctx.OriginatingTo ?? params.ctx.To;
+    if (entry && ctxTo && !entry.lastTo) {
+      params.sessionStore[params.sessionKey] = { ...entry, lastTo: ctxTo };
+      await saveSessionStore(params.storePath, params.sessionStore);
+    }
+  }
+
   requestHeartbeatNow({ reason: "cron", sessionKey: params.sessionKey, coalesceMs: 200 });
   return { shouldContinue: false, reply: { text: configuredConfirmation } };
 };
