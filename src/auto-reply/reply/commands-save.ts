@@ -1,13 +1,10 @@
 import { resolveUserTimezone } from "../../agents/date-time.js";
 import { logVerbose } from "../../globals.js";
-import { enqueueSystemEvent } from "../../infra/system-events.js";
 import type { CommandHandler } from "./commands-types.js";
 import { stripMentions, stripStructuralPrefixes } from "./mentions.js";
 
 const DEFAULT_SAVE_PROMPT =
   "Review this conversation and save any important context, decisions, and insights to memory. Update memory/YYYY-MM-DD.md with a log of what happened today. Update MEMORY.md with anything worth keeping long-term. Be concise — capture what matters, skip the noise. After saving, send a short visible confirmation reply to the user that the save completed.";
-
-const DEFAULT_SAVE_CONFIRMATION = "Saving this conversation to memory now.";
 
 function formatDateStampInTimezone(nowMs: number, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -76,13 +73,20 @@ export const handleSaveCommand: CommandHandler = async (params) => {
   const timezone = resolveUserTimezone(params.cfg.agents?.defaults?.userTimezone);
   const dateStamp = formatDateStampInTimezone(Date.now(), timezone);
   const configuredPrompt = params.cfg.commands?.save?.prompt?.trim() || DEFAULT_SAVE_PROMPT;
-  const configuredConfirmation =
-    params.cfg.commands?.save?.confirmation?.trim() || DEFAULT_SAVE_CONFIRMATION;
   const basePrompt = configuredPrompt.replaceAll("YYYY-MM-DD", dateStamp);
   const prompt = customInstructions
     ? `${basePrompt}\n\nAdditional instructions: ${customInstructions}`
     : basePrompt;
 
-  enqueueSystemEvent(prompt, { sessionKey: params.sessionKey });
-  return { shouldContinue: false, reply: { text: configuredConfirmation } };
+  // Inject the save prompt as the body of this turn so the agent processes it
+  // inline with full conversation context, then delivers the reply via the
+  // normal session routing path — no heartbeat, no separate turn needed.
+  // params.ctx is typed as MsgContext but at runtime is TemplateContext; cast
+  // to set BodyStripped so get-reply-run picks up the prompt correctly.
+  params.ctx.Body = prompt;
+  (params.ctx as Record<string, unknown>)["BodyStripped"] = prompt;
+  params.ctx.CommandBody = undefined;
+  params.ctx.RawBody = prompt;
+
+  return { shouldContinue: true };
 };
