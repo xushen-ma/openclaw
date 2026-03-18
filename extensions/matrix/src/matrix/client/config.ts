@@ -67,8 +67,8 @@ export function resolveMatrixConfigForAccount(
     clean(env.MATRIX_ACCESS_TOKEN, "MATRIX_ACCESS_TOKEN") ||
     undefined;
   const password =
-    clean(matrix.password, "channels.matrix.password") ||
-    clean(env.MATRIX_PASSWORD, "MATRIX_PASSWORD") ||
+    normalizeSecretInputString(matrix.password) ||
+    normalizeSecretInputString(env.MATRIX_PASSWORD) ||
     undefined;
   const deviceName =
     clean(matrix.deviceName, "channels.matrix.deviceName") ||
