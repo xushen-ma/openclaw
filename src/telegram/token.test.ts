@@ -188,7 +188,7 @@ describe("resolveTelegramToken", () => {
     expect(res.source).toBe("none");
   });
 
-  it("throws when botToken is an unresolved SecretRef object", () => {
+  it("returns source=none when botToken is an unresolved SecretRef object", () => {
     const cfg = {
       channels: {
         telegram: {
@@ -197,9 +197,9 @@ describe("resolveTelegramToken", () => {
       },
     } as unknown as OpenClawConfig;
 
-    expect(() => resolveTelegramToken(cfg)).toThrow(
-      /channels\.telegram\.botToken: unresolved SecretRef/i,
-    );
+    const res = resolveTelegramToken(cfg);
+    expect(res.token).toBe("");
+    expect(res.source).toBe("none");
   });
 });
 
