@@ -202,6 +202,19 @@ else
   PATCH_REF="refs/remotes/$FORK_REMOTE/$MAIN_BRANCH"
 fi
 
+# Default ancestry check tracks the main lane, but hotfix/governed re-release
+# workflows can override this to the current production lane ref.
+LINEAGE_REF="${FLEET_LINEAGE_REF:-refs/remotes/$FORK_REMOTE/$MAIN_BRANCH}"
+if git rev-parse --verify "$LINEAGE_REF" >/dev/null 2>&1; then
+  if git merge-base --is-ancestor "$PATCH_REF" "$LINEAGE_REF"; then
+    check_pass "Lineage: candidate is an ancestor of $LINEAGE_REF"
+  else
+    check_fail "Lineage: candidate is not an ancestor of $LINEAGE_REF"
+  fi
+else
+  check_fail "Lineage: reference not found ($LINEAGE_REF)"
+fi
+
 has_patch_commit() {
   local pattern="$1"
   git log --oneline --grep="$pattern" "$PATCH_REF" -n 1 | grep -q .
@@ -241,8 +254,11 @@ fi
 # Validate release lineage for this candidate path. Pre-tag candidates may not yet
 # have a merged fork tag, so accept either an existing merged fork tag or a stable
 # upstream base tag from which deploy.sh can derive the next fork tag.
+# Accept both the original fork tag lane and hotfix lane tags:
+#   vYYYY.M.D-x.N
+#   vYYYY.M.D-L-x.N (e.g. v2026.3.13-1-x.3)
 LATEST_FORK_TAG=$(git tag --merged "$PATCH_REF" \
-  | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+-x\.[0-9]+$' \
+  | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9]+)?-x\.[0-9]+$' \
   | sort -V \
   | tail -1 || true)
 LATEST_STABLE_BASE_TAG=$(git tag --merged "$PATCH_REF" \

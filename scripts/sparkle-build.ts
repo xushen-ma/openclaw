@@ -9,7 +9,7 @@ export type SparkleBuildFloors = {
   lane: number;
 };
 
-const CALVER_REGEX = /^([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})([.-].*)?$/;
+const CALVER_REGEX = /^v?([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})([.-].*)?$/;
 
 export function sparkleBuildFloorsFromShortVersion(
   shortVersion: string,
