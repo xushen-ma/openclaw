@@ -551,6 +551,22 @@ function buildChatCommands(): ChatCommandDefinition[] {
       category: "session",
     }),
     defineChatCommand({
+      key: "save",
+      nativeName: "save",
+      description: "Save conversation context and insights to memory.",
+      textAlias: "/save",
+      category: "session",
+      acceptsArgs: true,
+      args: [
+        {
+          name: "instructions",
+          description: "Additional save instructions",
+          type: "string",
+          captureRemaining: true,
+        },
+      ],
+    }),
+    defineChatCommand({
       key: "compact",
       nativeName: "compact",
       description: "Compact the session context.",
