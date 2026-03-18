@@ -99,6 +99,6 @@ export const handleSaveCommand: CommandHandler = async (params) => {
     }
   }
 
-  requestHeartbeatNow({ reason: "cron", sessionKey: params.sessionKey, coalesceMs: 200 });
+  requestHeartbeatNow({ reason: "cron", sessionKey: params.sessionKey, coalesceMs: 3000 });
   return { shouldContinue: false, reply: { text: configuredConfirmation } };
 };
