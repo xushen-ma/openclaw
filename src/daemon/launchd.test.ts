@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   kickstartError: "",
   dirs: new Set<string>(),
   files: new Map<string, string>(),
+  dirModes: new Map<string, number>(),
+  fileModes: new Map<string, number>(),
 }));
 const defaultProgramArguments = ["node", "-e", "process.exit(0)"];
 
@@ -78,7 +80,11 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       throw new Error(`ENOENT: no such file or directory, access '${key}'`);
     }),
     mkdir: vi.fn(async (p: string) => {
-      state.dirs.add(String(p));
+      const key = String(p);
+      state.dirs.add(key);
+      if (!state.dirModes.has(key)) {
+        state.dirModes.set(key, 0o755);
+      }
     }),
     unlink: vi.fn(async (p: string) => {
       state.files.delete(String(p));
@@ -86,7 +92,31 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     writeFile: vi.fn(async (p: string, data: string) => {
       const key = String(p);
       state.files.set(key, data);
-      state.dirs.add(String(key.split("/").slice(0, -1).join("/")));
+      state.fileModes.set(key, state.fileModes.get(key) ?? 0o644);
+      const dir = String(key.split("/").slice(0, -1).join("/"));
+      state.dirs.add(dir);
+      if (!state.dirModes.has(dir)) {
+        state.dirModes.set(dir, 0o755);
+      }
+    }),
+    stat: vi.fn(async (p: string) => {
+      const key = String(p);
+      if (state.fileModes.has(key)) {
+        return { mode: state.fileModes.get(key) };
+      }
+      if (state.dirModes.has(key) || state.dirs.has(key)) {
+        return { mode: state.dirModes.get(key) ?? 0o755 };
+      }
+      throw new Error(`ENOENT: no such file or directory, stat '${key}'`);
+    }),
+    chmod: vi.fn(async (p: string, mode: number) => {
+      const key = String(p);
+      if (state.files.has(key)) {
+        state.fileModes.set(key, mode);
+        return;
+      }
+      state.dirs.add(key);
+      state.dirModes.set(key, mode);
     }),
   };
   return { ...wrapped, default: wrapped };
@@ -102,6 +132,8 @@ beforeEach(() => {
   state.kickstartError = "";
   state.dirs.clear();
   state.files.clear();
+  state.dirModes.clear();
+  state.fileModes.clear();
   vi.clearAllMocks();
 });
 
@@ -258,7 +290,6 @@ describe("launchd install", () => {
     expect(plist).toContain("<key>ThrottleInterval</key>");
     expect(plist).toContain(`<integer>${LAUNCH_AGENT_THROTTLE_INTERVAL_SECONDS}</integer>`);
   });
-
 
   it("tightens writable bits on launch agent dirs and plist", async () => {
     const env = createDefaultLaunchdEnv();

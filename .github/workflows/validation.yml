@@ -67,6 +67,10 @@ jobs:
         with:
           version: 9
 
+      - name: Install validation dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: validation-code
+
       - name: Run sanity check
         id: sanity
         run: |
