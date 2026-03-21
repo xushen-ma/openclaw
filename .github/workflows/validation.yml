@@ -70,9 +70,13 @@ jobs:
       - name: Run sanity check
         id: sanity
         run: |
-          # Copy sanity-check script from main to validation code
-          cp main-scripts/scripts/fleet/sanity-check.sh validation-code/scripts/fleet/sanity-check.sh
-          chmod +x validation-code/scripts/fleet/sanity-check.sh
+          # Copy the full fleet helper tree from main into validation code.
+          # sanity-check.sh depends on sibling files like fleet.env and lock.sh,
+          # so copying only the entry script breaks validation.
+          mkdir -p validation-code/scripts
+          rm -rf validation-code/scripts/fleet
+          cp -R main-scripts/scripts/fleet validation-code/scripts/fleet
+          chmod +x validation-code/scripts/fleet/*.sh validation-code/scripts/fleet/internal/*.sh || true
           
           cd validation-code
           if ./scripts/fleet/sanity-check.sh --ci; then
