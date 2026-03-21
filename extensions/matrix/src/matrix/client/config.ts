@@ -1,5 +1,6 @@
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/matrix";
+import { resolveConfiguredSecretInputWithFallback } from "../../../../../src/gateway/resolve-configured-secret-input-string.js";
 import { getMatrixRuntime } from "../../runtime.js";
 import {
   normalizeResolvedSecretInputString,
@@ -28,16 +29,7 @@ function deepMergeConfig<T extends Record<string, unknown>>(base: T, override: P
   return merged as T;
 }
 
-/**
- * Resolve Matrix config for a specific account, with fallback to top-level config.
- * This supports both multi-account (channels.matrix.accounts.*) and
- * single-account (channels.matrix.*) configurations.
- */
-export function resolveMatrixConfigForAccount(
-  cfg: CoreConfig = getMatrixRuntime().config.loadConfig() as CoreConfig,
-  accountId?: string | null,
-  env: NodeJS.ProcessEnv = process.env,
-): MatrixResolvedConfig {
+function resolveMatrixAccountConfig(cfg: CoreConfig, accountId?: string | null) {
   const normalizedAccountId = normalizeAccountId(accountId);
   const matrixBase = cfg.channels?.matrix ?? {};
   const accounts = cfg.channels?.matrix?.accounts;
@@ -53,9 +45,40 @@ export function resolveMatrixConfigForAccount(
     }
   }
 
+  return { normalizedAccountId, matrixBase, accountConfig };
+}
+
+function resolveMatrixChannelConfigForAccount(cfg: CoreConfig, accountId?: string | null) {
+  const { matrixBase, accountConfig } = resolveMatrixAccountConfig(cfg, accountId);
+
   // Deep merge: account-specific values override top-level values, preserving
   // nested object inheritance (dm, actions, groups) so partial overrides work.
-  const matrix = accountConfig ? deepMergeConfig(matrixBase, accountConfig) : matrixBase;
+  return accountConfig ? deepMergeConfig(matrixBase, accountConfig) : matrixBase;
+}
+
+function resolveSecretInputPath(
+  cfg: CoreConfig,
+  accountId: string | null | undefined,
+  field: "accessToken" | "password",
+): string {
+  const { normalizedAccountId, accountConfig } = resolveMatrixAccountConfig(cfg, accountId);
+  if (accountConfig && field in accountConfig) {
+    return `channels.matrix.accounts.${normalizedAccountId}.${field}`;
+  }
+  return `channels.matrix.${field}`;
+}
+
+/**
+ * Resolve Matrix config for a specific account, with fallback to top-level config.
+ * This supports both multi-account (channels.matrix.accounts.*) and
+ * single-account (channels.matrix.*) configurations.
+ */
+export function resolveMatrixConfigForAccount(
+  cfg: CoreConfig = getMatrixRuntime().config.loadConfig() as CoreConfig,
+  accountId?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): MatrixResolvedConfig {
+  const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
 
   const homeserver =
     clean(matrix.homeserver, "channels.matrix.homeserver") ||
@@ -63,8 +86,8 @@ export function resolveMatrixConfigForAccount(
   const userId =
     clean(matrix.userId, "channels.matrix.userId") || clean(env.MATRIX_USER_ID, "MATRIX_USER_ID");
   const accessToken =
-    clean(matrix.accessToken, "channels.matrix.accessToken") ||
-    clean(env.MATRIX_ACCESS_TOKEN, "MATRIX_ACCESS_TOKEN") ||
+    normalizeSecretInputString(matrix.accessToken) ||
+    normalizeSecretInputString(env.MATRIX_ACCESS_TOKEN) ||
     undefined;
   const password =
     normalizeSecretInputString(matrix.password) ||
@@ -107,7 +130,9 @@ export async function resolveMatrixAuth(params?: {
 }): Promise<MatrixAuth> {
   const cfg = params?.cfg ?? (getMatrixRuntime().config.loadConfig() as CoreConfig);
   const env = params?.env ?? process.env;
-  const resolved = resolveMatrixConfigForAccount(cfg, params?.accountId, env);
+  const accountId = params?.accountId;
+  const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
+  const resolved = resolveMatrixConfigForAccount(cfg, accountId, env);
   if (!resolved.homeserver) {
     throw new Error("Matrix homeserver is required (matrix.homeserver)");
   }
@@ -119,7 +144,6 @@ export async function resolveMatrixAuth(params?: {
     touchMatrixCredentials,
   } = await import("../credentials.js");
 
-  const accountId = params?.accountId;
   const cached = loadMatrixCredentials(env, accountId);
   const cachedCredentials =
     cached &&
@@ -130,14 +154,24 @@ export async function resolveMatrixAuth(params?: {
       ? cached
       : null;
 
+  const resolvedAccessToken = (
+    await resolveConfiguredSecretInputWithFallback({
+      config: cfg,
+      env,
+      value: matrix.accessToken,
+      path: resolveSecretInputPath(cfg, accountId, "accessToken"),
+      readFallback: () => normalizeSecretInputString(env.MATRIX_ACCESS_TOKEN),
+    })
+  ).value;
+
   // If we have an access token, we can fetch userId via whoami if not provided
-  if (resolved.accessToken) {
+  if (resolvedAccessToken) {
     let userId = resolved.userId;
     if (!userId) {
       // Fetch userId from access token via whoami
       ensureMatrixSdkLoggingConfigured();
       const { MatrixClient } = loadMatrixSdk();
-      const tempClient = new MatrixClient(resolved.homeserver, resolved.accessToken);
+      const tempClient = new MatrixClient(resolved.homeserver, resolvedAccessToken);
       const whoami = await tempClient.getUserId();
       userId = whoami;
       // Save the credentials with the fetched userId
@@ -145,18 +179,18 @@ export async function resolveMatrixAuth(params?: {
         {
           homeserver: resolved.homeserver,
           userId,
-          accessToken: resolved.accessToken,
+          accessToken: resolvedAccessToken,
         },
         env,
         accountId,
       );
-    } else if (cachedCredentials && cachedCredentials.accessToken === resolved.accessToken) {
+    } else if (cachedCredentials && cachedCredentials.accessToken === resolvedAccessToken) {
       touchMatrixCredentials(env, accountId);
     }
     return {
       homeserver: resolved.homeserver,
       userId,
-      accessToken: resolved.accessToken,
+      accessToken: resolvedAccessToken,
       deviceName: resolved.deviceName,
       initialSyncLimit: resolved.initialSyncLimit,
       encryption: resolved.encryption,
@@ -179,7 +213,20 @@ export async function resolveMatrixAuth(params?: {
     throw new Error("Matrix userId is required when no access token is configured (matrix.userId)");
   }
 
-  if (!resolved.password) {
+  let password = resolved.password;
+  if (!password) {
+    const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
+    const resolvedPassword = await resolveConfiguredSecretInputWithFallback({
+      config: cfg,
+      env,
+      value: matrix.password,
+      path: resolveSecretInputPath(cfg, accountId, "password"),
+      readFallback: () => normalizeSecretInputString(env.MATRIX_PASSWORD),
+    });
+    password = resolvedPassword.value;
+  }
+
+  if (!password) {
     throw new Error(
       "Matrix password is required when no access token is configured (matrix.password)",
     );
@@ -194,7 +241,7 @@ export async function resolveMatrixAuth(params?: {
       body: JSON.stringify({
         type: "m.login.password",
         identifier: { type: "m.id.user", user: resolved.userId },
-        password: resolved.password,
+        password,
         initial_device_display_name: resolved.deviceName ?? "OpenClaw Gateway",
       }),
     },
