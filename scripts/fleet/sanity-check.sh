@@ -36,7 +36,13 @@ if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
 fi
 
 SKIP_SMOKE=false
-[[ "${1:-}" == "--skip-smoke" ]] && SKIP_SMOKE=true
+CI_MODE=false
+for arg in "$@"; do
+  case "$arg" in
+    --skip-smoke) SKIP_SMOKE=true ;;
+    --ci) CI_MODE=true ;;
+  esac
+done
 
 PASS=0
 FAIL=0
@@ -85,9 +91,19 @@ echo "════════════════════════�
 echo ""
 echo "── Preflight"
 PREFLIGHT_OK=true
+if [[ "$CI_MODE" == true ]]; then
+  DEV_REPO="$(pwd)"
+  STAGING_DIR="$(pwd)"
+  RELEASE_DIR="$(pwd)"
+  TEST_ENV="$STAGING_DIR/.test-instance/test.env"
+  TEST_CONFIG="$STAGING_DIR/.test-instance/openclaw.test.json"
+  echo "  ℹ️ CI mode: validating candidate checkout at $DEV_REPO"
+fi
 [[ -d "$DEV_REPO" ]]     || { echo "  ❌ DEV_REPO not found: $DEV_REPO"; PREFLIGHT_OK=false; }
-[[ -d "$STAGING_DIR" ]]  || { echo "  ❌ STAGING_DIR not found: $STAGING_DIR"; PREFLIGHT_OK=false; }
-[[ -d "$RELEASE_DIR" ]]  || { echo "  ❌ RELEASE_DIR not found: $RELEASE_DIR"; PREFLIGHT_OK=false; }
+if [[ "$CI_MODE" != true ]]; then
+  [[ -d "$STAGING_DIR" ]]  || { echo "  ❌ STAGING_DIR not found: $STAGING_DIR"; PREFLIGHT_OK=false; }
+  [[ -d "$RELEASE_DIR" ]]  || { echo "  ❌ RELEASE_DIR not found: $RELEASE_DIR"; PREFLIGHT_OK=false; }
+fi
 command -v gh &>/dev/null || { echo "  ❌ gh CLI not found"; PREFLIGHT_OK=false; }
 command -v pnpm &>/dev/null || { echo "  ❌ pnpm not found"; PREFLIGHT_OK=false; }
 if [[ "$PREFLIGHT_OK" != true ]]; then
@@ -146,7 +162,9 @@ RUN_SCRIPT="$STAGING_DIR/.test-instance/run-test-instance.sh"
 STOP_SCRIPT="$STAGING_DIR/.test-instance/../stop-test-instance.sh"
 PID_FILE="$STAGING_DIR/.test-instance/gateway.pid"
 GW_LOG="$STAGING_DIR/.test-instance/gateway.log"
-if [[ ! -f "$TEST_ENV" ]]; then
+if [[ "$CI_MODE" == true ]]; then
+  check_pass "Staging: skipped in CI mode (no local staging harness on GitHub runner)"
+elif [[ ! -f "$TEST_ENV" ]]; then
   check_fail "Staging: test.env not found at $TEST_ENV"
 elif [[ ! -f "$TEST_CONFIG" ]]; then
   check_fail "Staging: test config not found at $TEST_CONFIG"
@@ -174,7 +192,9 @@ fi
 # ── Check 4: Staging local smoke ──────────────────────────────────────────────
 echo ""
 echo "── Check 4: Staging local smoke"
-if [[ "$SKIP_SMOKE" == true ]]; then
+if [[ "$CI_MODE" == true ]]; then
+  check_pass "Smoke: skipped in CI mode (runner cannot exercise local Discord staging bot)"
+elif [[ "$SKIP_SMOKE" == true ]]; then
   check_pass "Smoke: skipped (--skip-smoke)"
 else
   if [[ ! -f "$GW_LOG" ]]; then
