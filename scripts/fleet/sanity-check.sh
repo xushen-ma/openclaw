@@ -14,8 +14,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/fleet.env"
-source "$SCRIPT_DIR/lock.sh"
+FLEET_ENV_PATH="$SCRIPT_DIR/fleet.env"
+LOCK_SH_PATH="$SCRIPT_DIR/lock.sh"
+if [[ ! -f "$FLEET_ENV_PATH" ]]; then
+  FLEET_ENV_PATH="$SCRIPT_DIR/internal/fleet.env"
+fi
+if [[ ! -f "$LOCK_SH_PATH" ]]; then
+  LOCK_SH_PATH="$SCRIPT_DIR/internal/lock.sh"
+fi
+source "$FLEET_ENV_PATH"
+source "$LOCK_SH_PATH"
 
 # If sudo preserved caller HOME, re-anchor to the actual runtime user's home.
 RUNTIME_HOME="$(python3 - <<'PY'
