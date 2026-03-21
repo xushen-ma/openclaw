@@ -9,6 +9,7 @@ import type { CoreConfig } from "../../types.js";
 import { loadMatrixSdk } from "../sdk-runtime.js";
 import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
 import type { MatrixAuth, MatrixResolvedConfig } from "./types.js";
+import { resolveConfiguredSecretInputWithFallback } from "../../../../../src/gateway/resolve-configured-secret-input-string.js";
 
 function clean(value: unknown, path: string): string {
   return normalizeResolvedSecretInputString({ value, path }) ?? "";
@@ -28,16 +29,7 @@ function deepMergeConfig<T extends Record<string, unknown>>(base: T, override: P
   return merged as T;
 }
 
-/**
- * Resolve Matrix config for a specific account, with fallback to top-level config.
- * This supports both multi-account (channels.matrix.accounts.*) and
- * single-account (channels.matrix.*) configurations.
- */
-export function resolveMatrixConfigForAccount(
-  cfg: CoreConfig = getMatrixRuntime().config.loadConfig() as CoreConfig,
-  accountId?: string | null,
-  env: NodeJS.ProcessEnv = process.env,
-): MatrixResolvedConfig {
+function resolveMatrixChannelConfigForAccount(cfg: CoreConfig, accountId?: string | null) {
   const normalizedAccountId = normalizeAccountId(accountId);
   const matrixBase = cfg.channels?.matrix ?? {};
   const accounts = cfg.channels?.matrix?.accounts;
@@ -55,7 +47,20 @@ export function resolveMatrixConfigForAccount(
 
   // Deep merge: account-specific values override top-level values, preserving
   // nested object inheritance (dm, actions, groups) so partial overrides work.
-  const matrix = accountConfig ? deepMergeConfig(matrixBase, accountConfig) : matrixBase;
+  return accountConfig ? deepMergeConfig(matrixBase, accountConfig) : matrixBase;
+}
+
+/**
+ * Resolve Matrix config for a specific account, with fallback to top-level config.
+ * This supports both multi-account (channels.matrix.accounts.*) and
+ * single-account (channels.matrix.*) configurations.
+ */
+export function resolveMatrixConfigForAccount(
+  cfg: CoreConfig = getMatrixRuntime().config.loadConfig() as CoreConfig,
+  accountId?: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): MatrixResolvedConfig {
+  const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
 
   const homeserver =
     clean(matrix.homeserver, "channels.matrix.homeserver") ||
@@ -179,7 +184,20 @@ export async function resolveMatrixAuth(params?: {
     throw new Error("Matrix userId is required when no access token is configured (matrix.userId)");
   }
 
-  if (!resolved.password) {
+  let password = resolved.password;
+  if (!password) {
+    const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
+    const resolvedPassword = await resolveConfiguredSecretInputWithFallback({
+      config: cfg,
+      env,
+      value: matrix.password,
+      path: "channels.matrix.password",
+      readFallback: () => normalizeSecretInputString(env.MATRIX_PASSWORD),
+    });
+    password = resolvedPassword.value;
+  }
+
+  if (!password) {
     throw new Error(
       "Matrix password is required when no access token is configured (matrix.password)",
     );
@@ -194,7 +212,7 @@ export async function resolveMatrixAuth(params?: {
       body: JSON.stringify({
         type: "m.login.password",
         identifier: { type: "m.id.user", user: resolved.userId },
-        password: resolved.password,
+        password,
         initial_device_display_name: resolved.deviceName ?? "OpenClaw Gateway",
       }),
     },
