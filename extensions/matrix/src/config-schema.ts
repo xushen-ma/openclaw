@@ -43,7 +43,7 @@ export const MatrixConfigSchema = z.object({
   markdown: MarkdownConfigSchema,
   homeserver: z.string().optional(),
   userId: z.string().optional(),
-  accessToken: z.string().optional(),
+  accessToken: buildSecretInputSchema().optional(),
   password: buildSecretInputSchema().optional(),
   deviceName: z.string().optional(),
   initialSyncLimit: z.number().optional(),
