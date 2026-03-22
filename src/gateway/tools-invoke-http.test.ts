@@ -350,6 +350,9 @@ describe("POST /tools/invoke", () => {
     expect(resProfile.status).toBe(200);
     const profileBody = await resProfile.json();
     expect(profileBody.ok).toBe(true);
+    expect(lastCreateOpenClawToolsContext?.pluginToolAllowlist).toEqual(
+      expect.arrayContaining(["agents_list"]),
+    );
 
     cfg = {
       ...cfg,

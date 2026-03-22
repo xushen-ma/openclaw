@@ -5,8 +5,10 @@ import type { SandboxToolPolicy } from "./sandbox/types.js";
 import { TOOL_POLICY_CONFORMANCE } from "./tool-policy.conformance.js";
 import {
   applyOwnerOnlyToolPolicy,
+  collectExplicitAllowlist,
   expandToolGroups,
   isOwnerOnlyToolName,
+  mergeAlsoAllowPolicy,
   normalizeToolName,
   resolveToolProfilePolicy,
   TOOL_GROUPS,
@@ -59,6 +61,12 @@ describe("tool-policy", () => {
     expect(coding?.allow).toContain("cron");
     expect(coding?.allow).not.toContain("gateway");
     expect(resolveToolProfilePolicy("nope")).toBeUndefined();
+  });
+
+  it("collects alsoAllow entries after profile merge", () => {
+    const merged = mergeAlsoAllowPolicy({ allow: ["read"] }, ["quick_memory_search"]);
+    const allowlist = collectExplicitAllowlist([merged]);
+    expect(allowlist).toEqual(["read", "quick_memory_search"]);
   });
 
   it("includes core tool groups in group:openclaw", () => {
