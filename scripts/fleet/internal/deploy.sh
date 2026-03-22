@@ -87,19 +87,48 @@ git fetch "$FORK_REMOTE" --tags --quiet 2>/dev/null || true
 git fetch origin --tags --quiet 2>/dev/null || true
 
 MAIN_SHA="${FLEET_TARGET_SHA:-}"
-LINEAGE_REF="${FLEET_LINEAGE_REF:-refs/remotes/$FORK_REMOTE/$MAIN_BRANCH}"
+MAIN_REF="${FLEET_MAIN_REF:-refs/remotes/$FORK_REMOTE/$MAIN_BRANCH}"
+LINEAGE_REF="${FLEET_LINEAGE_REF:-}"
+
+resolve_lineage_ref() {
+  local explicit_ref="$1"
+  local main_ref="$2"
+
+  if [[ -n "$explicit_ref" ]]; then
+    git rev-parse --verify "$explicit_ref" >/dev/null 2>&1 || {
+      echo "❌ Refusing deploy: lineage reference not found: $explicit_ref"
+      exit 1
+    }
+    printf '%s\n' "$explicit_ref"
+    return 0
+  fi
+
+  local candidate
+  for candidate in \
+    "refs/remotes/$FORK_REMOTE/xushen/$PROD_BRANCH" \
+    "refs/remotes/$FORK_REMOTE/$PROD_BRANCH" \
+    "$main_ref"
+  do
+    if git rev-parse --verify "$candidate" >/dev/null 2>&1; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  echo "❌ Refusing deploy: could not resolve a lineage reference"
+  exit 1
+}
+
+LINEAGE_REF="$(resolve_lineage_ref "$LINEAGE_REF" "$MAIN_REF")"
+
 if [[ -n "$MAIN_SHA" && "$MAIN_SHA" != "unknown" ]]; then
   echo "📌 Using pinned candidate SHA: $MAIN_SHA"
-  git rev-parse --verify "$LINEAGE_REF" >/dev/null 2>&1 || {
-    echo "❌ Refusing deploy: lineage reference not found: $LINEAGE_REF"
-    exit 1
-  }
   git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1 || {
     echo "❌ Refusing deploy: pinned candidate is not an ancestor of $LINEAGE_REF"
     exit 1
   }
 else
-  MAIN_SHA=$(git rev-parse "$LINEAGE_REF")
+  MAIN_SHA=$(git rev-parse "$MAIN_REF")
 fi
 
 # Prefer the active fork release line when one already exists on this candidate.
