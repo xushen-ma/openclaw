@@ -39,7 +39,7 @@ import {
   formatUsd,
   resolveModelCostConfig,
 } from "../utils/usage-format.js";
-import { VERSION } from "../version.js";
+import { resolveRuntimeServiceVersion } from "../version.js";
 import {
   listChatCommands,
   listChatCommandsForConfig,
@@ -656,7 +656,8 @@ export function buildStatusMessage(args: StatusArgs): string {
       } (${fallbackState.reason ?? "selected model unavailable"})`
     : null;
   const commit = resolveCommitHash({ moduleUrl: import.meta.url });
-  const versionLine = `🦞 OpenClaw ${VERSION}${commit ? ` (${commit})` : ""}`;
+  const version = resolveRuntimeServiceVersion(process.env);
+  const versionLine = `🦞 OpenClaw ${version}${commit ? ` (${commit})` : ""}`;
   const usagePair = formatUsagePair(inputTokens, outputTokens);
   const cacheLine = formatCacheLine(inputTokens, cacheRead, cacheWrite);
   const costLine = costLabel ? `💵 Cost: ${costLabel}` : null;
