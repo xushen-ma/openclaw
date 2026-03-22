@@ -75,6 +75,15 @@ describe("version resolution", () => {
     });
   });
 
+  it("prefers build-info version over package version when both exist", async () => {
+    await withTempDir(async (root) => {
+      await writeJsonFixture(root, "package.json", { name: "openclaw", version: "2026.3.9" });
+      await writeJsonFixture(root, "build-info.json", { version: "v2026.3.13-1-x.7" });
+      const moduleUrl = await ensureModuleFixture(root);
+      expect(resolveVersionFromModuleUrl(moduleUrl)).toBe("v2026.3.13-1-x.7");
+    });
+  });
+
   it("returns null when no version metadata exists", async () => {
     await withTempDir(async (root) => {
       const moduleUrl = await ensureModuleFixture(root);
