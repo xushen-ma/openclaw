@@ -53,4 +53,30 @@ describe("resolveMatrixConfig", () => {
     expect(resolved.initialSyncLimit).toBeUndefined();
     expect(resolved.encryption).toBe(false);
   });
+
+  it("resolves using channels.matrix.defaultAccount instead of literal default", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://base.example.org",
+          accessToken: "base-token",
+          defaultAccount: "mini",
+          accounts: {
+            default: {
+              homeserver: "https://default.example.org",
+              accessToken: "default-token",
+            },
+            mini: {
+              homeserver: "https://mini.example.org",
+              accessToken: "mini-token",
+            },
+          },
+        },
+      },
+    } as CoreConfig;
+
+    const resolved = resolveMatrixConfig(cfg, {} as NodeJS.ProcessEnv);
+    expect(resolved.homeserver).toBe("https://mini.example.org");
+    expect(resolved.accessToken).toBe("mini-token");
+  });
 });

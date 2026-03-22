@@ -1,7 +1,8 @@
 import type { MatrixClient } from "@vector-im/matrix-bot-sdk";
-import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
+import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { getMatrixRuntime } from "../../runtime.js";
 import type { CoreConfig } from "../../types.js";
+import { resolveDefaultMatrixAccountId } from "../accounts.js";
 import { getActiveMatrixClient, getAnyActiveMatrixClient } from "../active-client.js";
 import { createPreparedMatrixClient } from "../client-bootstrap.js";
 import { isBunRuntime, resolveMatrixAuth, resolveSharedMatrixClient } from "../client.js";
@@ -68,10 +69,13 @@ export async function resolveMatrixClient(opts: {
   if (active) {
     return { client: active, stopOnDone: false };
   }
-  // When no account is specified, try the default account first; only fall back to
-  // any active client as a last resort (prevents sending from an arbitrary account).
+  // When no account is specified, try the configured default account first; only
+  // fall back to any active client as a last resort (prevents sending from an
+  // arbitrary account).
   if (!accountId) {
-    const defaultClient = getActiveMatrixClient(DEFAULT_ACCOUNT_ID);
+    const resolvedCfg = opts.cfg ?? (getCore().config.loadConfig() as CoreConfig);
+    const defaultAccountId = resolveDefaultMatrixAccountId(resolvedCfg);
+    const defaultClient = getActiveMatrixClient(defaultAccountId);
     if (defaultClient) {
       return { client: defaultClient, stopOnDone: false };
     }

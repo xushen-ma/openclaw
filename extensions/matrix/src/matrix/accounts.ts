@@ -69,7 +69,8 @@ export function resolveMatrixAccount(params: {
   const resolved = resolveMatrixConfigForAccount(params.cfg, accountId, process.env);
   const hasHomeserver = Boolean(resolved.homeserver);
   const hasUserId = Boolean(resolved.userId);
-  const hasAccessToken = Boolean(resolved.accessToken);
+  const hasAccessToken =
+    Boolean(resolved.accessToken) || hasConfiguredSecretInput(base.accessToken);
   const hasPassword = Boolean(resolved.password);
   const hasPasswordAuth = hasUserId && (hasPassword || hasConfiguredSecretInput(base.password));
   const stored = loadMatrixCredentials(process.env, accountId);

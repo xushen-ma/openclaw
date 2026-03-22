@@ -7,6 +7,7 @@ import {
   normalizeSecretInputString,
 } from "../../secret-input.js";
 import type { CoreConfig } from "../../types.js";
+import { resolveDefaultMatrixAccountId } from "../accounts.js";
 import { loadMatrixSdk } from "../sdk-runtime.js";
 import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
 import type { MatrixAuth, MatrixResolvedConfig } from "./types.js";
@@ -120,7 +121,8 @@ export function resolveMatrixConfig(
   cfg: CoreConfig = getMatrixRuntime().config.loadConfig() as CoreConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): MatrixResolvedConfig {
-  return resolveMatrixConfigForAccount(cfg, DEFAULT_ACCOUNT_ID, env);
+  const defaultAccountId = resolveDefaultMatrixAccountId(cfg) || DEFAULT_ACCOUNT_ID;
+  return resolveMatrixConfigForAccount(cfg, defaultAccountId, env);
 }
 
 export async function resolveMatrixAuth(params?: {

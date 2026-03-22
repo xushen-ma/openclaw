@@ -51,6 +51,23 @@ describe("resolveMatrixAccount", () => {
     expect(account.configured).toBe(true);
   });
 
+  it("treats SecretInput access token as configured", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          accessToken: {
+            source: "env",
+            id: "MATRIX_ACCESS_TOKEN",
+          } as unknown as string,
+        },
+      },
+    };
+
+    const account = resolveMatrixAccount({ cfg });
+    expect(account.configured).toBe(true);
+  });
+
   it("requires userId + password when no access token is set", () => {
     const cfg: CoreConfig = {
       channels: {
