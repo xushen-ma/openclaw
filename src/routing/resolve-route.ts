@@ -54,6 +54,7 @@ export type ResolvedAgentRoute = {
     | "binding.guild"
     | "binding.team"
     | "binding.account"
+    | "binding.account.inferred"
     | "binding.channel"
     | "default";
 };
@@ -611,6 +612,45 @@ function matchesBindingScope(match: NormalizedBindingMatch, scope: BindingScope)
   return true;
 }
 
+function listConfiguredMatrixAccountIds(cfg: OpenClawConfig): string[] {
+  const matrix = cfg.channels?.matrix;
+  if (!matrix || typeof matrix !== "object") {
+    return [];
+  }
+  const accounts = (matrix as { accounts?: unknown }).accounts;
+  if (!accounts || typeof accounts !== "object" || Array.isArray(accounts)) {
+    return [];
+  }
+  return Object.keys(accounts).map((id) => normalizeAccountId(id));
+}
+
+function resolveInferredMatrixAccountAgent(params: {
+  cfg: OpenClawConfig;
+  accountId: string;
+  evaluatedBindings: EvaluatedBinding[];
+}): string | null {
+  if (params.accountId === DEFAULT_ACCOUNT_ID) {
+    return null;
+  }
+  const configuredAccountIds = listConfiguredMatrixAccountIds(params.cfg);
+  if (configuredAccountIds.length < 2) {
+    return null;
+  }
+
+  const candidateAgents = new Set<string>();
+  for (const binding of params.evaluatedBindings) {
+    if (binding.match.accountPattern === "*") {
+      continue;
+    }
+    candidateAgents.add(binding.binding.agentId);
+    if (candidateAgents.size > 1) {
+      return null;
+    }
+  }
+  const [agentId] = candidateAgents;
+  return agentId ?? null;
+}
+
 export function resolveAgentRoute(input: ResolveAgentRouteInput): ResolvedAgentRoute {
   const channel = normalizeToken(input.channel);
   const accountId = normalizeAccountId(input.accountId);
@@ -797,6 +837,22 @@ export function resolveAgentRoute(input: ResolveAgentRouteInput): ResolvedAgentR
         logDebug(`[routing] match: matchedBy=${tier.matchedBy} agentId=${matched.binding.agentId}`);
       }
       return choose(matched.binding.agentId, tier.matchedBy);
+    }
+  }
+
+  if (channel === "matrix") {
+    const inferredMatrixAccountAgent = resolveInferredMatrixAccountAgent({
+      cfg: input.cfg,
+      accountId,
+      evaluatedBindings: bindings,
+    });
+    if (inferredMatrixAccountAgent) {
+      if (shouldLogDebug) {
+        logDebug(
+          `[routing] match: matchedBy=binding.account.inferred agentId=${inferredMatrixAccountAgent}`,
+        );
+      }
+      return choose(inferredMatrixAccountAgent, "binding.account.inferred");
     }
   }
 
