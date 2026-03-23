@@ -813,6 +813,183 @@ describe("role-based agent routing", () => {
   });
 });
 
+describe("matrix multi-account routing safety", () => {
+  const roomPeer = { kind: "channel" as const, id: "!room-a:example.org" };
+
+  test("explicit matrix peer binding still wins", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            mini: { userId: "@mini:example.org" },
+            kiki: { userId: "@kiki:example.org" },
+          },
+        },
+      },
+      bindings: [
+        {
+          agentId: "mini-agent",
+          match: { channel: "matrix", accountId: "kiki" },
+        },
+        {
+          agentId: "kiki-room-agent",
+          match: {
+            channel: "matrix",
+            accountId: "kiki",
+            peer: { kind: "channel", id: roomPeer.id },
+          },
+        },
+      ],
+    };
+
+    const route = resolveAgentRoute({
+      cfg,
+      channel: "matrix",
+      accountId: "kiki",
+      peer: roomPeer,
+    });
+
+    expect(route.agentId).toBe("kiki-room-agent");
+    expect(route.matchedBy).toBe("binding.peer");
+  });
+
+  test("uses explicit account-scoped matrix binding when no peer binding exists", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            mini: { userId: "@mini:example.org" },
+            kiki: { userId: "@kiki:example.org" },
+          },
+        },
+      },
+      bindings: [
+        {
+          agentId: "kiki-agent",
+          match: { channel: "matrix", accountId: "kiki" },
+        },
+        {
+          agentId: "wildcard-agent",
+          match: { channel: "matrix", accountId: "*" },
+        },
+      ],
+    };
+
+    const route = resolveAgentRoute({
+      cfg,
+      channel: "matrix",
+      accountId: "kiki",
+      peer: { kind: "channel", id: "!room-b:example.org" },
+    });
+
+    expect(route.agentId).toBe("kiki-agent");
+    expect(route.matchedBy).toBe("binding.account");
+  });
+
+  test("falls back to matrix wildcard binding when account ownership is not explicit", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            mini: { userId: "@mini:example.org" },
+            kiki: { userId: "@kiki:example.org" },
+          },
+        },
+      },
+      bindings: [
+        {
+          agentId: "wildcard-agent",
+          match: { channel: "matrix", accountId: "*" },
+        },
+      ],
+    };
+
+    const route = resolveAgentRoute({
+      cfg,
+      channel: "matrix",
+      accountId: "kiki",
+      peer: { kind: "channel", id: "!room-c:example.org" },
+    });
+
+    expect(route.agentId).toBe("wildcard-agent");
+    expect(route.matchedBy).toBe("binding.channel");
+  });
+
+  test("infers matrix account owner from account-scoped peer bindings when unambiguous", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            mini: { userId: "@mini:example.org" },
+            kiki: { userId: "@kiki:example.org" },
+          },
+        },
+      },
+      bindings: [
+        {
+          agentId: "kiki-agent",
+          match: {
+            channel: "matrix",
+            accountId: "kiki",
+            peer: { kind: "channel", id: "!room-owned:example.org" },
+          },
+        },
+      ],
+    };
+
+    const route = resolveAgentRoute({
+      cfg,
+      channel: "matrix",
+      accountId: "kiki",
+      peer: { kind: "channel", id: "!room-new:example.org" },
+    });
+
+    expect(route.agentId).toBe("kiki-agent");
+    expect(route.matchedBy).toBe("binding.account.inferred");
+  });
+
+  test("does not infer matrix account owner when account-scoped bindings are ambiguous", () => {
+    const cfg: OpenClawConfig = {
+      channels: {
+        matrix: {
+          accounts: {
+            mini: { userId: "@mini:example.org" },
+            kiki: { userId: "@kiki:example.org" },
+          },
+        },
+      },
+      bindings: [
+        {
+          agentId: "kiki-agent-a",
+          match: {
+            channel: "matrix",
+            accountId: "kiki",
+            peer: { kind: "channel", id: "!room-1:example.org" },
+          },
+        },
+        {
+          agentId: "kiki-agent-b",
+          match: {
+            channel: "matrix",
+            accountId: "kiki",
+            peer: { kind: "channel", id: "!room-2:example.org" },
+          },
+        },
+      ],
+    };
+
+    const route = resolveAgentRoute({
+      cfg,
+      channel: "matrix",
+      accountId: "kiki",
+      peer: { kind: "channel", id: "!room-new:example.org" },
+    });
+
+    expect(route.agentId).toBe("main");
+    expect(route.matchedBy).toBe("default");
+  });
+});
+
 describe("binding evaluation cache scalability", () => {
   test("does not rescan full bindings after channel/account cache rollover (#36915)", () => {
     const bindingCount = 2_205;
