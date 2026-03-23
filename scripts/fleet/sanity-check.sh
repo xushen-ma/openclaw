@@ -129,7 +129,8 @@ else
   echo "  Testing main SHA: $MAIN_SHA_BEFORE"
   git reset --hard "refs/remotes/$FORK_REMOTE/$MAIN_BRANCH" --quiet 2>/dev/null || true
 fi
-if ! pnpm build > "$BUILD_LOG" 2>&1; then
+BUILD_HOME="/Users/oc-release"
+if ! env   HOME="$BUILD_HOME"   USER="oc-release"   LOGNAME="oc-release"   XDG_CONFIG_HOME="$BUILD_HOME/.config"   XDG_CACHE_HOME="$BUILD_HOME/.cache"   XDG_STATE_HOME="$BUILD_HOME/.local/state"   PNPM_HOME="$BUILD_HOME/Library/pnpm"   pnpm build > "$BUILD_LOG" 2>&1; then
   check_fail "Build: pnpm build failed (see $BUILD_LOG)"
 else
   check_pass "Build: pnpm build succeeded"
