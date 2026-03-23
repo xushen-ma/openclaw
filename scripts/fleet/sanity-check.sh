@@ -35,14 +35,39 @@ if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
   export HOME="$RUNTIME_HOME"
 fi
 
+SHA_ARG="${FLEET_TARGET_SHA:-}"
+TEST_REPO_ARG=""
+TEST_REPO_MODE=false
 SKIP_SMOKE=false
 CI_MODE=false
-for arg in "$@"; do
+ARGS=("$@")
+idx=0
+while [[ $idx -lt ${#ARGS[@]} ]]; do
+  arg="${ARGS[$idx]}"
   case "$arg" in
+    --sha)
+      idx=$((idx+1))
+      [[ $idx -lt ${#ARGS[@]} ]] || { echo "❌ --sha requires a value" >&2; exit 1; }
+      SHA_ARG="${ARGS[$idx]}"
+      ;;
+    --repo)
+      idx=$((idx+1))
+      [[ $idx -lt ${#ARGS[@]} ]] || { echo "❌ --repo requires a value" >&2; exit 1; }
+      TEST_REPO_ARG="${ARGS[$idx]}"
+      TEST_REPO_MODE=true
+      ;;
     --skip-smoke) SKIP_SMOKE=true ;;
     --ci) CI_MODE=true ;;
   esac
+  idx=$((idx+1))
 done
+if [[ -n "$TEST_REPO_ARG" ]]; then
+  DEV_REPO="$TEST_REPO_ARG"
+  if [[ -z "$SHA_ARG" ]]; then
+    SHA_ARG="$(git -C "$TEST_REPO_ARG" rev-parse HEAD 2>/dev/null || true)"
+  fi
+fi
+[[ -n "$SHA_ARG" ]] && export FLEET_TARGET_SHA="$SHA_ARG"
 
 PASS=0
 FAIL=0
@@ -129,7 +154,14 @@ else
   echo "  Testing main SHA: $MAIN_SHA_BEFORE"
   git reset --hard "refs/remotes/$FORK_REMOTE/$MAIN_BRANCH" --quiet 2>/dev/null || true
 fi
-if ! pnpm build > "$BUILD_LOG" 2>&1; then
+BUILD_HOME="/Users/oc-release"
+if [[ "$TEST_REPO_MODE" == true ]]; then
+  if ! pnpm build > "$BUILD_LOG" 2>&1; then
+    check_fail "Build: pnpm build failed in test checkout (see $BUILD_LOG)"
+  else
+    check_pass "Build: pnpm build succeeded in test checkout"
+  fi
+elif ! sudo -n -u oc-release env   HOME="$BUILD_HOME"   USER="oc-release"   LOGNAME="oc-release"   XDG_CONFIG_HOME="$BUILD_HOME/.config"   XDG_CACHE_HOME="$BUILD_HOME/.cache"   XDG_STATE_HOME="$BUILD_HOME/.local/state"   PNPM_HOME="$BUILD_HOME/Library/pnpm"   pnpm build > "$BUILD_LOG" 2>&1; then
   check_fail "Build: pnpm build failed (see $BUILD_LOG)"
 else
   check_pass "Build: pnpm build succeeded"
@@ -145,14 +177,20 @@ TEST_AREAS=(
   "src/plugins/loader.test.ts"
   "src/daemon"
 )
+set +e
 TEST_OUT=$(npx vitest run "${TEST_AREAS[@]}" 2>&1)
-OUR_FAILS=$(echo "$TEST_OUT" | grep -c "^.*failed" | head -1 || echo "0")
-SUMMARY=$(echo "$TEST_OUT" | grep "Test Files" | tail -1)
-if echo "$SUMMARY" | grep -q "failed"; then
-  check_fail "Tests: regressions in our feature areas — $SUMMARY"
-  echo "$TEST_OUT" | grep -A3 "FAIL src/" | head -20
+VITEST_STATUS=$?
+set -e
+SUMMARY=$(echo "$TEST_OUT" | grep "Test Files" | tail -1 || true)
+if [[ "$VITEST_STATUS" -ne 0 ]]; then
+  if [[ -n "$SUMMARY" ]]; then
+    check_fail "Tests: regressions in our feature areas — $SUMMARY"
+  else
+    check_fail "Tests: vitest exited non-zero (no summary line)"
+  fi
+  echo "$TEST_OUT" | tail -80
 else
-  check_pass "Tests: our feature areas clean — $SUMMARY"
+  check_pass "Tests: our feature areas clean — ${SUMMARY:-no summary line}"
 fi
 
 # ── Check 3: Staging boot ────────────────────────────────────────────────────
@@ -164,6 +202,8 @@ PID_FILE="$STAGING_DIR/.test-instance/gateway.pid"
 GW_LOG="$STAGING_DIR/.test-instance/gateway.log"
 if [[ "$CI_MODE" == true ]]; then
   check_pass "Staging: skipped in CI mode (no local staging harness on GitHub runner)"
+elif [[ "$TEST_REPO_MODE" == true ]]; then
+  check_pass "Staging: skipped in test checkout mode (boot/smoke happen in governed staging lane)"
 elif [[ ! -f "$TEST_ENV" ]]; then
   check_fail "Staging: test.env not found at $TEST_ENV"
 elif [[ ! -f "$TEST_CONFIG" ]]; then
@@ -194,6 +234,8 @@ echo ""
 echo "── Check 4: Staging local smoke"
 if [[ "$CI_MODE" == true ]]; then
   check_pass "Smoke: skipped in CI mode (runner cannot exercise local Discord staging bot)"
+elif [[ "$TEST_REPO_MODE" == true ]]; then
+  check_pass "Smoke: skipped in test checkout mode (boot/smoke happen in governed staging lane)"
 elif [[ "$SKIP_SMOKE" == true ]]; then
   check_pass "Smoke: skipped (--skip-smoke)"
 else
