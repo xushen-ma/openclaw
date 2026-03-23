@@ -37,6 +37,7 @@ fi
 
 SHA_ARG="${FLEET_TARGET_SHA:-}"
 TEST_REPO_ARG=""
+TEST_REPO_MODE=false
 SKIP_SMOKE=false
 CI_MODE=false
 ARGS=("$@")
@@ -53,20 +54,20 @@ while [[ $idx -lt ${#ARGS[@]} ]]; do
       idx=$((idx+1))
       [[ $idx -lt ${#ARGS[@]} ]] || { echo "❌ --repo requires a value" >&2; exit 1; }
       TEST_REPO_ARG="${ARGS[$idx]}"
+      TEST_REPO_MODE=true
       ;;
     --skip-smoke) SKIP_SMOKE=true ;;
     --ci) CI_MODE=true ;;
   esac
   idx=$((idx+1))
 done
-[[ -n "$SHA_ARG" ]] && export FLEET_TARGET_SHA="$SHA_ARG"
 if [[ -n "$TEST_REPO_ARG" ]]; then
   DEV_REPO="$TEST_REPO_ARG"
-  STAGING_DIR="$TEST_REPO_ARG"
-  STAGING_REPO="$TEST_REPO_ARG"
-  TEST_ENV="$TEST_REPO_ARG/.test-instance/test.env"
-  TEST_CONFIG="$TEST_REPO_ARG/.test-instance/openclaw.test.json"
+  if [[ -z "$SHA_ARG" ]]; then
+    SHA_ARG="$(git -C "$TEST_REPO_ARG" rev-parse HEAD 2>/dev/null || true)"
+  fi
 fi
+[[ -n "$SHA_ARG" ]] && export FLEET_TARGET_SHA="$SHA_ARG"
 
 PASS=0
 FAIL=0
@@ -154,7 +155,13 @@ else
   git reset --hard "refs/remotes/$FORK_REMOTE/$MAIN_BRANCH" --quiet 2>/dev/null || true
 fi
 BUILD_HOME="/Users/oc-release"
-if ! sudo -n -u oc-release env   HOME="$BUILD_HOME"   USER="oc-release"   LOGNAME="oc-release"   XDG_CONFIG_HOME="$BUILD_HOME/.config"   XDG_CACHE_HOME="$BUILD_HOME/.cache"   XDG_STATE_HOME="$BUILD_HOME/.local/state"   PNPM_HOME="$BUILD_HOME/Library/pnpm"   pnpm build > "$BUILD_LOG" 2>&1; then
+if [[ "$TEST_REPO_MODE" == true ]]; then
+  if ! pnpm build > "$BUILD_LOG" 2>&1; then
+    check_fail "Build: pnpm build failed in test checkout (see $BUILD_LOG)"
+  else
+    check_pass "Build: pnpm build succeeded in test checkout"
+  fi
+elif ! sudo -n -u oc-release env   HOME="$BUILD_HOME"   USER="oc-release"   LOGNAME="oc-release"   XDG_CONFIG_HOME="$BUILD_HOME/.config"   XDG_CACHE_HOME="$BUILD_HOME/.cache"   XDG_STATE_HOME="$BUILD_HOME/.local/state"   PNPM_HOME="$BUILD_HOME/Library/pnpm"   pnpm build > "$BUILD_LOG" 2>&1; then
   check_fail "Build: pnpm build failed (see $BUILD_LOG)"
 else
   check_pass "Build: pnpm build succeeded"
@@ -195,6 +202,8 @@ PID_FILE="$STAGING_DIR/.test-instance/gateway.pid"
 GW_LOG="$STAGING_DIR/.test-instance/gateway.log"
 if [[ "$CI_MODE" == true ]]; then
   check_pass "Staging: skipped in CI mode (no local staging harness on GitHub runner)"
+elif [[ "$TEST_REPO_MODE" == true ]]; then
+  check_pass "Staging: skipped in test checkout mode (boot/smoke happen in governed staging lane)"
 elif [[ ! -f "$TEST_ENV" ]]; then
   check_fail "Staging: test.env not found at $TEST_ENV"
 elif [[ ! -f "$TEST_CONFIG" ]]; then
@@ -225,6 +234,8 @@ echo ""
 echo "── Check 4: Staging local smoke"
 if [[ "$CI_MODE" == true ]]; then
   check_pass "Smoke: skipped in CI mode (runner cannot exercise local Discord staging bot)"
+elif [[ "$TEST_REPO_MODE" == true ]]; then
+  check_pass "Smoke: skipped in test checkout mode (boot/smoke happen in governed staging lane)"
 elif [[ "$SKIP_SMOKE" == true ]]; then
   check_pass "Smoke: skipped (--skip-smoke)"
 else
