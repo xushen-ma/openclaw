@@ -78,7 +78,23 @@ const resolveVersionFromTagContext = () => {
   }
 };
 
-const version = resolveVersionFromTagContext() ?? readPackageVersion();
+const resolveVersionFromGitDescribe = () => {
+  try {
+    return normalizeCandidate(
+      execSync("git describe --tags --always --dirty", {
+        cwd: rootDir,
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim(),
+    );
+  } catch {
+    return null;
+  }
+};
+
+const version =
+  resolveVersionFromTagContext() ?? resolveVersionFromGitDescribe() ?? readPackageVersion();
 const commit = resolveCommit();
 
 const buildInfo = {
