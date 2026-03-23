@@ -146,14 +146,20 @@ TEST_AREAS=(
   "src/plugins/loader.test.ts"
   "src/daemon"
 )
+set +e
 TEST_OUT=$(npx vitest run "${TEST_AREAS[@]}" 2>&1)
-OUR_FAILS=$(echo "$TEST_OUT" | grep -c "^.*failed" | head -1 || echo "0")
-SUMMARY=$(echo "$TEST_OUT" | grep "Test Files" | tail -1)
-if echo "$SUMMARY" | grep -q "failed"; then
-  check_fail "Tests: regressions in our feature areas — $SUMMARY"
-  echo "$TEST_OUT" | grep -A3 "FAIL src/" | head -20
+VITEST_STATUS=$?
+set -e
+SUMMARY=$(echo "$TEST_OUT" | grep "Test Files" | tail -1 || true)
+if [[ "$VITEST_STATUS" -ne 0 ]]; then
+  if [[ -n "$SUMMARY" ]]; then
+    check_fail "Tests: regressions in our feature areas — $SUMMARY"
+  else
+    check_fail "Tests: vitest exited non-zero (no summary line)"
+  fi
+  echo "$TEST_OUT" | tail -80
 else
-  check_pass "Tests: our feature areas clean — $SUMMARY"
+  check_pass "Tests: our feature areas clean — ${SUMMARY:-no summary line}"
 fi
 
 # ── Check 3: Staging boot ────────────────────────────────────────────────────
