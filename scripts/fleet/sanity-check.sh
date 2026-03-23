@@ -35,14 +35,38 @@ if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
   export HOME="$RUNTIME_HOME"
 fi
 
+SHA_ARG="${FLEET_TARGET_SHA:-}"
+TEST_REPO_ARG=""
 SKIP_SMOKE=false
 CI_MODE=false
-for arg in "$@"; do
+ARGS=("$@")
+idx=0
+while [[ $idx -lt ${#ARGS[@]} ]]; do
+  arg="${ARGS[$idx]}"
   case "$arg" in
+    --sha)
+      idx=$((idx+1))
+      [[ $idx -lt ${#ARGS[@]} ]] || { echo "❌ --sha requires a value" >&2; exit 1; }
+      SHA_ARG="${ARGS[$idx]}"
+      ;;
+    --repo)
+      idx=$((idx+1))
+      [[ $idx -lt ${#ARGS[@]} ]] || { echo "❌ --repo requires a value" >&2; exit 1; }
+      TEST_REPO_ARG="${ARGS[$idx]}"
+      ;;
     --skip-smoke) SKIP_SMOKE=true ;;
     --ci) CI_MODE=true ;;
   esac
+  idx=$((idx+1))
 done
+[[ -n "$SHA_ARG" ]] && export FLEET_TARGET_SHA="$SHA_ARG"
+if [[ -n "$TEST_REPO_ARG" ]]; then
+  DEV_REPO="$TEST_REPO_ARG"
+  STAGING_DIR="$TEST_REPO_ARG"
+  STAGING_REPO="$TEST_REPO_ARG"
+  TEST_ENV="$TEST_REPO_ARG/.test-instance/test.env"
+  TEST_CONFIG="$TEST_REPO_ARG/.test-instance/openclaw.test.json"
+fi
 
 PASS=0
 FAIL=0
