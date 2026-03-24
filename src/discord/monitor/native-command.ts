@@ -1311,7 +1311,7 @@ async function dispatchDiscordCommandInteraction(params: {
   if (!user) {
     return;
   }
-  const botUserId = interaction.client.user?.id;
+  const botUserId: string | undefined = (interaction.client as { user?: { id?: string } }).user?.id;
   const sender = resolveDiscordSenderIdentity({ author: user, pluralkitInfo: null });
   const channel = interaction.channel;
   const channelType = channel?.type;
