@@ -108,6 +108,10 @@ export async function runDiscordGatewayLifecycle(params: {
     params.abortSignal?.addEventListener("abort", onAbort, { once: true });
   }
 
+  if (!lifecycleStopping && !gateway?.isConnected) {
+    reconnectStallWatchdog.arm(Date.now());
+  }
+
   let helloTimeoutId: ReturnType<typeof setTimeout> | undefined;
   let helloConnectedPollId: ReturnType<typeof setInterval> | undefined;
   let consecutiveHelloStalls = 0;
