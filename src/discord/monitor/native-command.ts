@@ -1259,7 +1259,7 @@ export function createDiscordNativeCommand(params: {
         discordConfig,
         accountId,
         sessionPrefix,
-        preferFollowUp: false,
+        preferFollowUp: true,
         threadBindings,
       });
     }
