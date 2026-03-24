@@ -619,89 +619,13 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       }
     }
 
-    const clientPlugins: Plugin[] = [
-      createDiscordGatewayPlugin({ discordConfig: discordCfg, runtime }),
-    ];
-    if (voiceEnabled) {
-      clientPlugins.push(new VoicePlugin());
-    }
-    // Pass eventQueue config to Carbon so the gateway listener budget can be tuned.
-    // Default listenerTimeout is 120s (Carbon defaults to 30s, which is too short for some
-    // Discord normalization/enqueue work).
-    const eventQueueOpts = {
-      listenerTimeout: 120_000,
-      ...discordCfg.eventQueue,
-    };
-    const client = new Client(
-      {
-        baseUrl: "http://localhost",
-        deploySecret: "a",
-        clientId: applicationId,
-        publicKey: "a",
-        token,
-        autoDeploy: false,
-        eventQueue: eventQueueOpts,
-      },
-      {
-        commands,
-        listeners: [new DiscordStatusReadyListener()],
-        components,
-        modals,
-      },
-      clientPlugins,
-    );
-    const earlyGatewayErrorGuard = attachEarlyGatewayErrorGuard(client);
-    releaseEarlyGatewayErrorGuard = earlyGatewayErrorGuard.release;
-
-    const lifecycleGateway = client.getPlugin<GatewayPlugin>("gateway");
-    if (lifecycleGateway) {
-      autoPresenceController = createDiscordAutoPresenceController({
-        accountId: account.accountId,
-        discordConfig: discordCfg,
-        gateway: lifecycleGateway,
-        log: (message) => runtime.log?.(message),
-      });
-      autoPresenceController.start();
-    }
-
-    await deployDiscordCommands({ client, runtime, enabled: nativeEnabled });
-
     const logger = createSubsystemLogger("discord/monitor");
     const guildHistories = new Map<string, HistoryEntry[]>();
     let botUserId: string | undefined;
-    let botUserName: string | undefined;
-    let voiceManager: DiscordVoiceManager | null = null;
 
-    if (nativeDisabledExplicit) {
-      await clearDiscordNativeCommands({
-        client,
-        applicationId,
-        runtime,
-      });
-    }
-
-    try {
-      const botUser = await client.fetchUser("@me");
-      botUserId = botUser?.id;
-      botUserName = botUser?.username?.trim() || botUser?.globalName?.trim() || undefined;
-      monitorInstance.botUserId = botUserId;
-    } catch (err) {
-      runtime.error?.(danger(`discord: failed to fetch bot identity: ${String(err)}`));
-    }
-
-    if (voiceEnabled) {
-      voiceManager = new DiscordVoiceManager({
-        client,
-        cfg,
-        discordConfig: discordCfg,
-        accountId: account.accountId,
-        runtime,
-        botUserId,
-      });
-      voiceManagerRef.current = voiceManager;
-      registerDiscordListener(client.listeners, new DiscordVoiceReadyListener(voiceManager));
-    }
-
+    // Pre-create all listeners before constructing the Client to avoid race condition:
+    // GatewayPlugin.registerClient() calls this.connect() immediately, and if messages
+    // arrive before listeners are registered, DiscordMessageListener.handle() never fires.
     const messageHandler = createDiscordMessageHandler({
       cfg,
       discordConfig: discordCfg,
@@ -733,14 +657,20 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
         }
       : undefined;
 
-    registerDiscordListener(
-      client.listeners,
+    const eventQueueOpts = {
+      listenerTimeout: 120_000,
+      ...discordCfg.eventQueue,
+    };
+
+    const initialListeners = [
+      new DiscordStatusReadyListener(),
       new DiscordMessageListener(messageHandler, logger, trackInboundEvent, {
         timeoutMs: eventQueueOpts.listenerTimeout,
         accountId: account.accountId,
         botUserId,
       }),
-    );
+    ];
+
     const reactionListenerOptions = {
       cfg,
       accountId: account.accountId,
@@ -757,23 +687,89 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       logger,
       onEvent: trackInboundEvent,
     };
-    registerDiscordListener(client.listeners, new DiscordReactionListener(reactionListenerOptions));
-    registerDiscordListener(
-      client.listeners,
-      new DiscordReactionRemoveListener(reactionListenerOptions),
-    );
-
-    registerDiscordListener(
-      client.listeners,
-      new DiscordThreadUpdateListener(cfg, account.accountId, logger),
-    );
+    initialListeners.push(new DiscordReactionListener(reactionListenerOptions));
+    initialListeners.push(new DiscordReactionRemoveListener(reactionListenerOptions));
+    initialListeners.push(new DiscordThreadUpdateListener(cfg, account.accountId, logger));
 
     if (discordCfg.intents?.presence) {
-      registerDiscordListener(
-        client.listeners,
-        new DiscordPresenceListener({ logger, accountId: account.accountId }),
-      );
+      initialListeners.push(new DiscordPresenceListener({ logger, accountId: account.accountId }));
       runtime.log?.("discord: GuildPresences intent enabled — presence listener registered");
+    }
+
+    const clientPlugins: Plugin[] = [
+      createDiscordGatewayPlugin({ discordConfig: discordCfg, runtime }),
+    ];
+    if (voiceEnabled) {
+      clientPlugins.push(new VoicePlugin());
+    }
+    // Pass eventQueue config to Carbon so the gateway listener budget can be tuned.
+    // Default listenerTimeout is 120s (Carbon defaults to 30s, which is too short for some
+    // Discord normalization/enqueue work).
+    const client = new Client(
+      {
+        baseUrl: "http://localhost",
+        deploySecret: "a",
+        clientId: applicationId,
+        publicKey: "a",
+        token,
+        autoDeploy: false,
+        eventQueue: eventQueueOpts,
+      },
+      {
+        commands,
+        listeners: initialListeners,
+        components,
+        modals,
+      },
+      clientPlugins,
+    );
+    const earlyGatewayErrorGuard = attachEarlyGatewayErrorGuard(client);
+    releaseEarlyGatewayErrorGuard = earlyGatewayErrorGuard.release;
+
+    const lifecycleGateway = client.getPlugin<GatewayPlugin>("gateway");
+    if (lifecycleGateway) {
+      autoPresenceController = createDiscordAutoPresenceController({
+        accountId: account.accountId,
+        discordConfig: discordCfg,
+        gateway: lifecycleGateway,
+        log: (message) => runtime.log?.(message),
+      });
+      autoPresenceController.start();
+    }
+
+    await deployDiscordCommands({ client, runtime, enabled: nativeEnabled });
+
+    let botUserName: string | undefined;
+    let voiceManager: DiscordVoiceManager | null = null;
+
+    if (nativeDisabledExplicit) {
+      await clearDiscordNativeCommands({
+        client,
+        applicationId,
+        runtime,
+      });
+    }
+
+    try {
+      const botUser = await client.fetchUser("@me");
+      botUserId = botUser?.id;
+      botUserName = botUser?.username?.trim() || botUser?.globalName?.trim() || undefined;
+      monitorInstance.botUserId = botUserId;
+    } catch (err) {
+      runtime.error?.(danger(`discord: failed to fetch bot identity: ${String(err)}`));
+    }
+
+    if (voiceEnabled) {
+      voiceManager = new DiscordVoiceManager({
+        client,
+        cfg,
+        discordConfig: discordCfg,
+        accountId: account.accountId,
+        runtime,
+        botUserId,
+      });
+      voiceManagerRef.current = voiceManager;
+      registerDiscordListener(client.listeners, new DiscordVoiceReadyListener(voiceManager));
     }
 
     const botIdentity =
