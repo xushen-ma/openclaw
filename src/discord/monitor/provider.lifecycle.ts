@@ -7,7 +7,11 @@ import type { RuntimeEnv } from "../../runtime.js";
 import { attachDiscordGatewayLogging } from "../gateway-logging.js";
 import { getDiscordGatewayEmitter, waitForDiscordGatewayStop } from "../monitor.gateway.js";
 import type { DiscordVoiceManager } from "../voice/manager.js";
-import { registerGateway, unregisterGateway } from "./gateway-registry.js";
+import {
+  registerGateway,
+  unregisterGateway,
+  type DiscordGatewayInstanceMetadata,
+} from "./gateway-registry.js";
 import type { DiscordMonitorStatusSink } from "./status.js";
 
 type ExecApprovalsHandler = {
@@ -28,6 +32,7 @@ export async function runDiscordGatewayLifecycle(params: {
   pendingGatewayErrors?: unknown[];
   releaseEarlyGatewayErrorGuard?: () => void;
   statusSink?: DiscordMonitorStatusSink;
+  instanceMetadata?: DiscordGatewayInstanceMetadata;
 }) {
   const HELLO_TIMEOUT_MS = 30000;
   const HELLO_CONNECTED_POLL_MS = 250;
@@ -35,7 +40,18 @@ export async function runDiscordGatewayLifecycle(params: {
   const RECONNECT_STALL_TIMEOUT_MS = 5 * 60_000;
   const gateway = params.client.getPlugin<GatewayPlugin>("gateway");
   if (gateway) {
-    registerGateway(params.accountId, gateway);
+    const registration = registerGateway(params.accountId, gateway, params.instanceMetadata) ?? {
+      replaced: false,
+    };
+    if (registration.replaced) {
+      const previous = registration.previous;
+      const current = params.instanceMetadata;
+      params.runtime.log?.(
+        danger(
+          `discord: duplicate gateway registration for account=${params.accountId} prevInstance=${previous?.monitorInstanceId ?? "unknown"} prevBot=${previous?.botUserId ?? "unknown"} prevStart=${previous?.startedAt ?? "unknown"} currInstance=${current?.monitorInstanceId ?? "unknown"} currBot=${current?.botUserId ?? "unknown"} currStart=${current?.startedAt ?? "unknown"} pid=${current?.pid ?? process.pid}`,
+        ),
+      );
+    }
   }
   const gatewayEmitter = getDiscordGatewayEmitter(gateway);
   const stopGatewayLogging = attachDiscordGatewayLogging({

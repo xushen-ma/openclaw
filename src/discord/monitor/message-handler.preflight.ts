@@ -76,6 +76,32 @@ export type {
 
 const DISCORD_BOUND_THREAD_SYSTEM_PREFIXES = ["⚙️", "🤖", "🧰"];
 
+function logDiscordPreflightDrop(params: {
+  reason: string;
+  accountId?: string;
+  botUserId?: string;
+  messageId?: string;
+  channelId?: string;
+  guildId?: string;
+  senderId?: string;
+  location?: "dm" | "group-dm" | "guild" | "unknown";
+}) {
+  const logger = getChildLogger({ module: "discord-auto-reply" });
+  logger.info(
+    {
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      reason: params.reason,
+      messageId: params.messageId,
+      channelId: params.channelId,
+      guildId: params.guildId,
+      senderId: params.senderId,
+      location: params.location ?? "unknown",
+    },
+    "discord preflight drop",
+  );
+}
+
 function isPreflightAborted(abortSignal?: AbortSignal): boolean {
   return Boolean(abortSignal?.aborted);
 }
@@ -203,12 +229,40 @@ export async function preflightDiscordMessage(
     `[discord-preflight] channelId=${messageChannelId} guild_id=${params.data.guild_id} channelType=${channelInfo?.type} isGuild=${isGuildMessage} isDM=${isDirectMessage} isGroupDm=${isGroupDm}`,
   );
 
+  const location: "dm" | "group-dm" | "guild" | "unknown" = isDirectMessage
+    ? "dm"
+    : isGroupDm
+      ? "group-dm"
+      : isGuildMessage
+        ? "guild"
+        : "unknown";
+
   if (isGroupDm && !params.groupDmEnabled) {
     logVerbose("discord: drop group dm (group dms disabled)");
+    logDiscordPreflightDrop({
+      reason: "group-dm-disabled",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
   if (isDirectMessage && !params.dmEnabled) {
     logVerbose("discord: drop dm (dms disabled)");
+    logDiscordPreflightDrop({
+      reason: "dm-disabled",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
 
@@ -220,6 +274,15 @@ export async function preflightDiscordMessage(
   if (isDirectMessage) {
     if (dmPolicy === "disabled") {
       logVerbose("discord: drop dm (dmPolicy: disabled)");
+      logDiscordPreflightDrop({
+        reason: "dm-policy-disabled",
+        accountId: params.accountId,
+        botUserId: params.botUserId,
+        messageId: message.id,
+        channelId: messageChannelId,
+        senderId: sender.id,
+        location,
+      });
       return null;
     }
     const dmAccess = await resolveDiscordDmCommandAccess({
@@ -277,6 +340,15 @@ export async function preflightDiscordMessage(
             `Blocked unauthorized discord sender ${sender.id} (dmPolicy=${dmPolicy}, ${allowMatchMeta})`,
           );
         },
+      });
+      logDiscordPreflightDrop({
+        reason: `dm-policy-${dmAccess.reason}`,
+        accountId: params.accountId,
+        botUserId: params.botUserId,
+        messageId: message.id,
+        channelId: messageChannelId,
+        senderId: sender.id,
+        location,
       });
       return null;
     }
@@ -448,6 +520,16 @@ export async function preflightDiscordMessage(
     logVerbose(
       `Blocked discord guild ${params.data.guild_id ?? "unknown"} (not in discord.guilds)`,
     );
+    logDiscordPreflightDrop({
+      reason: "guild-not-allowlisted",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
 
@@ -495,6 +577,16 @@ export async function preflightDiscordMessage(
     logVerbose(
       `Blocked discord channel ${messageChannelId} (channel disabled, ${channelMatchMeta})`,
     );
+    logDiscordPreflightDrop({
+      reason: "channel-disabled",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
 
@@ -546,6 +638,16 @@ export async function preflightDiscordMessage(
     logVerbose(
       `Blocked discord channel ${messageChannelId} not in guild channel allowlist (${channelMatchMeta})`,
     );
+    logDiscordPreflightDrop({
+      reason: "channel-not-allowlisted",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
   if (isGuildMessage) {
@@ -699,6 +801,16 @@ export async function preflightDiscordMessage(
         limit: params.historyLimit,
         entry: historyEntry ?? null,
       });
+      logDiscordPreflightDrop({
+        reason: "mention-required",
+        accountId: params.accountId,
+        botUserId: params.botUserId,
+        messageId: message.id,
+        channelId: messageChannelId,
+        guildId: params.data.guild_id ?? undefined,
+        senderId: sender.id,
+        location,
+      });
       return null;
     }
   }
@@ -737,6 +849,16 @@ export async function preflightDiscordMessage(
   if (isGuildMessage && hasAccessRestrictions && !memberAllowed) {
     logDebug(`[discord-preflight] drop: member not allowed`);
     logVerbose(`Blocked discord guild sender ${sender.id} (not in users/roles allowlist)`);
+    logDiscordPreflightDrop({
+      reason: "sender-not-allowlisted",
+      accountId: params.accountId,
+      botUserId: params.botUserId,
+      messageId: message.id,
+      channelId: messageChannelId,
+      guildId: params.data.guild_id ?? undefined,
+      senderId: sender.id,
+      location,
+    });
     return null;
   }
 
@@ -770,6 +892,16 @@ export async function preflightDiscordMessage(
       logVerbose(
         `discord: configured ACP binding unavailable for channel ${configuredBinding.spec.conversationId}: ${ensured.error}`,
       );
+      logDiscordPreflightDrop({
+        reason: "configured-binding-unavailable",
+        accountId: params.accountId,
+        botUserId: params.botUserId,
+        messageId: message.id,
+        channelId: messageChannelId,
+        guildId: params.data.guild_id ?? undefined,
+        senderId: sender.id,
+        location,
+      });
       return null;
     }
   }

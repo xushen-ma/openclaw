@@ -202,13 +202,35 @@ export class DiscordMessageListener extends MessageCreateListener {
     private handler: DiscordMessageHandler,
     private logger?: Logger,
     private onEvent?: () => void,
-    _options?: { timeoutMs?: number },
+    _options?: { timeoutMs?: number; accountId?: string; botUserId?: string },
   ) {
     super();
+    this.accountId = _options?.accountId;
+    this.botUserId = _options?.botUserId;
   }
+
+  private accountId?: string;
+  private botUserId?: string;
 
   async handle(data: DiscordMessageEvent, client: Client) {
     this.onEvent?.();
+    const channelType = data.channel?.type;
+    const isDm = channelType === ChannelType.DM;
+    const isGroupDm = channelType === ChannelType.GroupDM;
+    const location = isDm ? "dm" : isGroupDm ? "group-dm" : data.guild_id ? "guild" : "unknown";
+    const ingressLogger = this.logger ?? discordEventQueueLog;
+    if (typeof (ingressLogger as { info?: unknown }).info === "function") {
+      ingressLogger.info("discord inbound message event", {
+        accountId: this.accountId,
+        botUserId: this.botUserId,
+        eventType: this.type,
+        location,
+        guildId: data.guild_id ?? undefined,
+        channelId: data.channel_id,
+        messageId: data.message?.id,
+        authorId: data.author?.id,
+      });
+    }
     // Fire-and-forget: hand off to the handler without blocking the
     // Carbon listener.  Per-session ordering and run timeouts are owned
     // by the inbound worker queue, so the listener no longer serializes
