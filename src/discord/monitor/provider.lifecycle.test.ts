@@ -352,6 +352,30 @@ describe("runDiscordGatewayLifecycle", () => {
     }
   });
 
+  it("force-stops when initial connect stalls before any close/open events", async () => {
+    vi.useFakeTimers();
+    try {
+      const { runDiscordGatewayLifecycle } = await import("./provider.lifecycle.js");
+      const { emitter, gateway } = createGatewayHarness();
+      getDiscordGatewayEmitterMock.mockReturnValueOnce(emitter);
+      waitForDiscordGatewayStopMock.mockImplementationOnce(
+        (waitParams: WaitForDiscordGatewayStopParams) =>
+          new Promise<void>((_resolve, reject) => {
+            waitParams.registerForceStop?.((err) => reject(err));
+          }),
+      );
+      const { lifecycleParams } = createLifecycleHarness({ gateway });
+
+      const lifecyclePromise = runDiscordGatewayLifecycle(lifecycleParams);
+      lifecyclePromise.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 1_000);
+      await expect(lifecyclePromise).rejects.toThrow("reconnect watchdog timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("force-stops when reconnect stalls after a close event", async () => {
     vi.useFakeTimers();
     try {
