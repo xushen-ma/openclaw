@@ -1311,6 +1311,7 @@ async function dispatchDiscordCommandInteraction(params: {
   if (!user) {
     return;
   }
+  const botUserId = interaction.client.user?.id;
   const sender = resolveDiscordSenderIdentity({ author: user, pluralkitInfo: null });
   const channel = interaction.channel;
   const channelType = channel?.type;
@@ -1323,6 +1324,23 @@ async function dispatchDiscordCommandInteraction(params: {
   const channelName = channel && "name" in channel ? (channel.name as string) : undefined;
   const channelSlug = channelName ? normalizeDiscordSlug(channelName) : "";
   const rawChannelId = channel?.id ?? "";
+  const ingressLocation = isDirectMessage
+    ? "dm"
+    : isGroupDm
+      ? "group-dm"
+      : interaction.guild
+        ? "guild"
+        : "unknown";
+  log.info("discord inbound interaction event", {
+    accountId,
+    botUserId,
+    eventType: "interaction.command",
+    command: command.nativeName ?? command.key,
+    location: ingressLocation,
+    guildId: interaction.guild?.id,
+    channelId: rawChannelId || undefined,
+    userId: user.id,
+  });
   const memberRoleIds = Array.isArray(interaction.rawData.member?.roles)
     ? interaction.rawData.member.roles.map((roleId: string) => String(roleId))
     : [];
