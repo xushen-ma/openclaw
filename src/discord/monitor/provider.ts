@@ -143,6 +143,19 @@ function appendPluginCommandSpecs(params: {
 const DISCORD_ACP_STATUS_PROBE_TIMEOUT_MS = 8_000;
 const DISCORD_ACP_STALE_RUNNING_ACTIVITY_MS = 2 * 60 * 1000;
 
+type DiscordMonitorInstanceInfo = {
+  instanceId: string;
+  startedAt: string;
+  pid: number;
+  botUserId?: string;
+};
+
+const discordActiveMonitors = new Map<string, DiscordMonitorInstanceInfo>();
+
+function buildDiscordMonitorInstanceId(accountId: string): string {
+  return `${accountId}:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function isLegacyMissingSessionError(message: string): boolean {
   return (
     message.includes("Session is not ACP-enabled") ||
@@ -301,6 +314,20 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
   }
 
   const runtime: RuntimeEnv = opts.runtime ?? createNonExitingRuntime();
+  const monitorInstance: DiscordMonitorInstanceInfo = {
+    instanceId: buildDiscordMonitorInstanceId(account.accountId),
+    startedAt: new Date().toISOString(),
+    pid: process.pid,
+  };
+  const existingMonitor = discordActiveMonitors.get(account.accountId);
+  if (existingMonitor) {
+    runtime.log?.(
+      warn(
+        `discord: duplicate monitor start for account=${account.accountId} prevInstance=${existingMonitor.instanceId} prevBot=${existingMonitor.botUserId ?? "unknown"} prevStart=${existingMonitor.startedAt} prevPid=${existingMonitor.pid} currInstance=${monitorInstance.instanceId} currStart=${monitorInstance.startedAt} currPid=${monitorInstance.pid}`,
+      ),
+    );
+  }
+  discordActiveMonitors.set(account.accountId, monitorInstance);
 
   const rawDiscordCfg = account.config;
   const discordRootThreadBindings = cfg.channels?.discord?.threadBindings;
@@ -657,6 +684,7 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       const botUser = await client.fetchUser("@me");
       botUserId = botUser?.id;
       botUserName = botUser?.username?.trim() || botUser?.globalName?.trim() || undefined;
+      monitorInstance.botUserId = botUserId;
     } catch (err) {
       runtime.error?.(danger(`discord: failed to fetch bot identity: ${String(err)}`));
     }
@@ -709,6 +737,8 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       client.listeners,
       new DiscordMessageListener(messageHandler, logger, trackInboundEvent, {
         timeoutMs: eventQueueOpts.listenerTimeout,
+        accountId: account.accountId,
+        botUserId,
       }),
     );
     const reactionListenerOptions = {
@@ -767,8 +797,19 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
       threadBindings,
       pendingGatewayErrors: earlyGatewayErrorGuard.pendingErrors,
       releaseEarlyGatewayErrorGuard,
+      instanceMetadata: {
+        accountId: account.accountId,
+        botUserId,
+        monitorInstanceId: monitorInstance.instanceId,
+        startedAt: monitorInstance.startedAt,
+        pid: monitorInstance.pid,
+      },
     });
   } finally {
+    const active = discordActiveMonitors.get(account.accountId);
+    if (active?.instanceId === monitorInstance.instanceId) {
+      discordActiveMonitors.delete(account.accountId);
+    }
     deactivateMessageHandler?.();
     autoPresenceController?.stop();
     opts.setStatus?.({ connected: false });
