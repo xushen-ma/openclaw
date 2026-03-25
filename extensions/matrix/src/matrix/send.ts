@@ -17,6 +17,7 @@ import {
   resolveMediaDurationMs,
   uploadMediaMaybeEncrypted,
 } from "./send/media.js";
+import { withRetryOnRateLimit } from "./send/retry.js";
 import { normalizeThreadId, resolveMatrixRoomId } from "./send/targets.js";
 import {
   EventType,
@@ -76,8 +77,11 @@ export async function sendMessageMatrix(
         : buildReplyRelation(opts.replyToId);
       const sendContent = async (content: MatrixOutboundContent) => {
         // @vector-im/matrix-bot-sdk uses sendMessage differently
-        const eventId = await client.sendMessage(roomId, content);
-        return eventId;
+        // Wrap with retry logic to handle M_LIMIT_EXCEEDED (429)
+        return await withRetryOnRateLimit(async () => {
+          const eventId = await client.sendMessage(roomId, content);
+          return eventId;
+        });
       };
 
       let lastMessageId = "";
@@ -183,7 +187,10 @@ export async function sendPollMatrix(
       ? { ...pollContent, "m.relates_to": buildThreadRelation(threadId) }
       : pollContent;
     // @vector-im/matrix-bot-sdk sendEvent returns eventId string directly
-    const eventId = await client.sendEvent(roomId, M_POLL_START, pollPayload);
+    // Wrap with retry logic to handle M_LIMIT_EXCEEDED (429)
+    const eventId = await withRetryOnRateLimit(async () => {
+      return await client.sendEvent(roomId, M_POLL_START, pollPayload);
+    });
 
     return {
       eventId: eventId ?? "unknown",
@@ -258,7 +265,10 @@ export async function reactMatrixMessage(
         key: emoji,
       },
     };
-    await resolved.sendEvent(resolvedRoom, EventType.Reaction, reaction);
+    // Wrap with retry logic to handle M_LIMIT_EXCEEDED (429)
+    await withRetryOnRateLimit(async () => {
+      return await resolved.sendEvent(resolvedRoom, EventType.Reaction, reaction);
+    });
   } finally {
     if (stopOnDone) {
       resolved.stop();
