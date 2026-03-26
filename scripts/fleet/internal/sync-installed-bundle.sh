@@ -43,6 +43,9 @@ FILES=(
   "internal/deploy.sh"
   "internal/rollback.sh"
   "internal/staging-deploy.sh"
+  "internal/test-deploy.sh"
+  "internal/test-status.sh"
+  "internal/test-release.sh"
   "internal/sync-installed-bundle.sh"
 )
 
