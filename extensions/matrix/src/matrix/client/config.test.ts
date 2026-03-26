@@ -71,7 +71,11 @@ describe("resolveMatrixAuth secret refs", () => {
     fetchWithSsrFGuardMock.mockResolvedValue({
       response: {
         ok: true,
-        json: async () => ({ access_token: "mx-token", user_id: "@bot:example.org" }),
+        json: async () => ({
+          access_token: "mx-token",
+          user_id: "@bot:example.org",
+          device_id: "DEVICE123",
+        }),
       },
       release: async () => undefined,
     });
@@ -103,6 +107,7 @@ describe("resolveMatrixAuth secret refs", () => {
     const loginBody = JSON.parse(fetchWithSsrFGuardMock.mock.calls[0][0].init.body as string);
     expect(loginBody.password).toBe("resolved-pass");
     expect(auth.accessToken).toBe("mx-token");
+    expect(auth.deviceId).toBe("DEVICE123");
   });
 
   it("resolves account accessToken SecretInput and returns resolved token", async () => {
@@ -134,6 +139,7 @@ describe("resolveMatrixAuth secret refs", () => {
       }),
     );
     expect(auth.accessToken).toBe("resolved-token");
+    expect(auth.deviceId).toBeUndefined();
     expect(saveMatrixCredentialsMock).toHaveBeenCalledWith(
       expect.objectContaining({ accessToken: "resolved-token" }),
       expect.anything(),

@@ -125,6 +125,30 @@ export function resolveMatrixConfig(
   return resolveMatrixConfigForAccount(cfg, defaultAccountId, env);
 }
 
+export async function resolveMatrixBootstrapPassword(params?: {
+  cfg?: CoreConfig;
+  env?: NodeJS.ProcessEnv;
+  accountId?: string | null;
+}): Promise<string | undefined> {
+  const cfg = params?.cfg ?? (getMatrixRuntime().config.loadConfig() as CoreConfig);
+  const env = params?.env ?? process.env;
+  const accountId = params?.accountId;
+  const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
+
+  const resolvedPassword = await resolveConfiguredSecretInputWithFallback({
+    config: cfg,
+    env,
+    value: matrix.password,
+    path: resolveSecretInputPath(cfg, accountId, "password"),
+    readFallback: () => normalizeSecretInputString(env.MATRIX_PASSWORD),
+  });
+
+  return normalizeResolvedSecretInputString({
+    value: resolvedPassword.value,
+    path: resolveSecretInputPath(cfg, accountId, "password"),
+  });
+}
+
 export async function resolveMatrixAuth(params?: {
   cfg?: CoreConfig;
   env?: NodeJS.ProcessEnv;
@@ -169,6 +193,7 @@ export async function resolveMatrixAuth(params?: {
   // If we have an access token, we can fetch userId via whoami if not provided
   if (resolvedAccessToken) {
     let userId = resolved.userId;
+    let deviceId = cachedCredentials?.deviceId;
     if (!userId) {
       // Fetch userId from access token via whoami
       ensureMatrixSdkLoggingConfigured();
@@ -182,6 +207,7 @@ export async function resolveMatrixAuth(params?: {
           homeserver: resolved.homeserver,
           userId,
           accessToken: resolvedAccessToken,
+          deviceId,
         },
         env,
         accountId,
@@ -193,6 +219,7 @@ export async function resolveMatrixAuth(params?: {
       homeserver: resolved.homeserver,
       userId,
       accessToken: resolvedAccessToken,
+      deviceId,
       deviceName: resolved.deviceName,
       initialSyncLimit: resolved.initialSyncLimit,
       encryption: resolved.encryption,
@@ -205,6 +232,7 @@ export async function resolveMatrixAuth(params?: {
       homeserver: cachedCredentials.homeserver,
       userId: cachedCredentials.userId,
       accessToken: cachedCredentials.accessToken,
+      deviceId: cachedCredentials.deviceId,
       deviceName: resolved.deviceName,
       initialSyncLimit: resolved.initialSyncLimit,
       encryption: resolved.encryption,
@@ -215,18 +243,8 @@ export async function resolveMatrixAuth(params?: {
     throw new Error("Matrix userId is required when no access token is configured (matrix.userId)");
   }
 
-  let password = resolved.password;
-  if (!password) {
-    const matrix = resolveMatrixChannelConfigForAccount(cfg, accountId);
-    const resolvedPassword = await resolveConfiguredSecretInputWithFallback({
-      config: cfg,
-      env,
-      value: matrix.password,
-      path: resolveSecretInputPath(cfg, accountId, "password"),
-      readFallback: () => normalizeSecretInputString(env.MATRIX_PASSWORD),
-    });
-    password = resolvedPassword.value;
-  }
+  const password =
+    resolved.password ?? (await resolveMatrixBootstrapPassword({ cfg, env, accountId }));
 
   if (!password) {
     throw new Error(
@@ -274,6 +292,7 @@ export async function resolveMatrixAuth(params?: {
     homeserver: resolved.homeserver,
     userId: login.user_id ?? resolved.userId,
     accessToken,
+    deviceId: login.device_id,
     deviceName: resolved.deviceName,
     initialSyncLimit: resolved.initialSyncLimit,
     encryption: resolved.encryption,

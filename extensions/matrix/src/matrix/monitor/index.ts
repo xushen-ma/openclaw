@@ -19,6 +19,7 @@ import {
   resolveSharedMatrixClient,
   stopSharedClientForAccount,
 } from "../client.js";
+import { bootstrapMatrixTrustWithMatrixJsSdk } from "../trust-bootstrap.js";
 import { normalizeMatrixUserId } from "./allowlist.js";
 import { registerMatrixAutoJoin } from "./auto-join.js";
 import { createDirectRoomTracker } from "./direct.js";
@@ -378,10 +379,31 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
   // @vector-im/matrix-bot-sdk client is already started via resolveSharedMatrixClient
   logger.info(`matrix: logged in as ${auth.userId}`);
 
-  // If E2EE is enabled, trigger device verification
+  // If E2EE is enabled, attempt trust bootstrap for fresh/fresh-ish devices first.
   if (auth.encryption && client.crypto) {
+    const trustStatus = await bootstrapMatrixTrustWithMatrixJsSdk({
+      auth,
+      cfg,
+      accountId: opts.accountId,
+      logger,
+    });
+
+    const { recoveryMaterial: _recoveryMaterial, ...trustStatusForLogs } = trustStatus;
+
+    if (trustStatus.state === "bootstrapped") {
+      logger.info("matrix: trust bootstrapped", trustStatusForLogs);
+    } else if (trustStatus.state === "partial") {
+      logger.info("matrix: trust bootstrap partially completed", trustStatusForLogs);
+    } else if (trustStatus.state === "needs-user-auth") {
+      logger.info("matrix: trust bootstrap needs user auth", trustStatusForLogs);
+    } else if (trustStatus.state === "unsupported") {
+      logger.debug?.("matrix: trust bootstrap unsupported in current runtime", trustStatusForLogs);
+    } else if (trustStatus.state === "error") {
+      logger.warn("matrix: trust bootstrap failed", trustStatusForLogs);
+    }
+
+    // Keep existing behavior: request verification from other sessions as fallback.
     try {
-      // Request verification from other sessions
       const verificationRequest = await (
         client.crypto as { requestOwnUserVerification?: () => Promise<unknown> }
       ).requestOwnUserVerification?.();

@@ -10,15 +10,15 @@ export type MatrixResolvedConfig = {
 
 /**
  * Authenticated Matrix configuration.
- * Note: deviceId is NOT included here because it's implicit in the accessToken.
- * The crypto storage assumes the device ID (and thus access token) does not change
- * between restarts. If the access token becomes invalid or crypto storage is lost,
- * both will need to be recreated together.
+ * deviceId is optional because token-only flows may not always provide it,
+ * but when available (login response / cached credentials) it should be carried
+ * through so matrix-js-sdk crypto bootstrap can bind to the correct session device.
  */
 export type MatrixAuth = {
   homeserver: string;
   userId: string;
   accessToken: string;
+  deviceId?: string;
   deviceName?: string;
   initialSyncLimit?: number;
   encryption?: boolean;
