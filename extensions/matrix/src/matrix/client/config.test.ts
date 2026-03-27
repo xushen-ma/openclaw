@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CoreConfig } from "../../types.js";
 
@@ -9,6 +10,8 @@ const {
   touchMatrixCredentialsMock,
   resolveConfiguredSecretInputWithFallbackMock,
   matrixClientGetUserIdMock,
+  loadMatrixRecoveryMaterialMock,
+  resolveMatrixStoragePathsMock,
 } = vi.hoisted(() => ({
   fetchWithSsrFGuardMock: vi.fn(),
   loadMatrixCredentialsMock: vi.fn(),
@@ -17,6 +20,8 @@ const {
   touchMatrixCredentialsMock: vi.fn(),
   resolveConfiguredSecretInputWithFallbackMock: vi.fn(),
   matrixClientGetUserIdMock: vi.fn(),
+  loadMatrixRecoveryMaterialMock: vi.fn(),
+  resolveMatrixStoragePathsMock: vi.fn(),
 }));
 
 vi.mock("openclaw/plugin-sdk/matrix", async () => {
@@ -44,8 +49,18 @@ vi.mock("../sdk-runtime.js", () => ({
       setLogger: vi.fn(),
       setLevel: vi.fn(),
       levels: { INFO: "info" },
+      info: vi.fn(),
+      warn: vi.fn(),
     },
   }),
+}));
+
+vi.mock("../recovery-material.js", () => ({
+  loadMatrixRecoveryMaterial: loadMatrixRecoveryMaterialMock,
+}));
+
+vi.mock("./storage.js", () => ({
+  resolveMatrixStoragePaths: resolveMatrixStoragePathsMock,
 }));
 
 vi.mock("../credentials.js", () => ({
@@ -67,6 +82,8 @@ describe("resolveMatrixAuth secret refs", () => {
         value: path.endsWith("accessToken") ? undefined : "resolved-pass",
       }),
     );
+    resolveMatrixStoragePathsMock.mockReturnValue({ cryptoPath: "/tmp/matrix-crypto" });
+    loadMatrixRecoveryMaterialMock.mockReturnValue({ privateKeyBase64: "abc" });
     matrixClientGetUserIdMock.mockResolvedValue("@bot:example.org");
     fetchWithSsrFGuardMock.mockResolvedValue({
       response: {
@@ -145,5 +162,87 @@ describe("resolveMatrixAuth secret refs", () => {
       expect.anything(),
       "work",
     );
+  });
+
+  it("re-logins instead of reusing cached credentials when crypto state is missing", async () => {
+    const existsSpy = vi.spyOn(fs, "existsSync").mockReturnValue(false);
+    const readDirSpy = vi.spyOn(fs, "readdirSync").mockReturnValue([]);
+    loadMatrixRecoveryMaterialMock.mockReturnValue(null);
+    loadMatrixCredentialsMock.mockReturnValue({
+      homeserver: "https://matrix.example.org",
+      userId: "@bot:example.org",
+      accessToken: "cached-token",
+      deviceId: "BZEYXVAHCX",
+    });
+    credentialsMatchConfigMock.mockReturnValue(true);
+
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          encryption: true,
+          password: { source: "file", provider: "filemain", id: "/matrix/work" },
+        },
+      },
+    } as CoreConfig;
+
+    const auth = await resolveMatrixAuth({ cfg, env: {} as NodeJS.ProcessEnv });
+
+    expect(auth.accessToken).toBe("mx-token");
+    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(1);
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
+    existsSpy.mockRestore();
+    readDirSpy.mockRestore();
+  });
+
+  it("re-logins when cached credentials return M_UNKNOWN_TOKEN", async () => {
+    loadMatrixCredentialsMock.mockReturnValue({
+      homeserver: "https://matrix.example.org",
+      userId: "@bot:example.org",
+      accessToken: "stale-token",
+      deviceId: "OLDDEVICE",
+    });
+    credentialsMatchConfigMock.mockReturnValue(true);
+
+    fetchWithSsrFGuardMock
+      .mockResolvedValueOnce({
+        response: {
+          ok: false,
+          text: async () => JSON.stringify({ errcode: "M_UNKNOWN_TOKEN" }),
+        },
+        release: async () => undefined,
+      })
+      .mockResolvedValueOnce({
+        response: {
+          ok: true,
+          json: async () => ({
+            access_token: "fresh-token",
+            user_id: "@bot:example.org",
+            device_id: "NEWDEVICE",
+          }),
+        },
+        release: async () => undefined,
+      });
+
+    const cfg = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          password: { source: "file", provider: "filemain", id: "/matrix/work" },
+        },
+      },
+    } as CoreConfig;
+
+    const auth = await resolveMatrixAuth({ cfg, env: {} as NodeJS.ProcessEnv });
+
+    expect(auth.accessToken).toBe("fresh-token");
+    expect(fetchWithSsrFGuardMock).toHaveBeenCalledTimes(2);
+    expect(fetchWithSsrFGuardMock.mock.calls[0]?.[0]?.url).toContain(
+      "/_matrix/client/v3/account/whoami",
+    );
+    expect(fetchWithSsrFGuardMock.mock.calls[1]?.[0]?.url).toContain("/_matrix/client/v3/login");
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
   });
 });

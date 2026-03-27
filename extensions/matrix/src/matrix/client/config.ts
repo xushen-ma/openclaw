@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { fetchWithSsrFGuard } from "openclaw/plugin-sdk/matrix";
 import { resolveConfiguredSecretInputWithFallback } from "../../../../../src/gateway/resolve-configured-secret-input-string.js";
@@ -8,8 +9,10 @@ import {
 } from "../../secret-input.js";
 import type { CoreConfig } from "../../types.js";
 import { resolveDefaultMatrixAccountId } from "../accounts.js";
+import { loadMatrixRecoveryMaterial } from "../recovery-material.js";
 import { loadMatrixSdk } from "../sdk-runtime.js";
 import { ensureMatrixSdkLoggingConfigured } from "./logging.js";
+import { resolveMatrixStoragePaths } from "./storage.js";
 import type { MatrixAuth, MatrixResolvedConfig } from "./types.js";
 
 function clean(value: unknown, path: string): string {
@@ -67,6 +70,80 @@ function resolveSecretInputPath(
     return `channels.matrix.accounts.${normalizedAccountId}.${field}`;
   }
   return `channels.matrix.${field}`;
+}
+
+function hasExistingMatrixCryptoState(params: {
+  homeserver: string;
+  userId: string;
+  accessToken: string;
+  accountId?: string | null;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  const storagePaths = resolveMatrixStoragePaths({
+    homeserver: params.homeserver,
+    userId: params.userId,
+    accessToken: params.accessToken,
+    accountId: params.accountId,
+    env: params.env,
+  });
+
+  try {
+    if (!fs.existsSync(storagePaths.cryptoPath)) {
+      return false;
+    }
+    return fs.readdirSync(storagePaths.cryptoPath).length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function shouldBypassCachedCredentialsForCryptoReset(params: {
+  encryptionEnabled: boolean;
+  cachedCredentials: { homeserver: string; userId: string; accessToken: string; deviceId?: string };
+  accountId?: string | null;
+  env: NodeJS.ProcessEnv;
+}): boolean {
+  if (!params.encryptionEnabled || !params.cachedCredentials.deviceId) {
+    return false;
+  }
+
+  const hasCryptoState = hasExistingMatrixCryptoState({
+    homeserver: params.cachedCredentials.homeserver,
+    userId: params.cachedCredentials.userId,
+    accessToken: params.cachedCredentials.accessToken,
+    accountId: params.accountId,
+    env: params.env,
+  });
+  if (hasCryptoState) {
+    return false;
+  }
+
+  const recoveryMaterial = loadMatrixRecoveryMaterial(params.env, params.accountId);
+  return !recoveryMaterial?.privateKeyBase64;
+}
+
+async function isUnknownTokenError(params: {
+  homeserver: string;
+  accessToken: string;
+}): Promise<boolean> {
+  const { response, release } = await fetchWithSsrFGuard({
+    url: `${params.homeserver}/_matrix/client/v3/account/whoami`,
+    init: {
+      method: "GET",
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+    },
+    auditContext: "matrix.whoami",
+  });
+
+  try {
+    if (response.ok) {
+      return false;
+    }
+    const body = await response.text();
+    return body.includes("M_UNKNOWN_TOKEN");
+  } finally {
+    await release();
+  }
 }
 
 /**
@@ -226,25 +303,63 @@ export async function resolveMatrixAuth(params?: {
     };
   }
 
+  const password =
+    resolved.password ?? (await resolveMatrixBootstrapPassword({ cfg, env, accountId }));
+
   if (cachedCredentials) {
-    touchMatrixCredentials(env, accountId);
-    return {
-      homeserver: cachedCredentials.homeserver,
-      userId: cachedCredentials.userId,
-      accessToken: cachedCredentials.accessToken,
-      deviceId: cachedCredentials.deviceId,
-      deviceName: resolved.deviceName,
-      initialSyncLimit: resolved.initialSyncLimit,
-      encryption: resolved.encryption,
-    };
+    let shouldBypassCached =
+      Boolean(password) &&
+      shouldBypassCachedCredentialsForCryptoReset({
+        encryptionEnabled: resolved.encryption,
+        cachedCredentials,
+        accountId,
+        env,
+      });
+
+    if (!shouldBypassCached && password) {
+      try {
+        const unknownToken = await isUnknownTokenError({
+          homeserver: cachedCredentials.homeserver,
+          accessToken: cachedCredentials.accessToken,
+        });
+        if (unknownToken) {
+          shouldBypassCached = true;
+          loadMatrixSdk().LogService.info(
+            "MatrixClientLite",
+            "Cached Matrix token rejected with M_UNKNOWN_TOKEN; rotating to password login",
+          );
+        }
+      } catch (err) {
+        loadMatrixSdk().LogService.warn(
+          "MatrixClientLite",
+          "Failed to validate cached Matrix token via whoami; continuing with cached token",
+          err,
+        );
+      }
+    }
+
+    if (!shouldBypassCached) {
+      touchMatrixCredentials(env, accountId);
+      return {
+        homeserver: cachedCredentials.homeserver,
+        userId: cachedCredentials.userId,
+        accessToken: cachedCredentials.accessToken,
+        deviceId: cachedCredentials.deviceId,
+        deviceName: resolved.deviceName,
+        initialSyncLimit: resolved.initialSyncLimit,
+        encryption: resolved.encryption,
+      };
+    }
+
+    loadMatrixSdk().LogService.info(
+      "MatrixClientLite",
+      "Bypassing cached Matrix credentials; rotating to a fresh login token/device",
+    );
   }
 
   if (!resolved.userId) {
     throw new Error("Matrix userId is required when no access token is configured (matrix.userId)");
   }
-
-  const password =
-    resolved.password ?? (await resolveMatrixBootstrapPassword({ cfg, env, accountId }));
 
   if (!password) {
     throw new Error(
