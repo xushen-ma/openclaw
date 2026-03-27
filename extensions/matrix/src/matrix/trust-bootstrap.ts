@@ -345,6 +345,7 @@ export async function bootstrapMatrixTrustWithMatrixJsSdk(params: {
   env?: NodeJS.ProcessEnv;
   accountId?: string | null;
   logger?: LoggerLike;
+  client?: MatrixJsTrustClient;
   deps?: MatrixTrustBootstrapDeps;
 }): Promise<MatrixTrustBootstrapStatus> {
   const bootstrapPassword = await resolveMatrixBootstrapPassword({
@@ -396,26 +397,31 @@ export async function bootstrapMatrixTrustWithMatrixJsSdk(params: {
       }));
 
   let client: MatrixJsTrustClient;
-  try {
-    client = await createClient({
-      homeserver: params.auth.homeserver,
-      userId: params.auth.userId,
-      accessToken: params.auth.accessToken,
-      deviceId: params.auth.deviceId,
-    });
-  } catch (err) {
-    return {
-      state: "unsupported",
-      reason: "matrix_js_sdk_unavailable",
-      runtime: "matrix-js-sdk",
-      crossSigningReady: null,
-      secretStorageReady: null,
-      attemptedBootstrap: false,
-      attemptedCrossSigningBootstrap: false,
-      attemptedSecretStorageBootstrap: false,
-      bootstrapLevel: "none",
-      error: toErrorMessage(err),
-    };
+  const ownsClient = !params.client;
+  if (params.client) {
+    client = params.client;
+  } else {
+    try {
+      client = await createClient({
+        homeserver: params.auth.homeserver,
+        userId: params.auth.userId,
+        accessToken: params.auth.accessToken,
+        deviceId: params.auth.deviceId,
+      });
+    } catch (err) {
+      return {
+        state: "unsupported",
+        reason: "matrix_js_sdk_unavailable",
+        runtime: "matrix-js-sdk",
+        crossSigningReady: null,
+        secretStorageReady: null,
+        attemptedBootstrap: false,
+        attemptedCrossSigningBootstrap: false,
+        attemptedSecretStorageBootstrap: false,
+        bootstrapLevel: "none",
+        error: toErrorMessage(err),
+      };
+    }
   }
 
   try {
@@ -630,6 +636,8 @@ export async function bootstrapMatrixTrustWithMatrixJsSdk(params: {
       ...(generatedRecoveryMaterial ? { recoveryMaterial: generatedRecoveryMaterial } : {}),
     };
   } finally {
-    await stopClientQuietly(client);
+    if (ownsClient) {
+      await stopClientQuietly(client);
+    }
   }
 }
