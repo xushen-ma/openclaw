@@ -1,5 +1,6 @@
 import {
   GROUP_POLICY_BLOCKED_LABEL,
+  fetchWithSsrFGuard,
   mergeAllowlist,
   resolveRuntimeEnv,
   resolveAllowlistProviderRuntimeGroupPolicy,
@@ -38,6 +39,31 @@ export type MonitorMatrixOpts = {
 
 const DEFAULT_MEDIA_MAX_MB = 20;
 export const DEFAULT_STARTUP_GRACE_MS = 5000;
+const MATRIX_TOKEN_HEALTHCHECK_INTERVAL_MS = 30_000;
+
+async function isUnknownTokenError(params: {
+  homeserver: string;
+  accessToken: string;
+}): Promise<boolean> {
+  const { response, release } = await fetchWithSsrFGuard({
+    url: `${params.homeserver}/_matrix/client/v3/account/whoami`,
+    init: {
+      method: "GET",
+      headers: { Authorization: `Bearer ${params.accessToken}` },
+    },
+    auditContext: "matrix.whoami",
+  });
+
+  try {
+    if (response.ok) {
+      return false;
+    }
+    const body = await response.text();
+    return body.includes("M_UNKNOWN_TOKEN");
+  } finally {
+    await release();
+  }
+}
 
 export function isConfiguredMatrixRoomEntry(entry: string): boolean {
   return entry.startsWith("!") || (entry.startsWith("#") && entry.includes(":"));
@@ -379,13 +405,17 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
   // @vector-im/matrix-bot-sdk client is already started via resolveSharedMatrixClient
   logger.info(`matrix: logged in as ${auth.userId}`);
 
-  // If E2EE is enabled, attempt trust bootstrap for fresh/fresh-ish devices first.
+  // If E2EE is enabled, attempt trust bootstrap on the live shared client so
+  // bootstrap and runtime share the same crypto store/device state.
   if (auth.encryption && client.crypto) {
     const trustStatus = await bootstrapMatrixTrustWithMatrixJsSdk({
       auth,
       cfg,
       accountId: opts.accountId,
       logger,
+      client: client as unknown as Parameters<
+        typeof bootstrapMatrixTrustWithMatrixJsSdk
+      >[0]["client"],
     });
 
     const { recoveryMaterial: _recoveryMaterial, ...trustStatusForLogs } = trustStatus;
@@ -417,8 +447,46 @@ export async function monitorMatrixProvider(opts: MonitorMatrixOpts = {}): Promi
     }
   }
 
+  let tokenHealthcheckInFlight = false;
+  let tokenHealthcheckRestartRequested = false;
+  const tokenHealthcheckTimer = setInterval(() => {
+    if (tokenHealthcheckInFlight || tokenHealthcheckRestartRequested) {
+      return;
+    }
+    tokenHealthcheckInFlight = true;
+    void (async () => {
+      try {
+        const unknownToken = await isUnknownTokenError({
+          homeserver: auth.homeserver,
+          accessToken: auth.accessToken,
+        });
+        if (!unknownToken || tokenHealthcheckRestartRequested) {
+          return;
+        }
+
+        tokenHealthcheckRestartRequested = true;
+        logger.warn(
+          "matrix: active access token is invalid (M_UNKNOWN_TOKEN); requesting gateway restart to rotate credentials",
+          {
+            accountId: account.accountId,
+            userId: auth.userId,
+          },
+        );
+
+        // Graceful full-process recycle. Under launchd/systemd KeepAlive, this
+        // relaunches immediately and resolveMatrixAuth will rotate to password login.
+        process.kill(process.pid, "SIGTERM");
+      } catch (err) {
+        logVerboseMessage(`matrix: token healthcheck failed: ${String(err)}`);
+      } finally {
+        tokenHealthcheckInFlight = false;
+      }
+    })();
+  }, MATRIX_TOKEN_HEALTHCHECK_INTERVAL_MS);
+
   await new Promise<void>((resolve) => {
     const onAbort = () => {
+      clearInterval(tokenHealthcheckTimer);
       try {
         logVerboseMessage("matrix: stopping client");
         stopSharedClientForAccount(auth, opts.accountId);
