@@ -81,6 +81,7 @@ export const matrixMessageActions: ChannelMessageActionAdapter = {
           threadId: threadId ?? undefined,
           eventType: eventType ?? undefined,
           eventContent,
+          accountId: ctx.accountId ?? undefined,
         },
         cfg as CoreConfig,
       );
