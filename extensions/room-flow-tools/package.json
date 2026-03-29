@@ -1,0 +1,12 @@
+{
+  "name": "@openclaw/room-flow-tools",
+  "version": "2026.3.9",
+  "private": true,
+  "description": "Room project flow helper tools for PM control.",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

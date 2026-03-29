@@ -1,0 +1,10 @@
+{
+  "id": "room-flow-tools",
+  "name": "Room Flow Tools",
+  "description": "PM control helpers for room-project-flow.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
