@@ -130,13 +130,11 @@ export async function resolveSessionTranscriptFile(params: {
   };
 }
 
-async function appendMirroredMessageToSessionTranscript(params: {
+export async function appendAssistantMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;
   text?: string;
   mediaUrls?: string[];
-  role: "assistant" | "user";
-  model: string;
   /** Optional override for store path (mostly for tests). */
   storePath?: string;
 }): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
@@ -183,11 +181,11 @@ async function appendMirroredMessageToSessionTranscript(params: {
 
   const sessionManager = SessionManager.open(sessionFile);
   sessionManager.appendMessage({
-    role: params.role,
+    role: "assistant",
     content: [{ type: "text", text: mirrorText }],
     api: "openai-responses",
     provider: "openclaw",
-    model: params.model,
+    model: "delivery-mirror",
     usage: {
       input: 0,
       output: 0,
@@ -208,34 +206,4 @@ async function appendMirroredMessageToSessionTranscript(params: {
 
   emitSessionTranscriptUpdate(sessionFile);
   return { ok: true, sessionFile };
-}
-
-export async function appendAssistantMessageToSessionTranscript(params: {
-  agentId?: string;
-  sessionKey: string;
-  text?: string;
-  mediaUrls?: string[];
-  /** Optional override for store path (mostly for tests). */
-  storePath?: string;
-}): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
-  return await appendMirroredMessageToSessionTranscript({
-    ...params,
-    role: "assistant",
-    model: "delivery-mirror",
-  });
-}
-
-export async function appendUserMessageToSessionTranscript(params: {
-  agentId?: string;
-  sessionKey: string;
-  text?: string;
-  mediaUrls?: string[];
-  /** Optional override for store path (mostly for tests). */
-  storePath?: string;
-}): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
-  return await appendMirroredMessageToSessionTranscript({
-    ...params,
-    role: "user",
-    model: "rebrief-injection",
-  });
 }
