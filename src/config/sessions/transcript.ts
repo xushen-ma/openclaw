@@ -130,11 +130,13 @@ export async function resolveSessionTranscriptFile(params: {
   };
 }
 
-export async function appendAssistantMessageToSessionTranscript(params: {
+async function appendMirroredMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;
   text?: string;
   mediaUrls?: string[];
+  role: "assistant" | "user";
+  model: string;
   /** Optional override for store path (mostly for tests). */
   storePath?: string;
 }): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
@@ -181,11 +183,11 @@ export async function appendAssistantMessageToSessionTranscript(params: {
 
   const sessionManager = SessionManager.open(sessionFile);
   sessionManager.appendMessage({
-    role: "assistant",
+    role: params.role,
     content: [{ type: "text", text: mirrorText }],
     api: "openai-responses",
     provider: "openclaw",
-    model: "delivery-mirror",
+    model: params.model,
     usage: {
       input: 0,
       output: 0,
@@ -206,4 +208,34 @@ export async function appendAssistantMessageToSessionTranscript(params: {
 
   emitSessionTranscriptUpdate(sessionFile);
   return { ok: true, sessionFile };
+}
+
+export async function appendAssistantMessageToSessionTranscript(params: {
+  agentId?: string;
+  sessionKey: string;
+  text?: string;
+  mediaUrls?: string[];
+  /** Optional override for store path (mostly for tests). */
+  storePath?: string;
+}): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
+  return await appendMirroredMessageToSessionTranscript({
+    ...params,
+    role: "assistant",
+    model: "delivery-mirror",
+  });
+}
+
+export async function appendUserMessageToSessionTranscript(params: {
+  agentId?: string;
+  sessionKey: string;
+  text?: string;
+  mediaUrls?: string[];
+  /** Optional override for store path (mostly for tests). */
+  storePath?: string;
+}): Promise<{ ok: true; sessionFile: string } | { ok: false; reason: string }> {
+  return await appendMirroredMessageToSessionTranscript({
+    ...params,
+    role: "user",
+    model: "rebrief-injection",
+  });
 }
