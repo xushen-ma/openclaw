@@ -1,7 +1,9 @@
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
-import { createQuickSessionSearchTool } from "./session-search.js";
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { writeOvStats } from "./ov-stats.js";
+import { createQuickMemoryPerAgentSidecarService } from "./per-agent-sidecar-service.js";
+import { createQuickSessionSearchTool } from "./session-search.js";
 
 const QuickMemorySearchSchema = {
   type: "object" as const,
@@ -30,7 +32,9 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
         return jsonResult({ results: [], error: "query is required" });
       }
 
-      const requestBody = { query: query.trim(), limit: maxResults };
+      const normalizedQuery = query.trim();
+      const requestBody = { query: normalizedQuery, limit: maxResults };
+      const startedAt = Date.now();
       const attempts = resolveOvRequest({
         config: httpConfig,
         scope: "memory",
@@ -67,9 +71,24 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
             path: item.uri ?? `result-${idx}`,
             score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
             snippet: item.abstract ?? item.overview ?? "(no abstract)",
-            source: attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
+            source:
+              attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
             citation: item.uri ?? "",
           }));
+
+          const latencyMs = Date.now() - startedAt;
+          await writeOvStats({
+            agent: agentId,
+            op: "search",
+            uri: "viking://resources",
+            query: normalizedQuery,
+            latencyMs,
+            resultCount: results.length,
+            hit: results.length > 0,
+            mode: attempt.mode,
+            layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
+            routing: attempt.mode,
+          }).catch(() => {});
 
           return jsonResult({
             results,
@@ -85,6 +104,19 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
         }
       }
 
+      await writeOvStats({
+        agent: agentId,
+        op: "search",
+        uri: "viking://resources",
+        query: normalizedQuery,
+        latencyMs: Date.now() - startedAt,
+        resultCount: 0,
+        hit: false,
+        mode: attempts[attempts.length - 1]?.mode || "none",
+        layer: attempts[attempts.length - 1]?.mode === "legacy" ? "fast-pass-shared" : "fast-pass",
+        routing: attempts[attempts.length - 1]?.mode === "legacy" ? "legacy" : "per-agent",
+      }).catch(() => {});
+
       return jsonResult({
         results: [],
         error: errors.join(" | "),
@@ -97,7 +129,8 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
 export default function register(api: OpenClawPluginApi) {
   const cfg = (api.pluginConfig as any) || {};
   const httpConfig: OvHttpConfig = {
-    perAgentBaseUrl: cfg.perAgentOvBaseUrl?.trim() || process.env.OV_PER_AGENT_HTTP_BASE?.trim() || "",
+    perAgentBaseUrl:
+      cfg.perAgentOvBaseUrl?.trim() || process.env.OV_PER_AGENT_HTTP_BASE?.trim() || "",
     legacyBaseUrl: cfg.ovBaseUrl?.trim() || process.env.OV_LEGACY_HTTP_BASE?.trim() || "",
     agentRouting: cfg.agentRouting || "header",
     agentHeaderName: cfg.agentHeaderName,
@@ -105,6 +138,16 @@ export default function register(api: OpenClawPluginApi) {
 
   api.registerTool(createQuickMemorySearchTool(httpConfig));
   api.registerTool(createQuickSessionSearchTool(httpConfig));
+
+  const sidecar = createQuickMemoryPerAgentSidecarService({
+    perAgentBaseUrl: httpConfig.perAgentBaseUrl,
+    scriptPath: api.resolvePath("./per-agent-ov-http-server.mjs"),
+    logger: api.logger,
+  });
+  api.registerService(sidecar.service);
+  api.registerGatewayMethod("quick-memory-search.status", ({ respond }) => {
+    respond(true, sidecar.status());
+  });
 
   api.logger.info(
     `quick_memory_search + quick_session_search registered (perAgent=${httpConfig.perAgentBaseUrl || "disabled"}, legacy=${httpConfig.legacyBaseUrl || "disabled"})`,

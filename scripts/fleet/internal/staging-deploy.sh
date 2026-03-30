@@ -25,12 +25,18 @@ if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
 fi
 
 setup_staging_runtime_env() {
-  export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
-  export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
-  export PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
-  export TMPDIR="${TMPDIR:-$HOME/tmp}"
-  export TMP="${TMP:-$TMPDIR}"
-  export TEMP="${TEMP:-$TMPDIR}"
+  local runtime_home="${RUNTIME_HOME:-$HOME}"
+  export HOME="$runtime_home"
+
+  # Ignore caller-provided XDG/PNPM/TMP paths (e.g., sudo -E) to avoid writes
+  # leaking back into the invoking user's home.
+  export XDG_CONFIG_HOME="$HOME/.config"
+  export XDG_CACHE_HOME="$HOME/.cache"
+  export PNPM_HOME="$HOME/.local/share/pnpm"
+  export TMPDIR="$HOME/tmp"
+  export TMP="$TMPDIR"
+  export TEMP="$TMPDIR"
+
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$PNPM_HOME" "$TMPDIR"
   chmod 700 "$TMPDIR" 2>/dev/null || true
   export PATH="$PNPM_HOME:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
