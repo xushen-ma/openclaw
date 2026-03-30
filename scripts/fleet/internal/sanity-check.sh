@@ -83,6 +83,7 @@ normalize_staging_permissions() {
   chmod -R a+rX "$repo/node_modules" 2>/dev/null || true
   chmod -R a+rX "$repo/dist" 2>/dev/null || true
   chmod -R a+rwX "$repo/.test-instance" 2>/dev/null || true
+  chmod 600 "$repo/.test-instance/secrets.json" 2>/dev/null || true
 }
 
 setup_sanity_runtime_env() {
