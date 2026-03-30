@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # PR intent: lightweight hygiene feedback only.
+  # Canonical release confidence comes from local governed gates (`releasectl`) and
+  # the validation/tag/staging workflow chain on main.
   # Detect docs-only changes to skip heavy jobs (test, build, Windows, macOS, Android).
   # Lint and format always run. Fail-safe: if detection fails, run everything.
   docs-scope:
@@ -76,23 +79,17 @@ jobs:
 
           node scripts/ci-changed-scope.mjs --base "$BASE" --head HEAD
 
-  # Build dist once for Node-relevant changes and share it with downstream jobs.
+  # Build dist once for mainline changes and share it with downstream jobs.
+  # PRs rely on local governed gates for release confidence; keep GitHub PR CI lean.
   build-artifacts:
     needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: false
-
-      - name: Ensure secrets base commit (PR fast path)
-        if: github.event_name == 'pull_request'
-        uses: ./.github/actions/ensure-base-commit
-        with:
-          base-sha: ${{ github.event.pull_request.base.sha }}
-          fetch-ref: ${{ github.event.pull_request.base.ref }}
 
       - name: Setup Node environment
         uses: ./.github/actions/setup-node-env
@@ -138,7 +135,7 @@ jobs:
 
   checks:
     needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_node == 'true')
+    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     strategy:
       fail-fast: false
@@ -356,7 +353,7 @@ jobs:
 
   checks-windows:
     needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_windows == 'true')
+    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
     runs-on: blacksmith-32vcpu-windows-2025
     timeout-minutes: 45
     env:
@@ -480,12 +477,10 @@ jobs:
         run: ${{ matrix.command }}
 
   # Consolidated macOS job: runs TS tests + Swift lint/build/test sequentially
-  # on a single runner. GitHub limits macOS concurrent jobs to 5 per org;
-  # running 4 separate jobs per PR (as before) starved the queue. One job
-  # per PR allows 5 PRs to run macOS checks simultaneously.
+  # on a single runner for mainline confidence without making PR CI the release bottleneck.
   macos:
     needs: [docs-scope, changed-scope, check]
-    if: github.event_name == 'pull_request' && needs.docs-scope.outputs.docs_only != 'true' && needs.changed-scope.outputs.run_macos == 'true'
+    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -718,7 +713,7 @@ jobs:
 
   android:
     needs: [docs-scope, changed-scope]
-    if: needs.docs-scope.outputs.docs_only != 'true' && (github.event_name == 'push' || needs.changed-scope.outputs.run_android == 'true')
+    if: github.event_name == 'push' && needs.docs-scope.outputs.docs_only != 'true'
     runs-on: blacksmith-16vcpu-ubuntu-2404
     strategy:
       fail-fast: false

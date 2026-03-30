@@ -37,6 +37,46 @@ summary: "Governed releasectl command surface for test/staging and production"
 - `releasectl verify-config`
   - Print effective governed paths and detect legacy `TEST_REPO`/`openclaw-test` config drift.
 
+## Canonical release-gate model
+
+Required release control now lives in the local governed lane, not GitHub PR status checks.
+
+### Required gates (canonical)
+
+1. Governed local validation via `releasectl test-deploy --sha <candidate>` (plus local sanity verification).
+2. `validation.yml` on `main` creates the validated `v*-x.*` artifact tag after sanity passes.
+3. `staging-deploy.yml` consumes that validated tag and deploys staging.
+4. Production promotion remains governed via `releasectl deploy ...` / `releasectl rollback ...`.
+
+### GitHub checks (supporting hygiene / automation)
+
+- **Still expected for automation glue**
+  - `.github/workflows/validation.yml` (validation branch + validated tag)
+  - `.github/workflows/staging-deploy.yml` (tag-triggered staging deploy)
+- **Optional/non-gating for release control**
+  - `.github/workflows/ci.yml` PR checks are intentionally lightweight; slow multi-platform test lanes run on `main` push.
+  - `.github/workflows/install-smoke.yml` runs on `main`/manual only.
+  - `.github/workflows/sandbox-common-smoke.yml` runs on `main` only.
+  - `workflow-sanity.yml`, `codeql.yml`, `labeler.yml`, `auto-response.yml`, `stale.yml`, `docker-release.yml` are repo hygiene/ops workflows, not release gates.
+
+### Workflow inventory and classification
+
+- **Canonical release-gate path:**
+  - `validation.yml` → required for validated tag creation.
+  - `staging-deploy.yml` → required to turn validated tags into staging artifacts.
+  - Local governed `releasectl` steps (outside GitHub Actions) remain the required gate for test/prod promotion.
+- **PR hygiene (non-blocking for release control):**
+  - `ci.yml` (now lightweight on PR; heavy jobs on `main` only)
+  - `workflow-sanity.yml`
+- **Mainline confidence / packaging hygiene (non-gating):**
+  - `install-smoke.yml`
+  - `sandbox-common-smoke.yml`
+  - `docker-release.yml`
+- **Repo maintenance / triage automation:**
+  - `labeler.yml`, `auto-response.yml`, `stale.yml`
+- **Security analysis (manual/scheduled, non-gating for release path):**
+  - `codeql.yml`
+
 ## Notes
 
 - `test-deploy`/`staging-deploy` currently drive the governed **test checkout** flow on this host (`/Users/openclaw/workspace/openclaw-test`), even though the internal helper name remains `staging-deploy.sh`.
