@@ -124,7 +124,32 @@ LINEAGE_REF="$(resolve_lineage_ref "$LINEAGE_REF" "$MAIN_REF")"
 if [[ -n "$MAIN_SHA" && "$MAIN_SHA" != "unknown" ]]; then
   echo "📌 Using pinned candidate SHA: $MAIN_SHA"
   git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1 || {
-    echo "❌ Refusing deploy: pinned candidate is not an ancestor of $LINEAGE_REF"
+    MAIN_HEAD="$(git rev-parse "$MAIN_REF" 2>/dev/null || echo unknown)"
+    PROD_HEAD="$(git rev-parse "$LINEAGE_REF" 2>/dev/null || echo unknown)"
+    ON_MAIN=no
+    ON_PROD=no
+    git merge-base --is-ancestor "$MAIN_SHA" "$MAIN_REF" >/dev/null 2>&1 && ON_MAIN=yes || true
+    git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1 && ON_PROD=yes || true
+    echo "❌ Cannot deploy pinned SHA $MAIN_SHA to production directly."
+    echo ""
+    echo "Reason:"
+    echo "- candidate is not an ancestor of production lineage: $LINEAGE_REF"
+    echo "- origin/main head: $MAIN_HEAD"
+    echo "- production lineage head: $PROD_HEAD"
+    echo "- candidate on main lineage: $ON_MAIN"
+    echo "- candidate on production lineage: $ON_PROD"
+    echo ""
+    echo "What this means:"
+    echo "- releasectl deploy is the governed production tag+deploy step"
+    echo "- it only accepts candidates that are already on the production lineage"
+    echo "- a merged main SHA is not automatically a production deploy candidate"
+    echo ""
+    echo "What to do next:"
+    echo "1. Check whether validation/tagging has already produced a validated v*-x.* tag for this commit"
+    echo "2. If yes, let staging-deploy consume that tag and verify staging"
+    echo "3. Then deploy the validated release artifact with:"
+    echo "     releasectl deploy --version <v...-x.N>"
+    echo "4. If no validated tag exists yet, wait for / fix the main → validation → tag → staging flow first"
     exit 1
   }
 else
