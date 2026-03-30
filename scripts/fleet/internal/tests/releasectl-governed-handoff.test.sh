@@ -26,6 +26,16 @@ out="$({
 
 pass "test-deploy triggers governed handoff to installed releasectl"
 
+bundle_out="$({
+  RELEASECTL_CAPTURE_HANDOFF=1 \
+  RELEASECTL_ALLOW_SUDO=1 \
+  RELEASECTL_EXEC_PATH=/usr/local/lib/openclaw-fleet/releasectl \
+  bash "$RELEASECTL" bundle-sync --check
+} 2>&1)" || fail "expected bundle-sync handoff capture to exit successfully"
+
+[[ "$bundle_out" == *"HANDOFF action=bundle-sync"* ]] || fail "expected bundle-sync handoff capture output"
+pass "bundle-sync triggers governed handoff to installed releasectl"
+
 if RELEASECTL_ALLOW_SUDO=0 bash "$RELEASECTL" test-deploy --sha demo-branch >/tmp/releasectl-no-sudo.out 2>&1; then
   fail "expected test-deploy to fail when sudo handoff is disabled"
 fi

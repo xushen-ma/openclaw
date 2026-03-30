@@ -30,6 +30,8 @@ summary: "Governed releasectl command surface for test/staging and production"
 
 - `releasectl repair-perms [--repo <path>] [--dry-run]`
   - Normalize file mode drift in governed repos.
+- `releasectl bundle-sync [--check|--sync]`
+  - Front-door command for installed governed bundle drift detection (`--check`) and reconciliation (`--sync`).
 
 ## Notes
 
@@ -37,7 +39,8 @@ summary: "Governed releasectl command surface for test/staging and production"
 - `deploy`/`rollback` call production internal flows.
 - Permission normalization runs after deploy/test-deploy/rollback flows.
 - Ownership is never changed by `releasectl`.
-- If the governed tool/runtime placement itself drifts, first sync the controlled repo through the canonical `oc-release` fast-forward path before concluding the front door is broken:
+- If governed bundle files under `/usr/local/lib/openclaw-fleet` drift from `scripts/fleet`, use `releasectl bundle-sync --sync` (or `--check` for read-only verification).
+- If the governed tool/runtime placement itself drifts beyond bundle files, first sync the controlled repo through the canonical `oc-release` fast-forward path before concluding the front door is broken:
 
 ```bash
 sudo -u oc-release git -C /Users/openclaw/workspace/openclaw-fleet-mgmt checkout main && \
