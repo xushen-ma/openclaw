@@ -7,6 +7,97 @@ INTERNAL_DIR="${RELEASECTL_INTERNAL_DIR:-$SCRIPT_DIR/internal}"
 
 # shellcheck disable=SC1091
 source "$INTERNAL_DIR/permissions.sh"
+source "$INTERNAL_DIR/fleet.env"
+
+DEFAULT_CONFIG="${RELEASECTL_CONFIG:-$HOME/.openclaw/releasectl/config.env}"
+
+load_releasectl_config() {
+  local cfg="$DEFAULT_CONFIG"
+  local env_release_user="${RELEASE_USER-}"
+  local env_allow_sudo="${RELEASECTL_ALLOW_SUDO-}"
+  local env_exec_path="${RELEASECTL_EXEC_PATH-}"
+
+  [[ -f "$cfg" ]] && source "$cfg"
+
+  [[ -n "$env_release_user" ]] && RELEASE_USER="$env_release_user"
+  [[ -n "$env_allow_sudo" ]] && RELEASECTL_ALLOW_SUDO="$env_allow_sudo"
+  [[ -n "$env_exec_path" ]] && RELEASECTL_EXEC_PATH="$env_exec_path"
+
+  RELEASE_USER="${RELEASE_USER:-oc-release}"
+  RELEASECTL_ALLOW_SUDO="${RELEASECTL_ALLOW_SUDO:-1}"
+  RELEASECTL_EXEC_PATH="${RELEASECTL_EXEC_PATH:-/usr/local/lib/openclaw-fleet/releasectl}"
+}
+
+is_governed_write_action() {
+  case "${1:-}" in
+    test-deploy|staging-deploy|test-release|deploy|rollback)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+resolve_user_home() {
+  local user="$1"
+  local home=""
+  home="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+  if [[ -z "$home" ]]; then
+    home="$(python3 - "$user" <<'PY'
+import pwd, sys
+try:
+  print(pwd.getpwnam(sys.argv[1]).pw_dir)
+except KeyError:
+  pass
+PY
+)"
+  fi
+  printf '%s\n' "$home"
+}
+
+ensure_governed_handoff() {
+  local action="$1"
+  shift || true
+
+  is_governed_write_action "$action" || return 0
+  [[ "${RELEASECTL_SKIP_SUDO_HANDOFF:-0}" == "1" ]] && return 0
+
+  local current_user
+  current_user="$(id -un 2>/dev/null || true)"
+  [[ -n "$current_user" ]] || return 0
+  [[ "$current_user" == "$RELEASE_USER" ]] && return 0
+
+  [[ "${RELEASECTL_ALLOW_SUDO:-1}" == "1" ]] || {
+    echo "error: governed action '$action' requires $RELEASE_USER (sudo handoff disabled)" >&2
+    exit 1
+  }
+
+  command -v sudo >/dev/null 2>&1 || {
+    echo "error: sudo not found; cannot hand off to governed user $RELEASE_USER" >&2
+    exit 1
+  }
+
+  local releasectl_exec="$RELEASECTL_EXEC_PATH"
+  if [[ ! -x "$releasectl_exec" ]]; then
+    releasectl_exec="$0"
+  fi
+
+  local release_home
+  release_home="$(resolve_user_home "$RELEASE_USER")"
+  [[ -n "$release_home" ]] || {
+    echo "error: unable to resolve home for governed user $RELEASE_USER" >&2
+    exit 1
+  }
+
+  if [[ "${RELEASECTL_CAPTURE_HANDOFF:-0}" == "1" ]]; then
+    echo "HANDOFF action=$action current_user=$current_user release_user=$RELEASE_USER exec=$releasectl_exec home=$release_home args=$*"
+    exit 0
+  fi
+
+  cd / || true
+  exec sudo -n -u "$RELEASE_USER" "$releasectl_exec" "$action" "$@"
+}
 
 usage() {
   cat <<'EOF'
@@ -150,6 +241,9 @@ if [[ -z "$command" ]]; then
   exit 2
 fi
 shift || true
+
+load_releasectl_config
+ensure_governed_handoff "$command" "$@"
 
 case "$command" in
   repair-perms)
