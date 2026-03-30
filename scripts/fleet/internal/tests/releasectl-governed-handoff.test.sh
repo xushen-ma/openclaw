@@ -34,7 +34,8 @@ bundle_out="$({
 } 2>&1)" || fail "expected bundle-sync handoff capture to exit successfully"
 
 [[ "$bundle_out" == *"HANDOFF action=bundle-sync"* ]] || fail "expected bundle-sync handoff capture output"
-pass "bundle-sync triggers governed handoff to installed releasectl"
+[[ "$bundle_out" == *"source_root="*"/scripts/fleet"* ]] || fail "expected bundle-sync handoff to pin source_root to checked-out scripts/fleet"
+pass "bundle-sync triggers governed handoff to installed releasectl with pinned source_root"
 
 if RELEASECTL_ALLOW_SUDO=0 bash "$RELEASECTL" test-deploy --sha demo-branch >/tmp/releasectl-no-sudo.out 2>&1; then
   fail "expected test-deploy to fail when sudo handoff is disabled"

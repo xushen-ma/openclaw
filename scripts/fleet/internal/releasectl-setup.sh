@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/internal/fleet.env"
+source "$SCRIPT_DIR/fleet.env"
 
 usage() {
   cat <<'EOF'
@@ -77,6 +77,9 @@ RELEASECTL_LOG_DIR="$HOME/.openclaw/releasectl/logs"
 RELEASECTL_ALLOW_SUDO="1"
 RELEASECTL_REQUIRE_AUTH="1"
 RELEASECTL_ALLOWED_REPO_PREFIX="${RELEASE_REPO%/*}"
+# Canonical governed bundle source (dev repo scripts/fleet). Keep this aligned with
+# the checked-out source-of-truth to avoid syncing legacy runtime copies.
+RELEASECTL_SOURCE_ROOT="/Users/openclaw/workspace/openclaw/scripts/fleet"
 EOF
   chmod 600 "$CONFIG_FILE"
   echo "Wrote config: $CONFIG_FILE"
