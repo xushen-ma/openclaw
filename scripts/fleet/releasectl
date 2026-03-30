@@ -30,7 +30,7 @@ load_releasectl_config() {
 
 is_governed_write_action() {
   case "${1:-}" in
-    test-deploy|staging-deploy|test-release|deploy|rollback|bundle-sync)
+    test-deploy|staging-deploy|test-release|promote-production|deploy|rollback|bundle-sync)
       return 0
       ;;
     *)
@@ -120,6 +120,7 @@ Usage:
   releasectl test-status
   releasectl test-release [--force]
   releasectl staging-deploy --sha <branch|sha|ref>
+  releasectl promote-production --sha <branch|sha|ref> [--allow-untagged]
   releasectl deploy [args...]
   releasectl rollback [args...]
   releasectl bundle-sync [--check|--sync]
@@ -134,6 +135,9 @@ Commands:
   test-release    Release stale staging/test lane lock (safety-gated).
 
   staging-deploy  Alias of test-deploy for backward compatibility.
+  promote-production
+                  Merge validated candidate onto production lineage and print
+                  resulting production commit SHA.
   deploy          Run internal production deploy flow, then normalize permissions.
   rollback        Run internal rollback flow, then normalize permissions.
   bundle-sync     Check/sync installed governed bundle from scripts/fleet source.
@@ -186,6 +190,8 @@ run_with_post_normalize() {
 }
 
 require_sha_flag() {
+  local subcommand="$1"
+  shift
   local value=""
   while (($#)); do
     case "$1" in
@@ -198,7 +204,7 @@ require_sha_flag() {
         exit 0
         ;;
       *)
-        echo "error: unknown flag for test-deploy: $1" >&2
+        echo "error: unknown flag for $subcommand: $1" >&2
         exit 2
         ;;
     esac
@@ -297,11 +303,11 @@ case "$command" in
     fi
     ;;
   test-deploy)
-    target_ref="$(require_sha_flag "$@")"
+    target_ref="$(require_sha_flag "test-deploy" "$@")"
     run_with_post_normalize "staging-deploy.sh" "$target_ref"
     ;;
   staging-deploy)
-    target_ref="$(require_sha_flag "$@")"
+    target_ref="$(require_sha_flag "staging-deploy" "$@")"
     run_with_post_normalize "staging-deploy.sh" "$target_ref"
     ;;
   test-status)
@@ -335,6 +341,9 @@ case "$command" in
 
     rm -f "$test_lock_file"
     echo "released test lane lock: $test_lock_file"
+    ;;
+  promote-production)
+    "$INTERNAL_DIR/promote-production.sh" "$@"
     ;;
   deploy)
     run_with_post_normalize "deploy.sh" "$@"

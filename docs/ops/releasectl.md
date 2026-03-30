@@ -21,6 +21,11 @@ summary: "Governed releasectl command surface for test/staging and production"
 
 ### Production lane
 
+- `releasectl promote-production --sha <branch|sha|ref> [--allow-untagged]`
+  - First-class production-lineage promotion step.
+  - Verifies the candidate is on `origin/main` lineage and (by default) that the candidate commit itself has a validated `v*-x.*` tag.
+  - Creates/pushes a non-fast-forward merge commit onto `origin/production`.
+  - Prints the resulting production-lineage commit SHA and the exact deploy follow-up command.
 - `releasectl deploy [args...]`
   - Run governed production deploy flow.
   - This is the **production tag+deploy** step: it creates/pushes the next fork release tag and deploys production.
@@ -46,7 +51,8 @@ Required release control now lives in the local governed lane, not GitHub PR sta
 1. Governed local validation via `releasectl test-deploy --sha <candidate>` (plus local sanity verification).
 2. `validation.yml` on `main` creates the validated `v*-x.*` artifact tag after sanity passes.
 3. `staging-deploy.yml` consumes that validated tag and deploys staging.
-4. Production promotion remains governed via `releasectl deploy ...` / `releasectl rollback ...`.
+4. Promote the validated artifact onto production lineage via `releasectl promote-production --sha <validated-tag-or-sha>`.
+5. Execute production tag+deploy via `releasectl deploy --sha <production-lineage-commit>` (or rollback via `releasectl rollback ...`).
 
 ### GitHub checks (supporting hygiene / automation)
 
@@ -88,8 +94,9 @@ Required release control now lives in the local governed lane, not GitHub PR sta
   2. `.github/workflows/validation.yml` creates a `validation` branch and runs sanity
   3. on success, `validation.yml` creates/pushes the next validated `v*-x.*` tag
   4. `.github/workflows/staging-deploy.yml` reacts to that tag and deploys staging automatically
-  5. production deployment happens later via `releasectl deploy --version <tag>` (or another production-lineage-allowed candidate)
-- Important: a merged `main` SHA is **not automatically** a production deploy candidate. If `releasectl deploy --sha ...` refuses ancestry, the next step is usually to check the validation/tag/staging workflow artifact rather than trying to deploy the raw `main` commit.
+  5. promote validated artifact to production lineage via `releasectl promote-production --sha <validated-tag-or-sha>`
+  6. deploy via `releasectl deploy --sha <resulting-production-lineage-sha>`
+- Important: a merged `main` SHA is **not automatically** a production deploy candidate. If `releasectl deploy --sha ...` refuses ancestry, the next governed step is to run `releasectl promote-production --sha <validated-tag-or-sha>` first.
 - If governed bundle files under `/usr/local/lib/openclaw-fleet` drift from `scripts/fleet`, use `releasectl bundle-sync --sync` (or `--check` for read-only verification).
 - `bundle-sync` is pinned to the caller's checked-out `scripts/fleet` source when handed off to `oc-release`, so stale config overrides cannot silently re-sync legacy trees.
 - If the governed tool/runtime placement itself drifts beyond bundle files, first sync the controlled repo through the canonical `oc-release` fast-forward path before concluding the front door is broken:

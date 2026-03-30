@@ -37,6 +37,16 @@ bundle_out="$({
 [[ "$bundle_out" == *"source_root="*"/scripts/fleet"* ]] || fail "expected bundle-sync handoff to pin source_root to checked-out scripts/fleet"
 pass "bundle-sync triggers governed handoff to installed releasectl with pinned source_root"
 
+promote_out="$({
+  RELEASECTL_CAPTURE_HANDOFF=1 \
+  RELEASECTL_ALLOW_SUDO=1 \
+  RELEASECTL_EXEC_PATH=/usr/local/lib/openclaw-fleet/releasectl \
+  bash "$RELEASECTL" promote-production --sha demo-branch
+} 2>&1)" || fail "expected promote-production handoff capture to exit successfully"
+
+[[ "$promote_out" == *"HANDOFF action=promote-production"* ]] || fail "expected promote-production handoff capture output"
+pass "promote-production triggers governed handoff to installed releasectl"
+
 if RELEASECTL_ALLOW_SUDO=0 bash "$RELEASECTL" test-deploy --sha demo-branch >/tmp/releasectl-no-sudo.out 2>&1; then
   fail "expected test-deploy to fail when sudo handoff is disabled"
 fi
