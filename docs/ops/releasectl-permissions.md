@@ -15,8 +15,9 @@ The governed policy stays the same:
 
 ## Command
 
-`releasectl` also runs the same normalization after `deploy`, `staging-deploy`,
-and `rollback` flows so guarded writes do not leave permission drift behind.
+`releasectl` also runs the same normalization after `deploy`, `test-deploy`
+(`staging-deploy` alias), and `rollback` flows so guarded writes do not leave
+permission drift behind.
 
 ```bash
 scripts/fleet/releasectl repair-perms --repo /Users/openclaw/workspace/openclaw
