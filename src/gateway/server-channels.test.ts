@@ -180,4 +180,68 @@ describe("server-channels auto restart", () => {
     await manager.startChannels();
     expect(startAccount).toHaveBeenCalledTimes(1);
   });
+
+  it("ignores stale setStatus patches from a previous lifecycle run", async () => {
+    const setStatusFns: Array<(patch: { connected?: boolean }) => void> = [];
+    const startAccount = vi
+      .fn<
+        [
+          {
+            setStatus: (patch: { connected?: boolean }) => void;
+          },
+        ],
+        Promise<void>
+      >()
+      .mockImplementationOnce(async ({ setStatus }) => {
+        setStatusFns.push(setStatus);
+      })
+      .mockImplementationOnce(async () => {
+        await new Promise<void>(() => {
+          // keep second lifecycle active
+        });
+      });
+
+    installTestRegistry(createTestPlugin({ startAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(startAccount).toHaveBeenCalledTimes(2);
+    setStatusFns[0]?.({ connected: false });
+
+    const snapshot = manager.getRuntimeSnapshot();
+    const account = snapshot.channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
+    expect(account?.running).toBe(true);
+    expect(account?.connected).not.toBe(false);
+  });
+
+  it("keeps runtime running=true when a stale lifecycle finalizer exits", async () => {
+    const startAccount = vi
+      .fn<
+        [
+          {
+            accountId: string;
+          },
+        ],
+        Promise<void>
+      >()
+      .mockImplementationOnce(async () => {})
+      .mockImplementationOnce(async () => {
+        await new Promise<void>(() => {
+          // keep second lifecycle active
+        });
+      });
+
+    installTestRegistry(createTestPlugin({ startAccount }));
+    const manager = createManager();
+
+    await manager.startChannels();
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(startAccount).toHaveBeenCalledTimes(2);
+    const snapshot = manager.getRuntimeSnapshot();
+    const account = snapshot.channelAccounts.discord?.[DEFAULT_ACCOUNT_ID];
+    expect(account?.running).toBe(true);
+  });
 });

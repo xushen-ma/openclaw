@@ -147,9 +147,11 @@ if [[ -n "$MAIN_SHA" && "$MAIN_SHA" != "unknown" ]]; then
     echo "What to do next:"
     echo "1. Check whether validation/tagging has already produced a validated v*-x.* tag for this commit"
     echo "2. If yes, let staging-deploy consume that tag and verify staging"
-    echo "3. Then deploy the validated release artifact with:"
-    echo "     releasectl deploy --version <v...-x.N>"
-    echo "4. If no validated tag exists yet, wait for / fix the main → validation → tag → staging flow first"
+    echo "3. Promote that validated artifact onto production lineage:"
+    echo "     releasectl promote-production --sha <validated-tag-or-sha>"
+    echo "4. Then deploy the resulting production-lineage commit:"
+    echo "     releasectl deploy --sha <resulting-production-lineage-sha>"
+    echo "5. If no validated tag exists yet, wait for / fix the main → validation → tag → staging flow first"
     exit 1
   }
 else

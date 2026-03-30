@@ -123,6 +123,26 @@ describe("evaluateChannelHealth", () => {
     expect(evaluation).toEqual({ healthy: false, reason: "stale-socket" });
   });
 
+  it("treats disconnected state as startup grace when events are inherited from a prior lifecycle", () => {
+    const evaluation = evaluateChannelHealth(
+      {
+        running: true,
+        connected: false,
+        enabled: true,
+        configured: true,
+        lastStartAt: 95_000,
+        lastEventAt: 10_000,
+      },
+      {
+        channelId: "discord",
+        now: 100_000,
+        channelConnectGraceMs: 10_000,
+        staleEventThresholdMs: 30_000,
+      },
+    );
+    expect(evaluation).toEqual({ healthy: true, reason: "startup-connect-grace" });
+  });
+
   it("skips stale-socket detection for telegram long-polling channels", () => {
     const evaluation = evaluateChannelHealth(
       {
