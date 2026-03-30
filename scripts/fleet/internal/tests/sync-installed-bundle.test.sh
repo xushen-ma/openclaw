@@ -24,6 +24,7 @@ out="$({
   FLEET_AGENT=Mini \
   RELEASECTL_SOURCE_ROOT="$SOURCE_ROOT" \
   RELEASECTL_INSTALL_ROOT="$dst_root" \
+  RELEASECTL_CONTROLLED_REPO="$tmpdir/no-controlled-repo" \
   bash "$SYNC_SCRIPT" --sync
 } 2>&1)" || fail "expected bundle sync to succeed"
 

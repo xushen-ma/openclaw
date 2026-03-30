@@ -103,12 +103,13 @@ Required release control now lives in the local governed lane, not GitHub PR sta
   6. deploy via `releasectl deploy --sha <resulting-production-lineage-sha>`
 - Important: a merged `main` SHA is **not automatically** a production deploy candidate. If `releasectl deploy --sha ...` refuses ancestry, the next governed step is to run `releasectl promote-production --sha <validated-tag-or-sha>` first.
 - If governed bundle files under `/usr/local/lib/openclaw-fleet` drift from `scripts/fleet`, use `releasectl bundle-sync --sync` (or `--check` for read-only verification).
-- `bundle-sync` is pinned to the caller's checked-out `scripts/fleet` source when handed off to `oc-release`, so stale config overrides cannot silently re-sync legacy trees.
-- If the governed tool/runtime placement itself drifts beyond bundle files, first sync the controlled repo through the canonical `oc-release` fast-forward path before concluding the front door is broken:
+- `bundle-sync --sync` now fast-forwards the controlled repo first (`/Users/openclaw/workspace/openclaw-fleet-mgmt`, `origin/main` by default), then syncs installed governed bundle files from the caller's checked-out `scripts/fleet` source. This removes the old manual `sudo git pull` step.
+- Clean operator flow (no copy/paste patches, no raw sudo):
 
 ```bash
-sudo -u oc-release git -C /Users/openclaw/workspace/openclaw-fleet-mgmt checkout main && \
-sudo -u oc-release git -C /Users/openclaw/workspace/openclaw-fleet-mgmt pull --ff-only
+releasectl bundle-sync --sync
+releasectl promote-production --sha <validated-tag>
+releasectl deploy --sha <production-lineage-commit>
 ```
 
 - The controlled-repo front door on this host is:
