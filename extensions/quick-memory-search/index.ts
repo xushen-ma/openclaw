@@ -1,6 +1,7 @@
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { writeOvStats } from "./ov-stats.js";
 import { createQuickMemoryPerAgentSidecarService } from "./per-agent-sidecar-service.js";
 import { createQuickSessionSearchTool } from "./session-search.js";
 
@@ -31,7 +32,9 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
         return jsonResult({ results: [], error: "query is required" });
       }
 
-      const requestBody = { query: query.trim(), limit: maxResults };
+      const normalizedQuery = query.trim();
+      const requestBody = { query: normalizedQuery, limit: maxResults };
+      const startedAt = Date.now();
       const attempts = resolveOvRequest({
         config: httpConfig,
         scope: "memory",
@@ -73,6 +76,20 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
             citation: item.uri ?? "",
           }));
 
+          const latencyMs = Date.now() - startedAt;
+          await writeOvStats({
+            agent: agentId,
+            op: "search",
+            uri: "viking://resources",
+            query: normalizedQuery,
+            latencyMs,
+            resultCount: results.length,
+            hit: results.length > 0,
+            mode: attempt.mode,
+            layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
+            routing: attempt.mode,
+          }).catch(() => {});
+
           return jsonResult({
             results,
             provider: results.length > 0 ? results[0].source : "openviking",
@@ -86,6 +103,19 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
           errors.push(`${attempt.mode}:${message}`);
         }
       }
+
+      await writeOvStats({
+        agent: agentId,
+        op: "search",
+        uri: "viking://resources",
+        query: normalizedQuery,
+        latencyMs: Date.now() - startedAt,
+        resultCount: 0,
+        hit: false,
+        mode: attempts[attempts.length - 1]?.mode || "none",
+        layer: attempts[attempts.length - 1]?.mode === "legacy" ? "fast-pass-shared" : "fast-pass",
+        routing: attempts[attempts.length - 1]?.mode === "legacy" ? "legacy" : "per-agent",
+      }).catch(() => {});
 
       return jsonResult({
         results: [],

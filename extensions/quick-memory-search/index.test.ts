@@ -1,9 +1,13 @@
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "./index.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.OPENCLAW_AGENT_ID;
+  delete process.env.OV_STATS_LOG_PATH;
 });
 
 describe("quick-memory-search plugin register", () => {
@@ -35,8 +39,12 @@ describe("quick-memory-search plugin register", () => {
     expect(service.id).toBe("quick-memory-search.per-agent-sidecar");
   });
 
-  it("quick_memory_search prefers per-agent endpoint and reports routing", async () => {
+  it("quick_memory_search logs per-agent fast-pass stats", async () => {
     const tools: any[] = [];
+    const tmp = await mkdtemp(join(tmpdir(), "quick-memory-stats-"));
+    const statsPath = join(tmp, "ov-stats.jsonl");
+    process.env.OV_STATS_LOG_PATH = statsPath;
+
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -74,6 +82,59 @@ describe("quick-memory-search plugin register", () => {
       }),
     );
     expect(payload.routing).toBe("per-agent");
-    expect(payload.results[0].source).toBe("openviking-agent-http");
+
+    const lines = (await readFile(statsPath, "utf8")).trim().split("\n");
+    expect(lines.length).toBe(1);
+    const stat = JSON.parse(lines[0]);
+    expect(stat.layer).toBe("fast-pass");
+    expect(stat.routing).toBe("per-agent");
+  });
+
+  it("quick_memory_search fallback logs legacy fast-pass stats", async () => {
+    const tools: any[] = [];
+    const tmp = await mkdtemp(join(tmpdir(), "quick-memory-stats-"));
+    const statsPath = join(tmp, "ov-stats.jsonl");
+    process.env.OV_STATS_LOG_PATH = statsPath;
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: async () => "unavailable" })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          result: {
+            total: 1,
+            resources: [
+              { uri: "viking://resources/main/fallback", score: 0.77, abstract: "fallback" },
+            ],
+          },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    process.env.OPENCLAW_AGENT_ID = "main";
+
+    register({
+      pluginConfig: {
+        perAgentOvBaseUrl: "http://127.0.0.1:8091",
+        ovBaseUrl: "http://127.0.0.1:8087",
+      },
+      resolvePath: (p: string) => `/plugin/${p}`,
+      registerTool: (tool: any) => tools.push(tool),
+      registerService: vi.fn(),
+      registerGatewayMethod: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as never);
+
+    const quickMemoryTool = tools.find((tool) => tool.name === "quick_memory_search");
+    expect(quickMemoryTool).toBeDefined();
+
+    const result = await quickMemoryTool.execute("call-1", { query: "fallback", maxResults: 3 });
+    const payload = JSON.parse(result.content[0].text);
+    expect(payload.routing).toBe("legacy");
+
+    const lines = (await readFile(statsPath, "utf8")).trim().split("\n");
+    const stat = JSON.parse(lines[0]);
+    expect(stat.layer).toBe("fast-pass-shared");
+    expect(stat.routing).toBe("legacy");
   });
 });

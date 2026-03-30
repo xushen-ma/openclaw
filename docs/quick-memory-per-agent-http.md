@@ -122,6 +122,21 @@ Then:
 2. Invoke `quick_memory_search` and `quick_session_search` from at least two agents.
 3. Confirm response `routing: "per-agent"` (quick_memory_search) and session results via per-agent scope.
 
+## Fast-path stats logging
+
+Plugin-tool invocations now append OV stats rows to `~/.openclaw/stats/ov-stats.jsonl`
+(same sink consumed by weekly OV reports):
+
+- `quick_memory_search`
+  - per-agent route → `layer: "fast-pass"`, `routing: "per-agent"`
+  - legacy fallback route → `layer: "fast-pass-shared"`, `routing: "legacy"`
+- `quick_session_search`
+  - both per-agent HTTP and local fallback stay in `layer: "session-history"`
+  - routing is recorded as `"per-agent"` or `"local"`
+
+This closes the previous observability gap where tool/plugin fast-path usage did not
+show up in weekly OV stats.
+
 ## Notes
 
 - This implementation is intentionally minimal: a thin HTTP -> OpenViking search proxy with strict scope mapping.
