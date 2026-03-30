@@ -7,15 +7,10 @@ on:
       - Dockerfile.sandbox
       - Dockerfile.sandbox-common
       - scripts/sandbox-common-setup.sh
-  pull_request:
-    paths:
-      - Dockerfile.sandbox
-      - Dockerfile.sandbox-common
-      - scripts/sandbox-common-setup.sh
 
 concurrency:
-  group: sandbox-common-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: sandbox-common-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   sandbox-common-smoke:

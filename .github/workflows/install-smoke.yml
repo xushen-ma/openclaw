@@ -3,12 +3,11 @@ name: Install Smoke
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: install-smoke-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: install-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   docs-scope:
@@ -25,8 +24,8 @@ jobs:
       - name: Ensure docs-scope base commit
         uses: ./.github/actions/ensure-base-commit
         with:
-          base-sha: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
-          fetch-ref: ${{ github.event_name == 'push' && github.ref_name || github.event.pull_request.base.ref }}
+          base-sha: ${{ github.event_name == 'push' && github.event.before || github.sha }}
+          fetch-ref: ${{ github.ref_name }}
 
       - name: Detect docs-only changes
         id: check
@@ -93,7 +92,6 @@ jobs:
           cache-to: type=gha,mode=max,scope=install-smoke-installer-root
 
       - name: Build installer non-root image
-        if: github.event_name != 'pull_request'
         uses: useblacksmith/build-push-action@v2
         with:
           context: ./scripts/docker
@@ -112,7 +110,7 @@ jobs:
           CLAWDBOT_NO_ONBOARD: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_CLI: "1"
           CLAWDBOT_INSTALL_SMOKE_SKIP_IMAGE_BUILD: "1"
-          CLAWDBOT_INSTALL_NONROOT_SKIP_IMAGE_BUILD: ${{ github.event_name == 'pull_request' && '0' || '1' }}
-          CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+          CLAWDBOT_INSTALL_NONROOT_SKIP_IMAGE_BUILD: "1"
+          CLAWDBOT_INSTALL_SMOKE_SKIP_NONROOT: "0"
           CLAWDBOT_INSTALL_SMOKE_SKIP_PREVIOUS: "1"
         run: bash scripts/test-install-sh-docker.sh

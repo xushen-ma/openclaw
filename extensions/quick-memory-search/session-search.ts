@@ -3,13 +3,17 @@ import { promisify } from "node:util";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { writeOvStats } from "./ov-stats.js";
 
 const execFileAsync = promisify(execFile);
 
 const QuickSessionSearchSchema = {
   type: "object" as const,
   properties: {
-    query: { type: "string" as const, description: "Search query for past session/conversation recall" },
+    query: {
+      type: "string" as const,
+      description: "Search query for past session/conversation recall",
+    },
     maxResults: { type: "number" as const, description: "Maximum results to return (default 5)" },
   },
   required: ["query"] as string[],
@@ -59,10 +63,14 @@ for attempt in range(MAX_RETRIES + 1):
 `;
 
   try {
-    const { stdout } = await execFileAsync(VENV_PY, ["-c", script, storePath, query, String(limit)], {
-      timeout: 15_000,
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
-    });
+    const { stdout } = await execFileAsync(
+      VENV_PY,
+      ["-c", script, storePath, query, String(limit)],
+      {
+        timeout: 15_000,
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+      },
+    );
     return JSON.parse(stdout.trim());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -87,12 +95,15 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
         return jsonResult({ results: [], error: "query is required" });
       }
 
+      const normalizedQuery = query.trim();
+      const startedAt = Date.now();
+
       // HTTP first (per-agent). If unavailable/failing, fallback to local store.
       const httpAttempts = resolveOvRequest({
         config: httpConfig,
         scope: "sessions",
         agentId,
-        body: { query: query.trim(), limit: maxResults },
+        body: { query: normalizedQuery, limit: maxResults },
       }).filter((x) => x.mode === "per-agent");
 
       for (const attempt of httpAttempts) {
@@ -114,6 +125,19 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
             citation: item.uri ?? "",
           }));
 
+          await writeOvStats({
+            agent: agentId,
+            op: "session-search",
+            uri: `viking://resources/${agentId}-sessions`,
+            query: normalizedQuery,
+            latencyMs: Date.now() - startedAt,
+            resultCount: results.length,
+            hit: results.length > 0,
+            mode: "per-agent",
+            layer: "session-history",
+            routing: "per-agent",
+          }).catch(() => {});
+
           return jsonResult({
             results,
             provider: "openviking-sessions-agent-http",
@@ -127,9 +151,21 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
 
       const sessionStorePath = `${OV_LOCAL_ROOT}/${agentId}-sessions`;
       try {
-        const data = await searchLocalStore(sessionStorePath, query.trim(), maxResults);
+        const data = await searchLocalStore(sessionStorePath, normalizedQuery, maxResults);
 
         if (data.error) {
+          await writeOvStats({
+            agent: agentId,
+            op: "session-search",
+            uri: `viking://resources/${agentId}-sessions`,
+            query: normalizedQuery,
+            latencyMs: Date.now() - startedAt,
+            resultCount: 0,
+            hit: false,
+            mode: "local",
+            layer: "session-history",
+            routing: "local",
+          }).catch(() => {});
           return jsonResult({
             results: [],
             error: data.error,
@@ -145,6 +181,19 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
           citation: item.uri ?? "",
         }));
 
+        await writeOvStats({
+          agent: agentId,
+          op: "session-search",
+          uri: `viking://resources/${agentId}-sessions`,
+          query: normalizedQuery,
+          latencyMs: Date.now() - startedAt,
+          resultCount: results.length,
+          hit: results.length > 0,
+          mode: "local",
+          layer: "session-history",
+          routing: "local",
+        }).catch(() => {});
+
         return jsonResult({
           results,
           provider: "openviking-sessions-local",
@@ -153,6 +202,18 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        await writeOvStats({
+          agent: agentId,
+          op: "session-search",
+          uri: `viking://resources/${agentId}-sessions`,
+          query: normalizedQuery,
+          latencyMs: Date.now() - startedAt,
+          resultCount: 0,
+          hit: false,
+          mode: "local",
+          layer: "session-history",
+          routing: "local",
+        }).catch(() => {});
         return jsonResult({
           results: [],
           error: message,
