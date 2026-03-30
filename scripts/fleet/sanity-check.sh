@@ -122,7 +122,11 @@ if [[ "$CI_MODE" == true ]]; then
   RELEASE_DIR="$(pwd)"
   TEST_ENV="$STAGING_DIR/.test-instance/test.env"
   TEST_CONFIG="$STAGING_DIR/.test-instance/openclaw.test.json"
+  if [[ -z "$SHA_ARG" ]]; then
+    SHA_ARG="$(git rev-parse HEAD 2>/dev/null || true)"
+  fi
   echo "  ℹ️ CI mode: validating candidate checkout at $DEV_REPO"
+  echo "  ℹ️ CI candidate SHA: ${SHA_ARG:-unknown}"
 fi
 [[ -d "$DEV_REPO" ]]     || { echo "  ❌ DEV_REPO not found: $DEV_REPO"; PREFLIGHT_OK=false; }
 if [[ "$CI_MODE" != true ]]; then
@@ -149,6 +153,9 @@ if [[ -n "$CANDIDATE_REF" && "$CANDIDATE_REF" != "unknown" ]]; then
   MAIN_SHA_BEFORE="$CANDIDATE_REF"
   echo "  Testing pinned candidate SHA: $MAIN_SHA_BEFORE"
   git reset --hard "$MAIN_SHA_BEFORE" --quiet 2>/dev/null || true
+elif [[ "$CI_MODE" == true ]]; then
+  MAIN_SHA_BEFORE="$(git rev-parse HEAD)"
+  echo "  Testing checked-out CI candidate SHA: $MAIN_SHA_BEFORE"
 else
   MAIN_SHA_BEFORE=$(git rev-parse "refs/remotes/$FORK_REMOTE/$MAIN_BRANCH")
   echo "  Testing main SHA: $MAIN_SHA_BEFORE"
@@ -160,6 +167,12 @@ if [[ "$TEST_REPO_MODE" == true ]]; then
     check_fail "Build: pnpm build failed in test checkout (see $BUILD_LOG)"
   else
     check_pass "Build: pnpm build succeeded in test checkout"
+  fi
+elif [[ "$CI_MODE" == true ]]; then
+  if ! pnpm build > "$BUILD_LOG" 2>&1; then
+    check_fail "Build: pnpm build failed in CI candidate checkout (see $BUILD_LOG)"
+  else
+    check_pass "Build: pnpm build succeeded in CI candidate checkout"
   fi
 elif ! sudo -n -u oc-release env   HOME="$BUILD_HOME"   USER="oc-release"   LOGNAME="oc-release"   XDG_CONFIG_HOME="$BUILD_HOME/.config"   XDG_CACHE_HOME="$BUILD_HOME/.cache"   XDG_STATE_HOME="$BUILD_HOME/.local/state"   PNPM_HOME="$BUILD_HOME/Library/pnpm"   pnpm build > "$BUILD_LOG" 2>&1; then
   check_fail "Build: pnpm build failed (see $BUILD_LOG)"
@@ -336,7 +349,9 @@ echo "════════════════════════�
 for r in "${RESULTS[@]}"; do echo "  $r"; done
 echo ""
 
-if [[ -n "${FLEET_TARGET_SHA:-}" && "${FLEET_TARGET_SHA:-}" != "unknown" ]]; then
+if [[ "$CI_MODE" == true ]]; then
+  MAIN_SHA_AFTER=$(git -C "$DEV_REPO" rev-parse HEAD 2>/dev/null || echo "unknown")
+elif [[ -n "${FLEET_TARGET_SHA:-}" && "${FLEET_TARGET_SHA:-}" != "unknown" ]]; then
   MAIN_SHA_AFTER=$(git -C "$DEV_REPO" rev-parse HEAD 2>/dev/null || echo "unknown")
 else
   MAIN_SHA_AFTER=$(git -C "$DEV_REPO" rev-parse "refs/remotes/$FORK_REMOTE/$MAIN_BRANCH" 2>/dev/null || echo "unknown")
