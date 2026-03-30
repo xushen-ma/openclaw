@@ -105,7 +105,6 @@ resolve_lineage_ref() {
 
   local candidate
   for candidate in \
-    "refs/remotes/$FORK_REMOTE/xushen/$PROD_BRANCH" \
     "refs/remotes/$FORK_REMOTE/$PROD_BRANCH" \
     "$main_ref"
   do
