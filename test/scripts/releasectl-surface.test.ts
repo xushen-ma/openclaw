@@ -58,14 +58,32 @@ echo "rollback:$*" >> "$CALLS_FILE"
   );
 
   fs.writeFileSync(
+    path.join(internalDir, "sync-installed-bundle.sh"),
+    `#!/usr/bin/env bash
+echo "bundle:$*" >> "$CALLS_FILE"
+`,
+  );
+
+  const testRepo = path.join(root, "openclaw-test");
+  fs.mkdirSync(testRepo, { recursive: true });
+
+  fs.writeFileSync(
     path.join(internalDir, "fleet.env"),
     `#!/usr/bin/env bash
 FLEET_LOCK_DIR="${lockDir}"
 STAGING_LOCK_FILE="$FLEET_LOCK_DIR/staging.lock"
+TEST_REPO="${testRepo}"
+TEST_LOCK_FILE="${testRepo}/.test-env.lock"
 `,
   );
 
-  for (const script of ["permissions.sh", "staging-deploy.sh", "deploy.sh", "rollback.sh"]) {
+  for (const script of [
+    "permissions.sh",
+    "staging-deploy.sh",
+    "deploy.sh",
+    "rollback.sh",
+    "sync-installed-bundle.sh",
+  ]) {
     fs.chmodSync(path.join(internalDir, script), 0o755);
   }
 
@@ -79,6 +97,7 @@ describe("releasectl command surface", () => {
     const env = {
       ...process.env,
       RELEASECTL_INTERNAL_DIR: harness.internalDir,
+      RELEASECTL_SKIP_SUDO_HANDOFF: "1",
       CALLS_FILE: harness.callsFile,
     };
 
@@ -99,6 +118,7 @@ describe("releasectl command surface", () => {
     const env = {
       ...process.env,
       RELEASECTL_INTERNAL_DIR: harness.internalDir,
+      RELEASECTL_SKIP_SUDO_HANDOFF: "1",
       CALLS_FILE: harness.callsFile,
     };
 
@@ -107,14 +127,32 @@ describe("releasectl command surface", () => {
     expect(out.stderr).toContain("missing required flag --sha");
   });
 
+  it("routes bundle-sync to internal sync-installed-bundle helper", () => {
+    const harness = makeHarness();
+
+    const env = {
+      ...process.env,
+      RELEASECTL_INTERNAL_DIR: harness.internalDir,
+      RELEASECTL_SKIP_SUDO_HANDOFF: "1",
+      CALLS_FILE: harness.callsFile,
+    };
+
+    execFileSync("bash", [releasectlPath, "bundle-sync"], { env });
+    execFileSync("bash", [releasectlPath, "bundle-sync", "--sync"], { env });
+
+    const lines = fs.readFileSync(harness.callsFile, "utf8").trim().split("\n");
+    expect(lines).toEqual(["bundle:--check", "bundle:--sync"]);
+  });
+
   it("reports and releases test lane lock", () => {
     const harness = makeHarness();
     const env = {
       ...process.env,
       RELEASECTL_INTERNAL_DIR: harness.internalDir,
+      RELEASECTL_SKIP_SUDO_HANDOFF: "1",
       CALLS_FILE: harness.callsFile,
     };
-    const lockFile = path.join(harness.lockDir, "staging.lock");
+    const lockFile = path.join(harness.root, "openclaw-test", ".test-env.lock");
 
     const free = spawnSync("bash", [releasectlPath, "test-status"], { env, encoding: "utf8" });
     expect(free.status).toBe(0);
