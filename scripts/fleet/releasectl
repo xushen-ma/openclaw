@@ -424,7 +424,20 @@ case "$command" in
     "$INTERNAL_DIR/sanity-check.sh" "$@"
     ;;
   deploy)
-    run_with_post_normalize "deploy.sh" "$@"
+    # Parse --sha flag and translate to FLEET_TARGET_SHA env var for deploy.sh
+    _deploy_sha=""
+    _deploy_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --sha) _deploy_sha="${2:?--sha requires a value}"; shift 2 ;;
+        *) _deploy_args+=("$1"); shift ;;
+      esac
+    done
+    if [[ -n "$_deploy_sha" ]]; then
+      FLEET_TARGET_SHA="$_deploy_sha" run_with_post_normalize "deploy.sh" "${_deploy_args[@]+"${_deploy_args[@]}"}"
+    else
+      run_with_post_normalize "deploy.sh" "${_deploy_args[@]+"${_deploy_args[@]}"}"
+    fi
     ;;
   rollback)
     run_with_post_normalize "rollback.sh" "$@"
