@@ -32,16 +32,21 @@ load_releasectl_config() {
   local env_release_user="${RELEASE_USER-}"
   local env_allow_sudo="${RELEASECTL_ALLOW_SUDO-}"
   local env_exec_path="${RELEASECTL_EXEC_PATH-}"
+  local env_sudo_password="${RELEASECTL_SUDO_PASSWORD-}"
+  local env_sudo_password_file="${RELEASECTL_SUDO_PASSWORD_FILE-}"
 
   [[ -f "$cfg" ]] && source "$cfg"
 
   [[ -n "$env_release_user" ]] && RELEASE_USER="$env_release_user"
   [[ -n "$env_allow_sudo" ]] && RELEASECTL_ALLOW_SUDO="$env_allow_sudo"
   [[ -n "$env_exec_path" ]] && RELEASECTL_EXEC_PATH="$env_exec_path"
+  [[ -n "$env_sudo_password" ]] && RELEASECTL_SUDO_PASSWORD="$env_sudo_password"
+  [[ -n "$env_sudo_password_file" ]] && RELEASECTL_SUDO_PASSWORD_FILE="$env_sudo_password_file"
 
   RELEASE_USER="${RELEASE_USER:-oc-release}"
   RELEASECTL_ALLOW_SUDO="${RELEASECTL_ALLOW_SUDO:-1}"
   RELEASECTL_EXEC_PATH="${RELEASECTL_EXEC_PATH:-/usr/local/lib/openclaw-fleet/releasectl}"
+  RELEASECTL_SUDO_PASSWORD_FILE="${RELEASECTL_SUDO_PASSWORD_FILE:-$HOME/.openclaw/releasectl/sudo-password}"
 }
 
 is_governed_write_action() {
@@ -70,6 +75,57 @@ PY
 )"
   fi
   printf '%s\n' "$home"
+}
+
+resolve_sudo_password() {
+  if [[ -n "${RELEASECTL_SUDO_PASSWORD:-}" ]]; then
+    printf '%s' "$RELEASECTL_SUDO_PASSWORD"
+    return 0
+  fi
+
+  if [[ -f "${RELEASECTL_SUDO_PASSWORD_FILE:-}" ]]; then
+    head -n 1 "$RELEASECTL_SUDO_PASSWORD_FILE"
+    return 0
+  fi
+
+  return 1
+}
+
+run_governed_sudo() {
+  if [[ $# -eq 0 ]]; then
+    echo "error: internal handoff bug: missing governed command" >&2
+    exit 1
+  fi
+
+  local err_file
+  err_file="$(mktemp)"
+  if sudo -n -u "$RELEASE_USER" "$@" 2>"$err_file"; then
+    rm -f "$err_file"
+    exit 0
+  fi
+
+  local rc="$?"
+  local sudo_err
+  sudo_err="$(cat "$err_file")"
+  rm -f "$err_file"
+
+  if [[ "$sudo_err" != *"a password is required"* ]] \
+     && [[ "$sudo_err" != *"no tty present"* ]] \
+     && [[ "$sudo_err" != *"a terminal is required"* ]]; then
+    [[ -n "$sudo_err" ]] && echo "$sudo_err" >&2
+    exit "$rc"
+  fi
+
+  local sudo_pw=""
+  sudo_pw="$(resolve_sudo_password 2>/dev/null || true)"
+  if [[ -z "$sudo_pw" ]]; then
+    echo "error: governed handoff requires sudo access to $RELEASE_USER" >&2
+    echo "hint: configure sudoers NOPASSWD for releasectl handoff; front-door fallback also supports RELEASECTL_SUDO_PASSWORD / RELEASECTL_SUDO_PASSWORD_FILE" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$sudo_pw" | sudo -S -p '' -u "$RELEASE_USER" "$@"
+  exit $?
 }
 
 ensure_governed_handoff() {
@@ -120,10 +176,10 @@ ensure_governed_handoff() {
   if [[ "$action" == "bundle-sync" ]]; then
     # Force bundle-sync source to the caller's checked-out scripts/fleet root so
     # governed sync cannot drift back to legacy trees via stale config.
-    exec sudo -n -u "$RELEASE_USER" env RELEASECTL_SOURCE_ROOT="$SCRIPT_DIR" "$releasectl_exec" "$action" "$@"
+    run_governed_sudo env RELEASECTL_SOURCE_ROOT="$SCRIPT_DIR" "$releasectl_exec" "$action" "$@"
   fi
 
-  exec sudo -n -u "$RELEASE_USER" "$releasectl_exec" "$action" "$@"
+  run_governed_sudo "$releasectl_exec" "$action" "$@"
 }
 
 usage() {
