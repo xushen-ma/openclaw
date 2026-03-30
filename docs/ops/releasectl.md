@@ -11,11 +11,11 @@ summary: "Governed releasectl command surface for test/staging and production"
 ### Test / staging lane
 
 - `releasectl test-deploy --sha <branch|sha|ref>`
-  - Deploy a specific branch/SHA/ref to the governed staging test lane.
+  - Deploy a specific branch/SHA/ref to the governed **test checkout** on this host.
 - `releasectl test-status`
-  - Show staging/test lane lock status.
+  - Show the test-checkout lock status (`openclaw-test/.test-env.lock` on this host).
 - `releasectl test-release [--force]`
-  - Release a stale staging/test lane lock.
+  - Release a stale test-checkout lock.
 - `releasectl staging-deploy --sha <branch|sha|ref>`
   - Backward-compatible alias of `test-deploy`.
 
@@ -37,7 +37,7 @@ summary: "Governed releasectl command surface for test/staging and production"
 
 ## Notes
 
-- `test-deploy`/`staging-deploy` call the internal staging deployment flow.
+- `test-deploy`/`staging-deploy` currently drive the governed **test checkout** flow on this host (`/Users/openclaw/workspace/openclaw-test`), even though the internal helper name remains `staging-deploy.sh`.
 - `deploy`/`rollback` call production internal flows.
 - Permission normalization runs after deploy/test-deploy/rollback flows.
 - Ownership is never changed by `releasectl`.
