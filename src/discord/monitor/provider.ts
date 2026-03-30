@@ -803,12 +803,15 @@ export async function monitorDiscordProvider(opts: MonitorDiscordOpts = {}) {
     });
   } finally {
     const active = discordActiveMonitors.get(account.accountId);
-    if (active?.instanceId === monitorInstance.instanceId) {
+    const isLifecycleOwner = active?.instanceId === monitorInstance.instanceId;
+    if (isLifecycleOwner) {
       discordActiveMonitors.delete(account.accountId);
     }
     deactivateMessageHandler?.();
     autoPresenceController?.stop();
-    opts.setStatus?.({ connected: false });
+    if (isLifecycleOwner) {
+      opts.setStatus?.({ connected: false });
+    }
     releaseEarlyGatewayErrorGuard();
     if (!lifecycleStarted) {
       threadBindings.stop();

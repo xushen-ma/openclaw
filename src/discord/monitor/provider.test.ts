@@ -744,4 +744,45 @@ describe("monitorDiscordProvider", () => {
     expect(connectedTrue).toBeDefined();
     expect(connectedFalse).toBeDefined();
   });
+
+  it("does not emit connected=false from a stale monitor finalizer", async () => {
+    const { monitorDiscordProvider } = await import("./provider.js");
+    const firstStatus = vi.fn();
+    const secondStatus = vi.fn();
+
+    let releaseFirstLifecycle: (() => void) | null = null;
+    let firstCall = true;
+    monitorLifecycleMock.mockImplementation(async () => {
+      if (firstCall) {
+        firstCall = false;
+        await new Promise<void>((resolve) => {
+          releaseFirstLifecycle = resolve;
+        });
+        return;
+      }
+      return;
+    });
+
+    const firstRun = monitorDiscordProvider({
+      config: baseConfig(),
+      runtime: baseRuntime(),
+      setStatus: firstStatus,
+    });
+
+    // Allow the first monitor to register as active before starting the replacement.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await monitorDiscordProvider({
+      config: baseConfig(),
+      runtime: baseRuntime(),
+      setStatus: secondStatus,
+    });
+
+    releaseFirstLifecycle?.();
+    await firstRun;
+
+    expect(firstStatus.mock.calls.some((call) => call[0]?.connected === false)).toBe(false);
+    expect(secondStatus.mock.calls.some((call) => call[0]?.connected === false)).toBe(true);
+  });
 });

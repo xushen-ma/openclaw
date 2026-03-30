@@ -104,6 +104,12 @@ export function evaluateChannelHealth(
     }
   }
   if (snapshot.connected === false) {
+    if (lastStartAt != null && snapshot.lastEventAt != null && snapshot.lastEventAt < lastStartAt) {
+      const lifecycleDisconnectGap = Math.max(0, policy.now - lastStartAt);
+      if (lifecycleDisconnectGap <= policy.channelConnectGraceMs) {
+        return { healthy: true, reason: "startup-connect-grace" };
+      }
+    }
     return { healthy: false, reason: "disconnected" };
   }
   // Skip stale-socket check for Telegram (long-polling mode) and any channel

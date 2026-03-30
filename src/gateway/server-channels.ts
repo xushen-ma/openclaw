@@ -29,6 +29,7 @@ type ChannelRuntimeStore = {
   aborts: Map<string, AbortController>;
   tasks: Map<string, Promise<unknown>>;
   runtimes: Map<string, ChannelAccountSnapshot>;
+  lifecycleRuns: Map<string, number>;
 };
 
 function createRuntimeStore(): ChannelRuntimeStore {
@@ -36,6 +37,7 @@ function createRuntimeStore(): ChannelRuntimeStore {
     aborts: new Map(),
     tasks: new Map(),
     runtimes: new Map(),
+    lifecycleRuns: new Map(),
   };
 }
 
@@ -146,6 +148,34 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
     return next;
   };
 
+  const nextLifecycleRunId = (channelId: ChannelId, accountId: string): number => {
+    const store = getStore(channelId);
+    const nextRunId = (store.lifecycleRuns.get(accountId) ?? 0) + 1;
+    store.lifecycleRuns.set(accountId, nextRunId);
+    return nextRunId;
+  };
+
+  const isActiveLifecycleRun = (
+    channelId: ChannelId,
+    accountId: string,
+    runId: number,
+  ): boolean => {
+    const store = getStore(channelId);
+    return store.lifecycleRuns.get(accountId) === runId;
+  };
+
+  const setRuntimeForActiveLifecycleRun = (
+    channelId: ChannelId,
+    accountId: string,
+    runId: number,
+    patch: ChannelAccountSnapshot,
+  ): ChannelAccountSnapshot | null => {
+    if (!isActiveLifecycleRun(channelId, accountId, runId)) {
+      return null;
+    }
+    return setRuntime(channelId, accountId, patch);
+  };
+
   const startChannelInternal = async (
     channelId: ChannelId,
     accountId?: string,
@@ -209,6 +239,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
 
         const abort = new AbortController();
         store.aborts.set(id, abort);
+        const lifecycleRunId = nextLifecycleRunId(channelId, id);
         if (!preserveRestartAttempts) {
           restartAttempts.delete(rKey);
         }
@@ -232,17 +263,22 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
           abortSignal: abort.signal,
           log,
           getStatus: () => getRuntime(channelId, id),
-          setStatus: (next) => setRuntime(channelId, id, next),
+          setStatus: (next) => {
+            setRuntimeForActiveLifecycleRun(channelId, id, lifecycleRunId, next);
+          },
           ...(channelRuntime ? { channelRuntime } : {}),
         });
         const trackedPromise = Promise.resolve(task)
           .catch((err) => {
             const message = formatErrorMessage(err);
-            setRuntime(channelId, id, { accountId: id, lastError: message });
+            setRuntimeForActiveLifecycleRun(channelId, id, lifecycleRunId, {
+              accountId: id,
+              lastError: message,
+            });
             log.error?.(`[${id}] channel exited: ${message}`);
           })
           .finally(() => {
-            setRuntime(channelId, id, {
+            setRuntimeForActiveLifecycleRun(channelId, id, lifecycleRunId, {
               accountId: id,
               running: false,
               lastStopAt: Date.now(),
@@ -258,7 +294,7 @@ export function createChannelManager(opts: ChannelManagerOptions): ChannelManage
               setRuntime(channelId, id, {
                 accountId: id,
                 restartPending: false,
-                reconnectAttempts: attempt,
+                reconnectAttempts: MAX_RESTART_ATTEMPTS,
               });
               log.error?.(`[${id}] giving up after ${MAX_RESTART_ATTEMPTS} restart attempts`);
               return;
