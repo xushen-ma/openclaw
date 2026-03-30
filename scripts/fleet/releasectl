@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="${RELEASECTL_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 SCRIPT_DIR="$ROOT_DIR/scripts/fleet"
-INTERNAL_DIR="$SCRIPT_DIR/internal"
+INTERNAL_DIR="${RELEASECTL_INTERNAL_DIR:-$SCRIPT_DIR/internal}"
 
 # shellcheck disable=SC1091
 source "$INTERNAL_DIR/permissions.sh"
@@ -14,12 +14,23 @@ releasectl - governed release helper
 
 Usage:
   releasectl repair-perms [--repo <path>] [--dry-run]
-  releasectl deploy|staging-deploy|rollback [args...]
+  releasectl test-deploy --sha <branch|sha|ref>
+  releasectl test-status
+  releasectl test-release [--force]
+  releasectl staging-deploy --sha <branch|sha|ref>
+  releasectl deploy [args...]
+  releasectl rollback [args...]
 
 Commands:
   repair-perms    Normalize file/dir permissions for governed repos.
-  deploy          Run internal deploy flow, then normalize permissions.
-  staging-deploy  Run internal staging deploy flow, then normalize permissions.
+
+  test-deploy     Deploy branch/SHA/ref to governed staging test lane.
+                  Alias: staging-deploy
+  test-status     Show staging/test lane lock status.
+  test-release    Release stale staging/test lane lock (safety-gated).
+
+  staging-deploy  Alias of test-deploy for backward compatibility.
+  deploy          Run internal production deploy flow, then normalize permissions.
   rollback        Run internal rollback flow, then normalize permissions.
 
 Notes:
@@ -68,6 +79,71 @@ run_with_post_normalize() {
   normalize_repo_permissions "$repo_root" "apply"
 }
 
+require_sha_flag() {
+  local value=""
+  while (($#)); do
+    case "$1" in
+      --sha)
+        value="${2:-}"
+        shift 2
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "error: unknown flag for test-deploy: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+
+  if [[ -z "$value" ]]; then
+    echo "error: missing required flag --sha <branch|sha|ref>" >&2
+    exit 2
+  fi
+
+  printf '%s\n' "$value"
+}
+
+show_lock_status() {
+  local lock_file="$1"
+  if [[ ! -f "$lock_file" ]]; then
+    echo "test lane status: available"
+    echo "lock_file=$lock_file"
+    return 0
+  fi
+
+  local owner agent session purpose target_sha pid started host pwd
+  owner=$(grep '^OWNER=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  agent=$(grep '^AGENT=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  session=$(grep '^SESSION=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  purpose=$(grep '^PURPOSE=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  target_sha=$(grep '^TARGET_SHA=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  pid=$(grep '^PID=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  started=$(grep '^STARTED_AT=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  host=$(grep '^HOST=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+  pwd=$(grep '^PWD=' "$lock_file" 2>/dev/null | cut -d= -f2- || true)
+
+  echo "test lane status: busy"
+  echo "lock_file=$lock_file"
+  echo "owner=${owner:-unknown}"
+  echo "agent=${agent:-unknown}"
+  echo "session=${session:-unknown}"
+  echo "purpose=${purpose:-unknown}"
+  echo "target_sha=${target_sha:-unknown}"
+  echo "pid=${pid:-unknown}"
+  echo "started_at=${started:-unknown}"
+  echo "host=${host:-unknown}"
+  echo "pwd=${pwd:-unknown}"
+
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    echo "pid_state=running"
+  else
+    echo "pid_state=stale"
+  fi
+}
+
 command="${1:-}" || true
 if [[ -z "$command" ]]; then
   usage
@@ -84,14 +160,52 @@ case "$command" in
       normalize_repo_permissions "$repo_root" "apply"
     fi
     ;;
-  deploy)
-    run_with_post_normalize "deploy.sh" "$@"
+  test-deploy)
+    target_ref="$(require_sha_flag "$@")"
+    run_with_post_normalize "staging-deploy.sh" "$target_ref"
     ;;
   staging-deploy)
+    target_ref="$(require_sha_flag "$@")"
+    run_with_post_normalize "staging-deploy.sh" "$target_ref"
+    ;;
+  test-status)
+    # shellcheck disable=SC1091
+    source "$INTERNAL_DIR/fleet.env"
+    show_lock_status "$STAGING_LOCK_FILE"
+    ;;
+  test-release)
+    force=0
+    while (($#)); do
+      case "$1" in
+        --force) force=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "error: unknown flag for test-release: $1" >&2; exit 2 ;;
+      esac
+    done
+    # shellcheck disable=SC1091
+    source "$INTERNAL_DIR/fleet.env"
+    if [[ ! -f "$STAGING_LOCK_FILE" ]]; then
+      echo "test lane already available"
+      exit 0
+    fi
+
+    lock_pid="$(grep '^PID=' "$STAGING_LOCK_FILE" 2>/dev/null | cut -d= -f2- || true)"
+    if [[ "$force" -ne 1 ]] && [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "error: lock is currently held by active pid=$lock_pid; refusing to release without --force" >&2
+      exit 1
+    fi
+
+    rm -f "$STAGING_LOCK_FILE"
+    echo "released test lane lock: $STAGING_LOCK_FILE"
+    ;;
+  deploy)
     run_with_post_normalize "deploy.sh" "$@"
     ;;
   rollback)
     run_with_post_normalize "rollback.sh" "$@"
+    ;;
+  -h|--help)
+    usage
     ;;
   *)
     echo "error: unknown command: $command" >&2
