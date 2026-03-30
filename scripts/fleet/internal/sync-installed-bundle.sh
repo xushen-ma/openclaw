@@ -33,18 +33,17 @@ fi
 # Source of truth is Mini's local fleet-ops tree for this machine, not the
 # OpenClaw product repo. Keep it on a path the governed user can traverse/read.
 SRC_ROOT="${RELEASECTL_SOURCE_ROOT:-/Users/openclaw/workspace/openclaw/scripts/fleet}"
-DST_ROOT="/usr/local/lib/openclaw-fleet"
+DST_ROOT="${RELEASECTL_INSTALL_ROOT:-/usr/local/lib/openclaw-fleet}"
 
-FILES=(
-  "releasectl"
-  "internal/fleet.env"
-  "internal/permissions.sh"
-  "internal/sanity-check.sh"
-  "internal/deploy.sh"
-  "internal/rollback.sh"
-  "internal/staging-deploy.sh"
-  "internal/sync-installed-bundle.sh"
-)
+INTERNAL_SCRIPTS=()
+while IFS= read -r rel; do
+  INTERNAL_SCRIPTS+=("$rel")
+done < <(find "$SRC_ROOT/internal" -maxdepth 1 -type f -name '*.sh' -print | sed "s#^$SRC_ROOT/##" | sort)
+
+FILES=("releasectl" "internal/fleet.env")
+for rel in "${INTERNAL_SCRIPTS[@]}"; do
+  FILES+=("$rel")
+done
 
 mode_for() {
   case "$1" in
@@ -61,7 +60,13 @@ for rel in "${FILES[@]}"; do
 
   if [[ ! -e "$dst" ]]; then
     echo "MISSING  $rel"
-    [[ "$MODE" == "sync" ]] || status=1
+    if [[ "$MODE" == "sync" ]]; then
+      install -d "$(dirname "$dst")"
+      install -m "$(mode_for "$rel")" "$src" "$dst"
+      echo "SYNCED   $rel"
+    else
+      status=1
+    fi
     continue
   fi
 
@@ -71,6 +76,7 @@ for rel in "${FILES[@]}"; do
     echo "DIFF     $rel"
     status=1
     if [[ "$MODE" == "sync" ]]; then
+      install -d "$(dirname "$dst")"
       install -m "$(mode_for "$rel")" "$src" "$dst"
       echo "SYNCED   $rel"
       status=0
