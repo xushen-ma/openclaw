@@ -421,7 +421,20 @@ case "$command" in
     "$INTERNAL_DIR/promote-production.sh" "$@"
     ;;
   sanity-check)
-    "$INTERNAL_DIR/sanity-check.sh" "$@"
+    # Parse --sha flag and translate to FLEET_TARGET_SHA env var for sanity-check.sh
+    _sanity_sha=""
+    _sanity_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --sha) _sanity_sha="${2:?--sha requires a value}"; shift 2 ;;
+        *) _sanity_args+=("$1"); shift ;;
+      esac
+    done
+    if [[ -n "$_sanity_sha" ]]; then
+      FLEET_TARGET_SHA="$_sanity_sha" "$INTERNAL_DIR/sanity-check.sh" "${_sanity_args[@]+"${_sanity_args[@]}"}"
+    else
+      "$INTERNAL_DIR/sanity-check.sh" "${_sanity_args[@]+"${_sanity_args[@]}"}"
+    fi
     ;;
   deploy)
     # Parse --sha flag and translate to FLEET_TARGET_SHA env var for deploy.sh
