@@ -198,11 +198,16 @@ fi
 BASE_TAG="${FORK_BASE:-$UPSTREAM_BASE}"
 echo "📌 Release base: $BASE_TAG"
 
+GLOBAL_MAX=$(git tag -l "${BASE_TAG}-x.*" \
+  | sed -nE "s|^${BASE_TAG//./\\.}-x\\.([0-9]+)$|\\1|p" \
+  | sort -n \
+  | tail -1)
+
 if [[ -z "$EXISTING_MAX" ]]; then
-  EXISTING_MAX=$(git tag -l "${BASE_TAG}-x.*" \
-    | sed -nE "s|^${BASE_TAG//./\\.}-x\\.([0-9]+)$|\\1|p" \
-    | sort -n \
-    | tail -1)
+  EXISTING_MAX="$GLOBAL_MAX"
+elif [[ -n "$GLOBAL_MAX" ]] && (( GLOBAL_MAX > EXISTING_MAX )); then
+  # Avoid collisions with already-created tags that are outside current lineage.
+  EXISTING_MAX="$GLOBAL_MAX"
 fi
 
 NEXT_INCREMENT=$((${EXISTING_MAX:-0} + 1))

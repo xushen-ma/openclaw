@@ -56,10 +56,19 @@ git -C "$dev_repo" tag v2026.3.13-1-x.30
 commit "post-promote-lineage-head"
 C_SHA="$(git -C "$dev_repo" rev-parse HEAD)"
 
+# Create an existing higher tag outside current lineage to reproduce allocator collision.
+git -C "$dev_repo" checkout -q --detach "$A_SHA"
+commit "divergent-tagged-commit"
+D_SHA="$(git -C "$dev_repo" rev-parse HEAD)"
+git -C "$dev_repo" tag v2026.3.13-1-x.31 "$D_SHA"
+git -C "$dev_repo" checkout -q --detach "$C_SHA"
+
 git -C "$dev_repo" remote add origin "$remote"
-git -C "$dev_repo" branch -M main
+git -C "$dev_repo" branch -f main "$C_SHA"
+git -C "$dev_repo" checkout -q main
 git -C "$dev_repo" push -q origin main
 git -C "$dev_repo" push -q origin "$C_SHA":refs/heads/production
+git -C "$dev_repo" push -q origin v2026.3.13-1-x.31
 
 git clone -q "$remote" "$release_repo"
 git -C "$release_repo" checkout -q production
@@ -103,7 +112,7 @@ out="$({
 [[ "$out" == *"Deployed"* ]] || fail "expected deploy success output"
 
 git -C "$dev_repo" fetch -q origin --tags
-new_tag="$(git -C "$dev_repo" tag --points-at "$B_SHA" | grep -E '^v2026\.3\.13-1-x\.31$' || true)"
-[[ -n "$new_tag" ]] || fail "expected incremented deploy tag on validated candidate"
+new_tag="$(git -C "$dev_repo" tag --points-at "$B_SHA" | grep -E '^v2026\.3\.13-1-x\.32$' || true)"
+[[ -n "$new_tag" ]] || fail "expected allocator to skip existing divergent tag and create next increment"
 
 pass "deploy accepts stale sanity when candidate is validated and already on production lineage"
