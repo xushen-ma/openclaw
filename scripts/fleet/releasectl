@@ -51,7 +51,7 @@ load_releasectl_config() {
 
 is_governed_write_action() {
   case "${1:-}" in
-    test-deploy|staging-deploy|test-release|promote-production|deploy|rollback|bundle-sync)
+    test-deploy|staging-deploy|test-release|promote-production|sanity-check|deploy|rollback|bundle-sync)
       return 0
       ;;
     *)
@@ -193,6 +193,7 @@ Usage:
   releasectl test-release [--force]
   releasectl staging-deploy --sha <branch|sha|ref>
   releasectl promote-production --sha <branch|sha|ref> [--allow-untagged]
+  releasectl sanity-check [--sha <sha>] [--skip-smoke]
   releasectl deploy [args...]
   releasectl rollback [args...]
   releasectl bundle-sync [--check|--sync]
@@ -210,6 +211,8 @@ Commands:
   promote-production
                   Merge validated candidate onto production lineage and print
                   resulting production commit SHA.
+  sanity-check    Run governed pre-deploy sanity validation (optional --sha pin,
+                  optional --skip-smoke).
   deploy          Run internal production deploy flow, then normalize permissions.
   rollback        Run internal rollback flow, then normalize permissions.
   bundle-sync     Check/sync installed governed bundle from scripts/fleet source.
@@ -416,6 +419,9 @@ case "$command" in
     ;;
   promote-production)
     "$INTERNAL_DIR/promote-production.sh" "$@"
+    ;;
+  sanity-check)
+    "$INTERNAL_DIR/sanity-check.sh" "$@"
     ;;
   deploy)
     run_with_post_normalize "deploy.sh" "$@"

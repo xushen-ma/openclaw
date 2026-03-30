@@ -38,7 +38,10 @@ bundle_out="$(run_handoff bundle-sync --check)" || fail "installed bundle-sync s
 promote_out="$(run_handoff promote-production --sha demo-branch)" || fail "installed promote-production should reach governed handoff"
 [[ "$promote_out" == *"HANDOFF action=promote-production"* ]] || fail "expected promote-production handoff output from installed front door"
 
+sanity_out="$(run_handoff sanity-check --sha demo-branch --skip-smoke)" || fail "installed sanity-check should reach governed handoff"
+[[ "$sanity_out" == *"HANDOFF action=sanity-check"* ]] || fail "expected sanity-check handoff output from installed front door"
+
 deploy_out="$(run_handoff deploy --sha demo-branch)" || fail "installed deploy should reach governed handoff"
 [[ "$deploy_out" == *"HANDOFF action=deploy"* ]] || fail "expected deploy handoff output from installed front door"
 
-pass "installed releasectl resolves internal path without RELEASECTL_INTERNAL_DIR and supports bundle-sync/promote-production/deploy"
+pass "installed releasectl resolves internal path without RELEASECTL_INTERNAL_DIR and supports bundle-sync/promote-production/sanity-check/deploy"

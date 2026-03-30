@@ -232,11 +232,14 @@ lock_acquire "$RELEASE_LOCK_FILE" "$OWNER_NAME"
 trap 'lock_release "$RELEASE_LOCK_FILE"' EXIT
 
 if [[ ! -f "$SANITY_STATE_FILE" ]]; then
-  echo "❌ No recorded sanity-check state found at $SANITY_STATE_FILE"
-  echo "   Run sanity-check.sh successfully before deploy."
-  exit 1
+  SANITY_SHA=""
+  SANITY_AT=""
+  SANITY_BY=""
+  SKIP_SMOKE=""
+else
+  # shellcheck disable=SC1090
+  source "$SANITY_STATE_FILE"
 fi
-source "$SANITY_STATE_FILE"
 
 
 echo "════════════════════════════════════"
@@ -252,15 +255,37 @@ if git tag | grep -q "^${VERSION}$"; then
 fi
 
 export FLEET_TARGET_SHA="$MAIN_SHA"
+
+auto_validated_tag="$(git tag --points-at "$MAIN_SHA" | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9]+)?-x\.[0-9]+$' | sort -V | tail -1 || true)"
+already_on_production_lineage=false
+if git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1; then
+  already_on_production_lineage=true
+fi
+already_validated_and_promoted=false
+if [[ -n "$auto_validated_tag" && "$already_on_production_lineage" == true ]]; then
+  already_validated_and_promoted=true
+fi
+
 echo "📌 Candidate main SHA: $MAIN_SHA"
 echo "🧾 Last sanity SHA:     ${SANITY_SHA:-missing}"
+if [[ "$already_validated_and_promoted" == true ]]; then
+  echo "✅ Candidate already validated/promoted (tag $auto_validated_tag on production lineage)"
+fi
 
 if [[ "${SANITY_SHA:-}" != "$MAIN_SHA" ]]; then
-  echo "❌ Refusing deploy: sanity check was for a different main SHA"
-  echo "   sanity: ${SANITY_SHA:-missing}"
-  echo "   current: $MAIN_SHA"
-  echo "   Rerun sanity-check.sh before deploy."
-  exit 1
+  if [[ "$already_validated_and_promoted" == true ]]; then
+    echo "ℹ️  Skipping stale local sanity guard (candidate already validated/promoted)."
+  elif [[ -z "${SANITY_SHA:-}" ]]; then
+    echo "❌ No recorded sanity-check state found at $SANITY_STATE_FILE"
+    echo "   Run sanity-check.sh successfully before deploy."
+    exit 1
+  else
+    echo "❌ Refusing deploy: sanity check was for a different main SHA"
+    echo "   sanity: ${SANITY_SHA:-missing}"
+    echo "   current: $MAIN_SHA"
+    echo "   Rerun sanity-check.sh before deploy."
+    exit 1
+  fi
 fi
 
 echo "📌 Tagging $VERSION at $MAIN_SHA"

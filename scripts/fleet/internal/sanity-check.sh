@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # sanity-check.sh — Run all 5 pre-deploy checks
-# Usage: sanity-check.sh [--skip-smoke]
+# Usage: sanity-check.sh [--sha <sha>] [--skip-smoke]
 #
 # Checks:
 #   1. Build clean       — pnpm check + pnpm build
@@ -27,8 +27,48 @@ if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
   export HOME="$RUNTIME_HOME"
 fi
 
+usage() {
+  cat <<'EOF'
+Usage: sanity-check.sh [--sha <sha>] [--skip-smoke]
+
+Options:
+  --sha <sha>     Pin the candidate SHA to validate
+  --skip-smoke    Skip staging smoke check
+  -h, --help      Show this help
+EOF
+}
+
 SKIP_SMOKE=false
-[[ "${1:-}" == "--skip-smoke" ]] && SKIP_SMOKE=true
+PINNED_SHA=""
+while (($#)); do
+  case "$1" in
+    --sha)
+      PINNED_SHA="${2:-}"
+      if [[ -z "$PINNED_SHA" ]]; then
+        echo "error: --sha requires a value" >&2
+        exit 2
+      fi
+      shift 2
+      ;;
+    --skip-smoke)
+      SKIP_SMOKE=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "error: unknown flag: $1" >&2
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -n "$PINNED_SHA" ]]; then
+  export FLEET_TARGET_SHA="$PINNED_SHA"
+fi
 
 PASS=0
 FAIL=0

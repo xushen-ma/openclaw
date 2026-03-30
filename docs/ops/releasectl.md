@@ -23,6 +23,10 @@ summary: "Governed releasectl command surface for test/staging and production"
 
 - `releasectl promote-production --sha <branch|sha|ref> [--allow-untagged]`
   - First-class production-lineage promotion step.
+- `releasectl sanity-check [--sha <sha>] [--skip-smoke]`
+  - Run the governed pre-deploy sanity check flow (`scripts/fleet/internal/sanity-check.sh`).
+  - `--sha` pins candidate validation to a specific commit.
+  - `--skip-smoke` skips the staging smoke sub-check.
   - Verifies the candidate is on `origin/main` lineage and (by default) that the candidate commit itself has a validated `v*-x.*` tag.
   - Creates/pushes a non-fast-forward merge commit onto `origin/production`.
   - Prints the resulting production-lineage commit SHA and the exact deploy follow-up command.
@@ -30,6 +34,7 @@ summary: "Governed releasectl command surface for test/staging and production"
   - Run governed production deploy flow.
   - This is the **production tag+deploy** step: it creates/pushes the next fork release tag and deploys production.
   - It only accepts candidates that are already on the allowed **production lineage**.
+  - Local sanity state is still enforced for normal local runs; stale sanity is bypassed when the candidate already has a validated `v*-x.*` tag and is already on production lineage.
 - `releasectl rollback [args...]`
   - Run governed rollback flow.
 
