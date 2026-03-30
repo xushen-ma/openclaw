@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${RELEASECTL_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
-SCRIPT_DIR="$ROOT_DIR/scripts/fleet"
+SELF_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SELF_DIR="$(dirname "$SELF_PATH")"
+
+# Resolve runtime layout for both:
+# - source tree: <repo>/scripts/fleet/releasectl
+# - installed bundle: /usr/local/lib/openclaw-fleet/releasectl
+if [[ -d "$SELF_DIR/internal" ]]; then
+  SCRIPT_DIR="$SELF_DIR"
+  if [[ "$SELF_DIR" == */scripts/fleet ]]; then
+    ROOT_DIR="${RELEASECTL_ROOT_DIR:-$(cd "$SELF_DIR/../.." && pwd)}"
+  else
+    ROOT_DIR="${RELEASECTL_ROOT_DIR:-$(cd "$SELF_DIR/.." && pwd)}"
+  fi
+else
+  ROOT_DIR="${RELEASECTL_ROOT_DIR:-$(cd "$SELF_DIR/../.." && pwd)}"
+  SCRIPT_DIR="$ROOT_DIR/scripts/fleet"
+fi
+
 INTERNAL_DIR="${RELEASECTL_INTERNAL_DIR:-$SCRIPT_DIR/internal}"
 
 # shellcheck disable=SC1091
