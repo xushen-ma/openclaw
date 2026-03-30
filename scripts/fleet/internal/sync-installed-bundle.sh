@@ -18,6 +18,11 @@ MODE="check"
 [[ "${1:-}" == "--sync" ]] && MODE="sync"
 [[ "${1:-}" == "--check" ]] && MODE="check"
 
+# Governed control repo sync (optional but enabled by default)
+CONTROLLED_REPO="${RELEASECTL_CONTROLLED_REPO:-/Users/openclaw/workspace/openclaw-fleet-mgmt}"
+CONTROLLED_REMOTE="${RELEASECTL_CONTROLLED_REMOTE:-origin}"
+CONTROLLED_BRANCH="${RELEASECTL_CONTROLLED_BRANCH:-main}"
+
 # Operational guardrail: this path is for Mini-approved maintenance only.
 # Technical note: after releasectl's sudo handoff, agent identity metadata may not
 # survive intact through the privileged runtime. So this script accepts execution
@@ -34,6 +39,23 @@ fi
 # OpenClaw product repo. Keep it on a path the governed user can traverse/read.
 SRC_ROOT="${RELEASECTL_SOURCE_ROOT:-/Users/openclaw/workspace/openclaw/scripts/fleet}"
 DST_ROOT="${RELEASECTL_INSTALL_ROOT:-/usr/local/lib/openclaw-fleet}"
+
+sync_controlled_repo() {
+  [[ "$MODE" == "sync" ]] || return 0
+
+  if [[ ! -d "$CONTROLLED_REPO/.git" ]]; then
+    echo "SKIP     controlled-repo ($CONTROLLED_REPO not present)"
+    return 0
+  fi
+
+  echo "SYNC     controlled-repo ($CONTROLLED_REPO)"
+  git -C "$CONTROLLED_REPO" fetch "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
+  git -C "$CONTROLLED_REPO" checkout "$CONTROLLED_BRANCH"
+  git -C "$CONTROLLED_REPO" pull --ff-only "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
+  echo "SYNCED   controlled-repo ($CONTROLLED_REMOTE/$CONTROLLED_BRANCH)"
+}
+
+sync_controlled_repo
 
 INTERNAL_SCRIPTS=()
 while IFS= read -r rel; do
