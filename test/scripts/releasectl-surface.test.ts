@@ -64,11 +64,16 @@ echo "bundle:$*" >> "$CALLS_FILE"
 `,
   );
 
+  const testRepo = path.join(root, "openclaw-test");
+  fs.mkdirSync(testRepo, { recursive: true });
+
   fs.writeFileSync(
     path.join(internalDir, "fleet.env"),
     `#!/usr/bin/env bash
 FLEET_LOCK_DIR="${lockDir}"
 STAGING_LOCK_FILE="$FLEET_LOCK_DIR/staging.lock"
+TEST_REPO="${testRepo}"
+TEST_LOCK_FILE="${testRepo}/.test-env.lock"
 `,
   );
 
@@ -147,7 +152,7 @@ describe("releasectl command surface", () => {
       RELEASECTL_SKIP_SUDO_HANDOFF: "1",
       CALLS_FILE: harness.callsFile,
     };
-    const lockFile = path.join(harness.lockDir, "staging.lock");
+    const lockFile = path.join(harness.root, "openclaw-test", ".test-env.lock");
 
     const free = spawnSync("bash", [releasectlPath, "test-status"], { env, encoding: "utf8" });
     expect(free.status).toBe(0);

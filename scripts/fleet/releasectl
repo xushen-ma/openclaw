@@ -307,7 +307,8 @@ case "$command" in
   test-status)
     # shellcheck disable=SC1091
     source "$INTERNAL_DIR/fleet.env"
-    show_lock_status "$STAGING_LOCK_FILE"
+    test_lock_file="${TEST_LOCK_FILE:-${TEST_REPO:-$HOME/workspace/openclaw-test}/.test-env.lock}"
+    show_lock_status "$test_lock_file"
     ;;
   test-release)
     force=0
@@ -320,19 +321,20 @@ case "$command" in
     done
     # shellcheck disable=SC1091
     source "$INTERNAL_DIR/fleet.env"
-    if [[ ! -f "$STAGING_LOCK_FILE" ]]; then
+    test_lock_file="${TEST_LOCK_FILE:-${TEST_REPO:-$HOME/workspace/openclaw-test}/.test-env.lock}"
+    if [[ ! -f "$test_lock_file" ]]; then
       echo "test lane already available"
       exit 0
     fi
 
-    lock_pid="$(grep '^PID=' "$STAGING_LOCK_FILE" 2>/dev/null | cut -d= -f2- || true)"
+    lock_pid="$(grep '^PID=' "$test_lock_file" 2>/dev/null | cut -d= -f2- || true)"
     if [[ "$force" -ne 1 ]] && [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
       echo "error: lock is currently held by active pid=$lock_pid; refusing to release without --force" >&2
       exit 1
     fi
 
-    rm -f "$STAGING_LOCK_FILE"
-    echo "released test lane lock: $STAGING_LOCK_FILE"
+    rm -f "$test_lock_file"
+    echo "released test lane lock: $test_lock_file"
     ;;
   deploy)
     run_with_post_normalize "deploy.sh" "$@"
