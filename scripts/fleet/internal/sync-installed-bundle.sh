@@ -40,6 +40,33 @@ fi
 SRC_ROOT="${RELEASECTL_SOURCE_ROOT:-/Users/openclaw/workspace/openclaw/scripts/fleet}"
 DST_ROOT="${RELEASECTL_INSTALL_ROOT:-/usr/local/lib/openclaw-fleet}"
 
+sha256_of() {
+  shasum -a 256 "$1" | awk '{print $1}'
+}
+
+controlled_repo_status() {
+  if [[ ! -d "$CONTROLLED_REPO/.git" ]]; then
+    echo "controlled_repo=missing path=$CONTROLLED_REPO"
+    return 0
+  fi
+
+  local head branch upstream upstream_head
+  head="$(git -C "$CONTROLLED_REPO" rev-parse HEAD 2>/dev/null || echo unknown)"
+  branch="$(git -C "$CONTROLLED_REPO" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
+  upstream="$(git -C "$CONTROLLED_REPO" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
+
+  if [[ -n "$upstream" ]]; then
+    upstream_head="$(git -C "$CONTROLLED_REPO" rev-parse "$upstream" 2>/dev/null || echo unknown)"
+    if [[ "$head" == "$upstream_head" ]]; then
+      echo "controlled_repo=ok path=$CONTROLLED_REPO branch=$branch head=$head upstream=$upstream"
+    else
+      echo "controlled_repo=drift path=$CONTROLLED_REPO branch=$branch head=$head upstream=$upstream upstream_head=$upstream_head"
+    fi
+  else
+    echo "controlled_repo=no-upstream path=$CONTROLLED_REPO branch=$branch head=$head"
+  fi
+}
+
 sync_controlled_repo() {
   [[ "$MODE" == "sync" ]] || return 0
 
@@ -74,51 +101,80 @@ mode_for() {
   esac
 }
 
-status=0
-for rel in "${FILES[@]}"; do
-  src="$SRC_ROOT/$rel"
-  dst="$DST_ROOT/$rel"
-  [[ -f "$src" ]] || { echo "❌ Missing source file: $src"; status=1; continue; }
+verify_bundle() {
+  local status=0
+  local ok_count=0
+  local diff_count=0
+  local missing_count=0
 
-  if [[ ! -e "$dst" ]]; then
-    echo "MISSING  $rel"
-    if [[ "$MODE" == "sync" ]]; then
-      install -d "$(dirname "$dst")"
-      install -m "$(mode_for "$rel")" "$src" "$dst"
-      echo "SYNCED   $rel"
+  for rel in "${FILES[@]}"; do
+    local src dst src_hash dst_hash
+    src="$SRC_ROOT/$rel"
+    dst="$DST_ROOT/$rel"
+
+    if [[ ! -f "$src" ]]; then
+      echo "SOURCE-MISSING $rel"
+      missing_count=$((missing_count + 1))
+      status=1
+      continue
+    fi
+
+    src_hash="$(sha256_of "$src")"
+
+    if [[ ! -e "$dst" ]]; then
+      echo "MISSING  $rel src_sha=$src_hash"
+      missing_count=$((missing_count + 1))
+      status=1
+      continue
+    fi
+
+    if cmp -s "$src" "$dst"; then
+      echo "OK       $rel sha=$src_hash"
+      ok_count=$((ok_count + 1))
     else
+      dst_hash="$(sha256_of "$dst")"
+      echo "DIFF     $rel src_sha=$src_hash dst_sha=$dst_hash"
+      diff_count=$((diff_count + 1))
       status=1
     fi
-    continue
-  fi
+  done
 
-  if cmp -s "$src" "$dst"; then
-    echo "OK       $rel"
-  else
-    echo "DIFF     $rel"
-    status=1
-    if [[ "$MODE" == "sync" ]]; then
+  echo "SUMMARY  ok=$ok_count diff=$diff_count missing=$missing_count"
+  return "$status"
+}
+
+if [[ "$MODE" == "sync" ]]; then
+  for rel in "${FILES[@]}"; do
+    src="$SRC_ROOT/$rel"
+    dst="$DST_ROOT/$rel"
+
+    [[ -f "$src" ]] || continue
+
+    if [[ ! -e "$dst" ]] || ! cmp -s "$src" "$dst"; then
       install -d "$(dirname "$dst")"
       install -m "$(mode_for "$rel")" "$src" "$dst"
       echo "SYNCED   $rel"
-      status=0
     fi
-  fi
-done
+  done
+fi
 
-if [[ "$MODE" == "check" ]]; then
-  if [[ "$status" -ne 0 ]]; then
-    echo
-    echo "Bundle drift detected. Run the Mini-approved sync path to reconcile the installed governed bundle."
-    exit 1
-  fi
+echo "CONTROL   source_root=$SRC_ROOT install_root=$DST_ROOT mode=$MODE"
+controlled_repo_status
+
+if ! verify_bundle; then
   echo
-  echo "Installed governed bundle matches source of truth."
-  exit 0
+  if [[ "$MODE" == "sync" ]]; then
+    echo "❌ Residual drift remains after sync. Break-glass manual copy is NOT approved; repair source/control path first."
+  else
+    echo "Bundle drift detected. Run the Mini-approved sync path to reconcile the installed governed bundle."
+  fi
+  exit 1
 fi
 
 echo
-"$DST_ROOT/releasectl" verify-config || true
-echo "✅ Installed governed bundle sync complete"
-# Note: subsequent releasectl commands should now expose any newly added subcommands
-# from the synced bundle (e.g. repair-perms).
+if [[ "$MODE" == "sync" ]]; then
+  "$DST_ROOT/releasectl" verify-config || true
+  echo "✅ Installed governed bundle sync complete (no residual drift)"
+else
+  echo "Installed governed bundle matches source of truth."
+fi

@@ -6,6 +6,8 @@ summary: "Governed releasectl command surface for test/staging and production"
 
 `releasectl` is the governed front door for release operations.
 
+Related audit memo: `docs/ops/release-control-audit-2026-03.md`.
+
 ## Intended command surface
 
 ### Test / staging lane
@@ -44,6 +46,8 @@ summary: "Governed releasectl command surface for test/staging and production"
   - Normalize file mode drift in governed repos.
 - `releasectl bundle-sync [--check|--sync]`
   - Front-door command for installed governed bundle drift detection (`--check`) and reconciliation (`--sync`).
+  - Always prints a compact control-plane status block (`source_root`, `install_root`, controlled-repo state) and per-file SHA-256 fingerprints.
+  - Fails closed if any residual `DIFF`/`MISSING`/`SOURCE-MISSING` remains after `--sync`.
 - `releasectl verify-config`
   - Print effective governed paths and detect legacy `TEST_REPO`/`openclaw-test` config drift.
 
@@ -111,6 +115,23 @@ releasectl bundle-sync --sync
 releasectl promote-production --sha <validated-tag>
 releasectl deploy --sha <production-lineage-commit>
 ```
+
+## Break-glass boundary (explicit)
+
+Normal lane:
+
+- `releasectl bundle-sync --sync` is the only supported path for controlled→installed reconciliation.
+
+Break-glass only (repair incident, not standard release flow):
+
+- Direct `cp`/`chmod` into `/usr/local/lib/openclaw-fleet`
+- Manual edits inside controlled repo checkout to force sync
+
+If break-glass is used, immediately follow up with:
+
+1. Source-tree fix in `/Users/openclaw/workspace/openclaw/scripts/fleet`
+2. `releasectl bundle-sync --check` until clean
+3. Incident note recording what manual action happened and why
 
 - The controlled-repo front door on this host is:
 
