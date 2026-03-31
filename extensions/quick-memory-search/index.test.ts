@@ -63,7 +63,11 @@ describe("quick-memory-search plugin register", () => {
         ovBaseUrl: "http://127.0.0.1:8087",
       },
       resolvePath: (p: string) => `/plugin/${p}`,
-      registerTool: (tool: any) => tools.push(tool),
+      registerTool: (toolOrFactory: any) => {
+        const tool =
+          typeof toolOrFactory === "function" ? toolOrFactory({ agentId: "main" }) : toolOrFactory;
+        tools.push(tool);
+      },
       registerService: vi.fn(),
       registerGatewayMethod: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
@@ -119,7 +123,11 @@ describe("quick-memory-search plugin register", () => {
         ovBaseUrl: "http://127.0.0.1:8087",
       },
       resolvePath: (p: string) => `/plugin/${p}`,
-      registerTool: (tool: any) => tools.push(tool),
+      registerTool: (toolOrFactory: any) => {
+        const tool =
+          typeof toolOrFactory === "function" ? toolOrFactory({ agentId: "main" }) : toolOrFactory;
+        tools.push(tool);
+      },
       registerService: vi.fn(),
       registerGatewayMethod: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
