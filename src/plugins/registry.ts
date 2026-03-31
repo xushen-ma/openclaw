@@ -605,7 +605,18 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registerService: (service) => registerService(record, service),
       registerCommand: (command) => registerCommand(record, command),
       registerContextEngine: (id, factory) => registerContextEngine(id, factory),
-      resolvePath: (input: string) => resolveUserPath(input),
+      resolvePath: (input: string) => {
+        // Resolve relative paths against the plugin's own directory rather than
+        // process.cwd(). When the gateway runs as a LaunchAgent, CWD is "/", so
+        // "./per-agent-ov-http-server.mjs" would resolve to "/per-agent-ov-http-server.mjs"
+        // and crash with "Cannot find module". Absolute paths and ~-prefixed paths
+        // fall back to the existing resolveUserPath behaviour.
+        const trimmed = input.trim();
+        if (trimmed && !trimmed.startsWith("/") && !trimmed.startsWith("~")) {
+          return path.resolve(path.dirname(record.source), trimmed);
+        }
+        return resolveUserPath(input);
+      },
       on: (hookName, handler, opts) =>
         registerTypedHook(record, hookName, handler, opts, params.hookPolicy),
       // Wire up invokeAgent and invokeAgentStream from the runtime
