@@ -61,6 +61,7 @@ out="$({
   RELEASECTL_CONTROLLED_REPO="$controlled" \
   RELEASECTL_CONTROLLED_REMOTE=origin \
   RELEASECTL_CONTROLLED_BRANCH=main \
+  RELEASECTL_ENFORCE_CONTROLLED_PARITY=0 \
   bash "$SYNC_SCRIPT" --sync
 } 2>&1)" || fail "expected bundle sync with controlled-repo sync to succeed"
 

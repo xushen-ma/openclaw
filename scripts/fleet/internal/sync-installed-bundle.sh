@@ -22,6 +22,8 @@ MODE="check"
 CONTROLLED_REPO="${RELEASECTL_CONTROLLED_REPO:-/Users/openclaw/workspace/openclaw-fleet-mgmt}"
 CONTROLLED_REMOTE="${RELEASECTL_CONTROLLED_REMOTE:-origin}"
 CONTROLLED_BRANCH="${RELEASECTL_CONTROLLED_BRANCH:-main}"
+CONTROLLED_BUNDLE_ROOT="${RELEASECTL_CONTROLLED_BUNDLE_ROOT:-$CONTROLLED_REPO}"
+ENFORCE_CONTROLLED_PARITY="${RELEASECTL_ENFORCE_CONTROLLED_PARITY:-1}"
 
 # Operational guardrail: this path is for Mini-approved maintenance only.
 # Technical note: after releasectl's sudo handoff, agent identity metadata may not
@@ -84,6 +86,48 @@ sync_controlled_repo() {
 
 sync_controlled_repo
 
+controlled_path_for_rel() {
+  local rel="$1"
+  case "$rel" in
+    releasectl) printf '%s\n' "$CONTROLLED_BUNDLE_ROOT/bin/releasectl" ;;
+    *) printf '%s\n' "$CONTROLLED_BUNDLE_ROOT/$rel" ;;
+  esac
+}
+
+verify_controlled_repo_state() {
+  if [[ ! -d "$CONTROLLED_REPO/.git" ]]; then
+    echo "CONTROL-STATE missing path=$CONTROLLED_REPO"
+    return 1
+  fi
+
+  local head upstream upstream_head
+  head="$(git -C "$CONTROLLED_REPO" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -z "$head" ]]; then
+    echo "CONTROL-STATE unreadable path=$CONTROLLED_REPO"
+    return 1
+  fi
+
+  upstream="$(git -C "$CONTROLLED_REPO" rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || true)"
+  if [[ -z "$upstream" ]]; then
+    echo "CONTROL-STATE no-upstream path=$CONTROLLED_REPO head=$head"
+    return 1
+  fi
+
+  upstream_head="$(git -C "$CONTROLLED_REPO" rev-parse "$upstream" 2>/dev/null || true)"
+  if [[ -z "$upstream_head" ]]; then
+    echo "CONTROL-STATE unreadable-upstream path=$CONTROLLED_REPO upstream=$upstream"
+    return 1
+  fi
+
+  if [[ "$head" != "$upstream_head" ]]; then
+    echo "CONTROL-STATE stale path=$CONTROLLED_REPO head=$head upstream=$upstream upstream_head=$upstream_head"
+    return 1
+  fi
+
+  echo "CONTROL-STATE ok path=$CONTROLLED_REPO head=$head upstream=$upstream"
+  return 0
+}
+
 INTERNAL_SCRIPTS=()
 while IFS= read -r rel; do
   INTERNAL_SCRIPTS+=("$rel")
@@ -93,6 +137,56 @@ FILES=("releasectl" "internal/fleet.env")
 for rel in "${INTERNAL_SCRIPTS[@]}"; do
   FILES+=("$rel")
 done
+
+verify_source_controlled_alignment() {
+  local status=0
+  local ok_count=0
+  local diff_count=0
+  local missing_count=0
+  local unreadable_count=0
+
+  for rel in "${FILES[@]}"; do
+    local src ctl src_hash ctl_hash
+    src="$SRC_ROOT/$rel"
+    ctl="$(controlled_path_for_rel "$rel")"
+
+    if [[ ! -f "$src" ]]; then
+      echo "CONTROL-SOURCE-MISSING $rel"
+      missing_count=$((missing_count + 1))
+      status=1
+      continue
+    fi
+
+    src_hash="$(sha256_of "$src")"
+
+    if [[ ! -e "$ctl" ]]; then
+      echo "CONTROL-MISSING $rel expected=$ctl src_sha=$src_hash"
+      missing_count=$((missing_count + 1))
+      status=1
+      continue
+    fi
+
+    if [[ ! -r "$ctl" ]]; then
+      echo "CONTROL-UNREADABLE $rel path=$ctl src_sha=$src_hash"
+      unreadable_count=$((unreadable_count + 1))
+      status=1
+      continue
+    fi
+
+    if cmp -s "$src" "$ctl"; then
+      echo "CONTROL-OK $rel sha=$src_hash"
+      ok_count=$((ok_count + 1))
+    else
+      ctl_hash="$(sha256_of "$ctl")"
+      echo "CONTROL-DIFF $rel src_sha=$src_hash controlled_sha=$ctl_hash path=$ctl"
+      diff_count=$((diff_count + 1))
+      status=1
+    fi
+  done
+
+  echo "CONTROL-SUMMARY ok=$ok_count diff=$diff_count missing=$missing_count unreadable=$unreadable_count"
+  return "$status"
+}
 
 mode_for() {
   case "$1" in
@@ -143,6 +237,15 @@ verify_bundle() {
   return "$status"
 }
 
+if [[ "$ENFORCE_CONTROLLED_PARITY" == "1" ]]; then
+  if ! verify_controlled_repo_state || ! verify_source_controlled_alignment; then
+    echo
+    echo "❌ Controlled import path is not converged (stale, unreadable, divergent, or incomplete)."
+    echo "   Merge source-of-truth changes, import them into controlled repo main, then rerun releasectl bundle-sync."
+    exit 1
+  fi
+fi
+
 if [[ "$MODE" == "sync" ]]; then
   for rel in "${FILES[@]}"; do
     src="$SRC_ROOT/$rel"
@@ -158,7 +261,7 @@ if [[ "$MODE" == "sync" ]]; then
   done
 fi
 
-echo "CONTROL   source_root=$SRC_ROOT install_root=$DST_ROOT mode=$MODE"
+echo "CONTROL   source_root=$SRC_ROOT controlled_bundle_root=$CONTROLLED_BUNDLE_ROOT install_root=$DST_ROOT mode=$MODE"
 controlled_repo_status
 
 if ! verify_bundle; then

@@ -23,7 +23,7 @@ Out of scope: runtime quick-memory service behavior.
 ## Invariants (target state)
 
 1. **Source owns content**: all governed script content changes originate in source repo PRs.
-2. **Controlled sync is explicit**: `bundle-sync --sync` fast-forwards controlled repo before installed reconciliation.
+2. **Controlled sync/import is explicit**: `bundle-sync --sync` fast-forwards controlled repo and fails closed unless controlled bundle content matches source (`CONTROL-*` diagnostics).
 3. **Installed sync is verifiable**: all tracked governed files show `OK` with matching SHA-256.
 4. **Fail closed**: any residual diff/missing state after sync exits non-zero.
 5. **Break-glass is explicit**: manual file-copy/chmod is incident-only and must be reconciled back through governed flow.
@@ -42,8 +42,10 @@ releasectl bundle-sync --check
 
 Expected clean signals:
 
+- `CONTROL-STATE ok ...`
+- `CONTROL-SUMMARY ok=<n> diff=0 missing=0 unreadable=0`
 - `controlled_repo=ok ...`
 - per-file `OK ... sha=<hash>`
 - `SUMMARY ok=<n> diff=0 missing=0`
 
-Any `DIFF`/`MISSING`/`SOURCE-MISSING` is drift and blocks release completion.
+Any `CONTROL-*` failure or `DIFF`/`MISSING`/`SOURCE-MISSING` is drift and blocks release completion.

@@ -45,9 +45,9 @@ Related audit memo: `docs/ops/release-control-audit-2026-03.md`.
 - `releasectl repair-perms [--repo <path>] [--dry-run]`
   - Normalize file mode drift in governed repos.
 - `releasectl bundle-sync [--check|--sync]`
-  - Front-door command for installed governed bundle drift detection (`--check`) and reconciliation (`--sync`).
-  - Always prints a compact control-plane status block (`source_root`, `install_root`, controlled-repo state) and per-file SHA-256 fingerprints.
-  - Fails closed if any residual `DIFF`/`MISSING`/`SOURCE-MISSING` remains after `--sync`.
+  - Front-door command for governed source→controlled→installed drift detection (`--check`) and reconciliation (`--sync`).
+  - Always prints a compact control-plane status block (`source_root`, `controlled_bundle_root`, `install_root`, controlled-repo state) and per-file SHA-256 fingerprints.
+  - Fails closed if controlled import is stale/unreadable/divergent/incomplete (`CONTROL-STATE` / `CONTROL-DIFF` / `CONTROL-MISSING` / `CONTROL-UNREADABLE`) or if any residual installed drift remains after `--sync`.
 - `releasectl verify-config`
   - Print effective governed paths and detect legacy `TEST_REPO`/`openclaw-test` config drift.
 
@@ -107,7 +107,7 @@ Required release control now lives in the local governed lane, not GitHub PR sta
   6. deploy via `releasectl deploy --sha <resulting-production-lineage-sha>`
 - Important: a merged `main` SHA is **not automatically** a production deploy candidate. If `releasectl deploy --sha ...` refuses ancestry, the next governed step is to run `releasectl promote-production --sha <validated-tag-or-sha>` first.
 - If governed bundle files under `/usr/local/lib/openclaw-fleet` drift from `scripts/fleet`, use `releasectl bundle-sync --sync` (or `--check` for read-only verification).
-- `bundle-sync --sync` now fast-forwards the controlled repo first (`/Users/openclaw/workspace/openclaw-fleet-mgmt`, `origin/main` by default), then syncs installed governed bundle files from the caller's checked-out `scripts/fleet` source. This removes the old manual `sudo git pull` step.
+- `bundle-sync --sync` fast-forwards the controlled repo first (`/Users/openclaw/workspace/openclaw-fleet-mgmt`, `origin/main` by default), then enforces source→controlled parity before any installed writes. If controlled import is stale/divergent/incomplete/unreadable, it exits non-zero with explicit `CONTROL-*` diagnostics instead of silently continuing.
 - Clean operator flow (no copy/paste patches, no raw sudo):
 
 ```bash

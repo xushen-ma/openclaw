@@ -17,9 +17,9 @@ pass() {
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-dst_root="$tmpdir/installed-bundle"
 remote="$tmpdir/controlled-remote.git"
 controlled="$tmpdir/controlled"
+dst_root="$tmpdir/installed"
 mkdir -p "$dst_root"
 
 git init --bare "$remote" >/dev/null
@@ -38,16 +38,22 @@ git clone "$remote" "$controlled" >/dev/null
   git push -u origin main >/dev/null
 )
 
+# Diverge controlled content from source while keeping repo otherwise healthy.
+printf '\n# drift\n' >> "$controlled/internal/deploy.sh"
+
+set +e
 out="$({
   FLEET_AGENT=Mini \
   RELEASECTL_SOURCE_ROOT="$SOURCE_ROOT" \
   RELEASECTL_INSTALL_ROOT="$dst_root" \
   RELEASECTL_CONTROLLED_REPO="$controlled" \
-  bash "$SYNC_SCRIPT" --sync
-} 2>&1)" || fail "expected bundle sync to succeed"
+  bash "$SYNC_SCRIPT" --check
+} 2>&1)"
+rc=$?
+set -e
 
-[[ -f "$dst_root/internal/promote-production.sh" ]] || fail "expected promote-production.sh to be installed when missing"
-[[ -x "$dst_root/internal/promote-production.sh" ]] || fail "expected promote-production.sh to be executable"
-[[ "$out" == *"SYNCED   internal/promote-production.sh"* ]] || fail "expected sync output to include promote-production.sh"
+[[ "$rc" -ne 0 ]] || fail "expected check to fail when controlled content diverges from source"
+[[ "$out" == *"CONTROL-DIFF internal/deploy.sh"* ]] || fail "expected explicit controlled diff report"
+[[ "$out" == *"Controlled import path is not converged"* ]] || fail "expected fail-closed controlled-import message"
 
-pass "sync-installed-bundle installs missing internal commands (including promote-production.sh)"
+pass "bundle-sync fails closed when source->controlled import content diverges"
