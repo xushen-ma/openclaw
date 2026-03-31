@@ -13,7 +13,6 @@ import { resolveUserPath } from "../utils.js";
 import { registerPluginCommand } from "./commands.js";
 import { normalizePluginHttpPath } from "./http-path.js";
 import { findOverlappingPluginHttpRoute } from "./http-route-overlap.js";
-import { normalizeRegisteredProvider } from "./provider-validation.js";
 import type { PluginRuntime } from "./runtime/types.js";
 import {
   isPluginHookName,
@@ -419,16 +418,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       });
       return;
     }
-    const existing = registry.channels.find((entry) => entry.plugin.id === id);
-    if (existing) {
-      pushDiagnostic({
-        level: "error",
-        pluginId: record.id,
-        source: record.source,
-        message: `channel already registered: ${id} (${existing.pluginId})`,
-      });
-      return;
-    }
     record.channelIds.push(id);
     registry.channels.push({
       pluginId: record.id,
@@ -439,16 +428,16 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
   };
 
   const registerProvider = (record: PluginRecord, provider: ProviderPlugin) => {
-    const normalizedProvider = normalizeRegisteredProvider({
-      pluginId: record.id,
-      source: record.source,
-      provider,
-      pushDiagnostic,
-    });
-    if (!normalizedProvider) {
+    const id = typeof provider?.id === "string" ? provider.id.trim() : "";
+    if (!id) {
+      pushDiagnostic({
+        level: "error",
+        pluginId: record.id,
+        source: record.source,
+        message: "provider registration missing id",
+      });
       return;
     }
-    const id = normalizedProvider.id;
     const existing = registry.providers.find((entry) => entry.provider.id === id);
     if (existing) {
       pushDiagnostic({
@@ -462,7 +451,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
     record.providerIds.push(id);
     registry.providers.push({
       pluginId: record.id,
-      provider: normalizedProvider,
+      provider,
       source: record.source,
     });
   };
@@ -591,10 +580,6 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       hookPolicy?: PluginTypedHookPolicy;
     },
   ): OpenClawPluginApi => {
-    // Get the subagent runtime from registryParams.runtime
-    const runtime = registryParams.runtime;
-    const subagentRuntime = runtime?.subagent;
-
     return {
       id: record.id,
       name: record.name,
@@ -603,7 +588,7 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       source: record.source,
       config: params.config,
       pluginConfig: params.pluginConfig,
-      runtime,
+      runtime: registryParams.runtime,
       logger: normalizeLogger(registryParams.logger),
       registerTool: (tool, opts) => registerTool(record, tool, opts),
       registerHook: (events, handler, opts) =>
@@ -616,20 +601,21 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       registerService: (service) => registerService(record, service),
       registerCommand: (command) => registerCommand(record, command),
       registerContextEngine: (id, factory) => registerContextEngine(id, factory),
-      resolvePath: (input: string) => resolveUserPath(input),
+      resolvePath: (input: string) => {
+        // If the path is relative, resolve it relative to the plugin directory
+        // to ensure paths like "./per-agent-ov-http-server.mjs" resolve correctly
+        // even when process.cwd() is unexpected (e.g., "/" when running as LaunchAgent)
+        const trimmed = input.trim();
+        if (!trimmed.startsWith("/") && !trimmed.startsWith("~")) {
+          // Relative path - resolve relative to plugin directory
+          const pluginDir = path.dirname(record.source);
+          return path.resolve(pluginDir, trimmed);
+        }
+        // Absolute or ~-prefixed path - use existing resolveUserPath behavior
+        return resolveUserPath(input);
+      },
       on: (hookName, handler, opts) =>
         registerTypedHook(record, hookName, handler, opts, params.hookPolicy),
-      // Wire up invokeAgent and invokeAgentStream from the runtime
-      // Cast to the expected types for plugin API compatibility
-      invokeAgent: subagentRuntime?.invokeAgent
-        ? async (opts) =>
-            subagentRuntime.invokeAgent(opts) as Promise<
-              import("./types.js").PluginAgentInvokeResult
-            >
-        : undefined,
-      invokeAgentStream: subagentRuntime?.invokeAgentStream
-        ? async (opts) => subagentRuntime.invokeAgentStream(opts)
-        : undefined,
     };
   };
 
