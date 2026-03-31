@@ -118,6 +118,13 @@ export function createQuickSessionSearchTool(
             if (Array.isArray(result?.[key])) items.push(...result[key]);
           }
 
+          // Sort by URI descending (newest first) — URIs contain dates like viking://resources/2026-03-31/...
+          items.sort((a: any, b: any) => {
+            const uriA = String(a.uri || "");
+            const uriB = String(b.uri || "");
+            return uriB.localeCompare(uriA);
+          });
+
           const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
             path: item.uri ?? `session-${idx}`,
             score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
