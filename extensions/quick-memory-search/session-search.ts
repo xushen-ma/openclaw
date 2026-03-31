@@ -1,7 +1,17 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
+
+function json(payload: unknown): any {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
+}
+function str(params: unknown, key: string): string | undefined {
+  return typeof (params as any)?.[key] === "string" ? (params as any)[key].trim() : undefined;
+}
+function num(params: unknown, key: string): number | undefined {
+  const v = (params as any)?.[key];
+  return typeof v === "number" ? v : undefined;
+}
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
 
 const execFileAsync = promisify(execFile);
@@ -77,7 +87,10 @@ for attempt in range(MAX_RETRIES + 1):
   }
 }
 
-export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
+export function createQuickSessionSearchTool(
+  httpConfig: OvHttpConfig,
+  agentId: string,
+): AnyAgentTool {
   return {
     label: "Quick Session Search",
     name: "quick_session_search",
@@ -86,12 +99,10 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
       "Uses per-agent OV HTTP when configured, with local per-agent session-store fallback.",
     parameters: QuickSessionSearchSchema as any,
     execute: async (_toolCallId: string, params: unknown, _signal?: AbortSignal) => {
-      const query = readStringParam(params, "query", { required: true });
-      const maxResults = readNumberParam(params, "maxResults") ?? 5;
-      const agentId = process.env.OPENCLAW_AGENT_ID || "main";
-
+      const query = str(params, "query");
+      const maxResults = num(params, "maxResults") ?? 5;
       if (!query || !query.trim()) {
-        return jsonResult({ results: [], error: "query is required" });
+        return json({ results: [], error: "query is required" });
       }
 
       // HTTP first (per-agent). If unavailable/failing, fallback to local store.
@@ -121,7 +132,7 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
             citation: item.uri ?? "",
           }));
 
-          return jsonResult({
+          return json({
             results,
             provider: "openviking-sessions-agent-http",
             agentId,
@@ -137,7 +148,7 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
         const data = await searchLocalStore(sessionStorePath, query.trim(), maxResults);
 
         if (data.error) {
-          return jsonResult({
+          return json({
             results: [],
             error: data.error,
             fallback: "Use sessions_history as fallback.",
@@ -152,7 +163,7 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
           citation: item.uri ?? "",
         }));
 
-        return jsonResult({
+        return json({
           results,
           provider: "openviking-sessions-local",
           agentId,
@@ -160,7 +171,7 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        return jsonResult({
+        return json({
           results: [],
           error: message,
           fallback: "Use sessions_history as fallback.",

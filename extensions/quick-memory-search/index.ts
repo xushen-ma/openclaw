@@ -1,5 +1,15 @@
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk";
+
+function json(payload: unknown): any {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
+}
+function str(params: unknown, key: string): string | undefined {
+  return typeof (params as any)?.[key] === "string" ? (params as any)[key].trim() : undefined;
+}
+function num(params: unknown, key: string): number | undefined {
+  const v = (params as any)?.[key];
+  return typeof v === "number" ? v : undefined;
+}
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
 import { createQuickSessionSearchTool } from "./session-search.js";
 
@@ -12,7 +22,7 @@ const QuickMemorySearchSchema = {
   required: ["query"] as string[],
 };
 
-function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
+function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string): AnyAgentTool {
   return {
     label: "Quick Memory Search",
     name: "quick_memory_search",
@@ -22,12 +32,10 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
       "legacy shared OV HTTP is optional transitional fallback.",
     parameters: QuickMemorySearchSchema as any,
     execute: async (_toolCallId: string, params: unknown) => {
-      const query = readStringParam(params, "query", { required: true });
-      const maxResults = readNumberParam(params, "maxResults") ?? 5;
-      const agentId = process.env.OPENCLAW_AGENT_ID || "main";
-
+      const query = str(params, "query");
+      const maxResults = num(params, "maxResults") ?? 5;
       if (!query || !query.trim()) {
-        return jsonResult({ results: [], error: "query is required" });
+        return json({ results: [], error: "query is required" });
       }
 
       const requestBody = { query: query.trim(), limit: maxResults };
@@ -39,7 +47,7 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
       });
 
       if (attempts.length === 0) {
-        return jsonResult({
+        return json({
           results: [],
           error: "No OV HTTP endpoint configured (per-agent or legacy)",
           fallback: "Use memory_search as fallback.",
@@ -72,7 +80,7 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
             citation: item.uri ?? "",
           }));
 
-          return jsonResult({
+          return json({
             results,
             provider: results.length > 0 ? results[0].source : "openviking",
             model: "openviking-local",
@@ -86,7 +94,7 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
         }
       }
 
-      return jsonResult({
+      return json({
         results: [],
         error: errors.join(" | "),
         fallback: "Use memory_search as fallback.",
@@ -105,8 +113,10 @@ export default function register(api: OpenClawPluginApi) {
     agentHeaderName: cfg.agentHeaderName,
   };
 
-  api.registerTool(createQuickMemorySearchTool(httpConfig));
-  api.registerTool(createQuickSessionSearchTool(httpConfig));
+  // Use factory pattern so each agent's tool instance captures the correct agentId
+  // at registration time rather than reading process.env.OPENCLAW_AGENT_ID (never set).
+  api.registerTool((ctx) => createQuickMemorySearchTool(httpConfig, ctx.agentId || "main"));
+  api.registerTool((ctx) => createQuickSessionSearchTool(httpConfig, ctx.agentId || "main"));
 
   api.logger.info(
     `quick_memory_search + quick_session_search registered (perAgent=${httpConfig.perAgentBaseUrl || "disabled"}, legacy=${httpConfig.legacyBaseUrl || "disabled"})`,
