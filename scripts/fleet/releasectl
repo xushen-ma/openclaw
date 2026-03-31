@@ -51,7 +51,7 @@ load_releasectl_config() {
 
 is_governed_write_action() {
   case "${1:-}" in
-    test-deploy|staging-deploy|test-release|promote-production|sanity-check|deploy|rollback|bundle-sync)
+    test-deploy|staging-deploy|test-release|promote-production|sanity-check|deploy|rollback|bundle-sync|import-source)
       return 0
       ;;
     *)
@@ -196,6 +196,7 @@ Usage:
   releasectl sanity-check [--sha <sha>] [--skip-smoke]
   releasectl deploy [args...]
   releasectl rollback [args...]
+  releasectl import-source <ref> [--dry-run]
   releasectl bundle-sync [--check|--sync]
   releasectl verify-config
 
@@ -215,6 +216,8 @@ Commands:
                   optional --skip-smoke).
   deploy          Run internal production deploy flow, then normalize permissions.
   rollback        Run internal rollback flow, then normalize permissions.
+  import-source   Import source-of-truth fleet scripts into controlled repo with
+                  provenance. Replaces ad-hoc copy scripts as normal lane.
   bundle-sync     Check/sync installed governed bundle from scripts/fleet source.
   verify-config   Print effective governed paths and detect legacy config drift.
 
@@ -454,6 +457,16 @@ case "$command" in
     ;;
   rollback)
     run_with_post_normalize "rollback.sh" "$@"
+    ;;
+  import-source)
+    source_ref="${1:-}"
+    if [[ -z "$source_ref" ]]; then
+      echo "error: missing required argument: source ref" >&2
+      echo "usage: releasectl import-source <ref> [--dry-run]" >&2
+      exit 2
+    fi
+    shift
+    "$INTERNAL_DIR/import-source.sh" "$source_ref" "$@"
     ;;
   bundle-sync)
     mode="--check"
