@@ -14,7 +14,7 @@ const QuickMemorySearchSchema = {
   required: ["query"] as string[],
 };
 
-function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
+function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string): AnyAgentTool {
   return {
     label: "Quick Memory Search",
     name: "quick_memory_search",
@@ -26,8 +26,6 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
     execute: async (_toolCallId: string, params: unknown) => {
       const query = readStringParam(params, "query", { required: true });
       const maxResults = readNumberParam(params, "maxResults") ?? 5;
-      const agentId = process.env.OPENCLAW_AGENT_ID || "main";
-
       if (!query || !query.trim()) {
         return jsonResult({ results: [], error: "query is required" });
       }
@@ -136,8 +134,10 @@ export default function register(api: OpenClawPluginApi) {
     agentHeaderName: cfg.agentHeaderName,
   };
 
-  api.registerTool(createQuickMemorySearchTool(httpConfig));
-  api.registerTool(createQuickSessionSearchTool(httpConfig));
+  // Use factory pattern so each agent's tool instance captures the correct agentId
+  // at registration time rather than reading process.env.OPENCLAW_AGENT_ID (never set).
+  api.registerTool((ctx) => createQuickMemorySearchTool(httpConfig, ctx.agentId || "main"));
+  api.registerTool((ctx) => createQuickSessionSearchTool(httpConfig, ctx.agentId || "main"));
 
   const sidecar = createQuickMemoryPerAgentSidecarService({
     perAgentBaseUrl: httpConfig.perAgentBaseUrl,

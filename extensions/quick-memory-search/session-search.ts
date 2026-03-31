@@ -78,7 +78,10 @@ for attempt in range(MAX_RETRIES + 1):
   }
 }
 
-export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgentTool {
+export function createQuickSessionSearchTool(
+  httpConfig: OvHttpConfig,
+  agentId: string,
+): AnyAgentTool {
   return {
     label: "Quick Session Search",
     name: "quick_session_search",
@@ -89,8 +92,6 @@ export function createQuickSessionSearchTool(httpConfig: OvHttpConfig): AnyAgent
     execute: async (_toolCallId: string, params: unknown, _signal?: AbortSignal) => {
       const query = readStringParam(params, "query", { required: true });
       const maxResults = readNumberParam(params, "maxResults") ?? 5;
-      const agentId = process.env.OPENCLAW_AGENT_ID || "main";
-
       if (!query || !query.trim()) {
         return jsonResult({ results: [], error: "query is required" });
       }
