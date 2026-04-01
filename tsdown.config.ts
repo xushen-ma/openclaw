@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { defineConfig, type UserConfig } from "tsdown";
+import type { UserConfig } from "tsdown";
 import {
   listBundledPluginBuildEntries,
   listBundledPluginRuntimeDependencies,
@@ -158,7 +158,7 @@ function buildUnifiedDistEntries(): Record<string, string> {
   };
 }
 
-export default defineConfig([
+export default [
   nodeBuildConfig({
     // Build core entrypoints, plugin-sdk subpaths, bundled plugin entrypoints,
     // and bundled hooks in one graph so runtime singletons are emitted once.
@@ -172,4 +172,4 @@ export default defineConfig([
       ],
     },
   }),
-]);
+];
