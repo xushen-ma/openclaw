@@ -40,6 +40,8 @@ export type BuildPluginApiParams = {
       | "registerMemoryRuntime"
       | "registerMemoryEmbeddingProvider"
       | "on"
+      | "invokeAgent"
+      | "invokeAgentStream"
     >
   >;
 };
@@ -70,6 +72,8 @@ const noopRegisterMemoryRuntime: OpenClawPluginApi["registerMemoryRuntime"] = ()
 const noopRegisterMemoryEmbeddingProvider: OpenClawPluginApi["registerMemoryEmbeddingProvider"] =
   () => {};
 const noopOn: OpenClawPluginApi["on"] = () => {};
+const noopInvokeAgent: OpenClawPluginApi["invokeAgent"] = undefined;
+const noopInvokeAgentStream: OpenClawPluginApi["invokeAgentStream"] = undefined;
 
 export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi {
   const handlers = params.handlers ?? {};
@@ -114,5 +118,7 @@ export function buildPluginApi(params: BuildPluginApiParams): OpenClawPluginApi 
       handlers.registerMemoryEmbeddingProvider ?? noopRegisterMemoryEmbeddingProvider,
     resolvePath: params.resolvePath,
     on: handlers.on ?? noopOn,
+    invokeAgent: handlers.invokeAgent ?? noopInvokeAgent,
+    invokeAgentStream: handlers.invokeAgentStream ?? noopInvokeAgentStream,
   };
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { normalizeModelRef, parseModelRef } from "../agents/model-selection.js";
 import type { loadConfig } from "../config/config.js";
 import { applyPluginAutoEnable } from "../config/plugin-auto-enable.js";
@@ -6,7 +7,7 @@ import { resolveGatewayStartupPluginIds } from "../plugins/channel-plugin-ids.js
 import { normalizePluginsConfig } from "../plugins/config-state.js";
 import { loadOpenClawPlugins } from "../plugins/loader.js";
 import { getPluginRuntimeGatewayRequestScope } from "../plugins/runtime/gateway-request-scope.js";
-import type { PluginRuntime } from "../plugins/runtime/types.js";
+import type { PluginRuntime, PluginAgentInvokeRuntimeResult } from "../plugins/runtime/types.js";
 import { resolveGlobalSingleton } from "../shared/global-singleton.js";
 import { ADMIN_SCOPE, WRITE_SCOPE } from "./method-scopes.js";
 import { GATEWAY_CLIENT_IDS, GATEWAY_CLIENT_MODES } from "./protocol/client-info.js";
@@ -302,6 +303,77 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
     return { messages: Array.isArray(payload?.messages) ? payload.messages : [] };
   };
 
+  const messagesToPrompt = (messages?: Array<{ role: string; content: string }>): string => {
+    if (!messages || messages.length === 0) {
+      return "";
+    }
+    const userMsg = messages.find((m) => m.role === "user");
+    if (userMsg) {
+      return userMsg.content;
+    }
+    return messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+  };
+
+  const toAgentScopedSessionKey = (agentId: string, sessionKey?: string): string | undefined => {
+    const raw = sessionKey?.trim();
+    if (!raw) {
+      return undefined;
+    }
+    if (raw.startsWith("agent:")) {
+      return raw;
+    }
+    return `agent:${agentId}:${raw}`;
+  };
+
+  const normalizeMessageContent = (content: unknown): string => {
+    if (typeof content === "string") {
+      return content;
+    }
+    if (Array.isArray(content)) {
+      return content
+        .map((block) => {
+          if (typeof block === "string") {
+            return block;
+          }
+          if (!block || typeof block !== "object") {
+            return "";
+          }
+          const record = block as Record<string, unknown>;
+          if (typeof record.text === "string") {
+            return record.text;
+          }
+          if (typeof record.content === "string") {
+            return record.content;
+          }
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n");
+    }
+    if (content == null) {
+      return "";
+    }
+    try {
+      return JSON.stringify(content);
+    } catch {
+      return "";
+    }
+  };
+
+  const extractContentFromMessages = (messages: unknown[]): string => {
+    if (!messages || messages.length === 0) {
+      return "";
+    }
+    const asRecords = messages as Array<Record<string, unknown>>;
+    const assistantMsgs = asRecords.filter((m) => m?.role === "assistant" || m?.role === "agent");
+    if (assistantMsgs.length > 0) {
+      const lastAssistant = assistantMsgs[assistantMsgs.length - 1];
+      return normalizeMessageContent(lastAssistant?.content);
+    }
+    const lastMsg = asRecords[asRecords.length - 1];
+    return normalizeMessageContent(lastMsg?.content);
+  };
+
   return {
     async run(params) {
       const scope = getPluginRuntimeGatewayRequestScope();
@@ -372,6 +444,188 @@ export function createGatewaySubagentRuntime(): PluginRuntime["subagent"] {
         key: params.sessionKey,
         deleteTranscript: params.deleteTranscript ?? true,
       });
+    },
+    async invokeAgent(params): Promise<PluginAgentInvokeRuntimeResult> {
+      const agentId = params.agentId?.trim() || "kiki";
+      const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
+      const message = params.prompt || messagesToPrompt(params.messages);
+      const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
+      const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
+
+      if (!message) {
+        return { success: false, error: "No message or prompt provided" };
+      }
+
+      try {
+        const runPayload = await dispatchGatewayMethod<{ runId?: string; sessionKey?: string }>(
+          "agent",
+          { sessionKey, message, agentId, idempotencyKey, deliver: false },
+        );
+        const runId = runPayload?.runId;
+        const resultSessionKey = runPayload?.sessionKey || sessionKey || `plugin:${Date.now()}`;
+        if (!runId) {
+          return { success: false, error: "Failed to get runId from agent invocation" };
+        }
+
+        const waitPayload = await dispatchGatewayMethod<{ status?: string; error?: string }>(
+          "agent.wait",
+          { runId, timeoutMs },
+        );
+        if (waitPayload?.status === "error") {
+          return {
+            success: false,
+            error: waitPayload.error || "Agent execution failed",
+            sessionKey: resultSessionKey,
+          };
+        }
+        if (waitPayload?.status === "timeout") {
+          return {
+            success: false,
+            error: "Agent execution timed out",
+            sessionKey: resultSessionKey,
+          };
+        }
+
+        const sessionMsgs = await getSessionMessages({ sessionKey: resultSessionKey, limit: 20 });
+        const content = extractContentFromMessages(sessionMsgs.messages || []);
+        return {
+          success: true,
+          content,
+          messages: sessionMsgs.messages as AgentMessage[],
+          sessionKey: resultSessionKey,
+        };
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        return { success: false, error: `Agent invocation failed: ${error}` };
+      }
+    },
+    async invokeAgentStream(params): Promise<ReadableStream<Uint8Array>> {
+      const encoder = new TextEncoder();
+      let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        start(c) {
+          controller = c;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+
+      void (async () => {
+        try {
+          const agentId = params.agentId?.trim() || "kiki";
+          const sessionKey = toAgentScopedSessionKey(agentId, params.sessionKey);
+          const message = params.prompt || messagesToPrompt(params.messages);
+          const timeoutMs = params.timeoutSeconds ? params.timeoutSeconds * 1000 : undefined;
+          const idempotencyKey = params.idempotencyKey || `plugin-invoke:${randomUUID()}`;
+
+          if (!message) {
+            controller?.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ error: { message: "No message or prompt provided" } })}\n\n`,
+              ),
+            );
+            controller?.close();
+            return;
+          }
+
+          const runPayload = await dispatchGatewayMethod<{ runId?: string; sessionKey?: string }>(
+            "agent",
+            { sessionKey, message, agentId, idempotencyKey, deliver: false },
+          );
+          if (!runPayload?.runId) {
+            controller?.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ error: { message: "Failed to start agent" } })}\n\n`,
+              ),
+            );
+            controller?.close();
+            return;
+          }
+
+          const resultSessionKey = runPayload.sessionKey || sessionKey || `plugin:${Date.now()}`;
+          const pollInterval = 500;
+          const maxPolls = Math.ceil((timeoutMs || 60000) / pollInterval);
+          let polls = 0;
+          let lastContent = "";
+
+          while (polls < maxPolls && !cancelled) {
+            await new Promise((resolve) => setTimeout(resolve, pollInterval));
+            polls++;
+            const sessionMsgs = await getSessionMessages({
+              sessionKey: resultSessionKey,
+              limit: 20,
+            });
+            if (sessionMsgs.messages && sessionMsgs.messages.length > 0) {
+              const assistantMsgs = (sessionMsgs.messages as Array<Record<string, unknown>>).filter(
+                (m) => m?.role === "assistant" || m?.role === "agent",
+              );
+              if (assistantMsgs.length > 0) {
+                const latestMsg = assistantMsgs[assistantMsgs.length - 1];
+                const newContent = normalizeMessageContent(latestMsg?.content);
+                if (newContent !== lastContent) {
+                  const delta = newContent.slice(lastContent.length);
+                  if (delta) {
+                    controller?.enqueue(
+                      encoder.encode(
+                        `data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`,
+                      ),
+                    );
+                  }
+                  lastContent = newContent;
+                }
+              }
+
+              const lastMsg = sessionMsgs.messages[sessionMsgs.messages.length - 1] as Record<
+                string,
+                unknown
+              >;
+              if (lastMsg?.role === "assistant" || lastMsg?.role === "agent") {
+                await new Promise((resolve) => setTimeout(resolve, 1000));
+                const finalMsgs = await getSessionMessages({
+                  sessionKey: resultSessionKey,
+                  limit: 20,
+                });
+                const finalList = finalMsgs.messages as Array<Record<string, unknown>>;
+                const finalMsg = finalList[finalList.length - 1];
+                const finalContent = normalizeMessageContent(finalMsg?.content) || lastContent;
+                if (finalContent === lastContent) {
+                  controller?.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n`,
+                    ),
+                  );
+                  controller?.close();
+                  return;
+                }
+              }
+            }
+          }
+
+          if (cancelled) {
+            return;
+          }
+          if (lastContent) {
+            controller?.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: lastContent }, finish_reason: "stop" }] })}\n\n`,
+              ),
+            );
+          }
+          controller?.close();
+        } catch (err) {
+          const error = err instanceof Error ? err.message : String(err);
+          controller?.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({ error: { message: `Agent invocation failed: ${error}` } })}\n\n`,
+            ),
+          );
+          controller?.close();
+        }
+      })();
+
+      return stream;
     },
   };
 }

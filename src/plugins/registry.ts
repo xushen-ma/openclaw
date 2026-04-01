@@ -947,6 +947,10 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
             withPluginRuntimePluginIdScope(pluginId, () => subagent.getSession(params)),
           deleteSession: (params) =>
             withPluginRuntimePluginIdScope(pluginId, () => subagent.deleteSession(params)),
+          invokeAgent: (params) =>
+            withPluginRuntimePluginIdScope(pluginId, () => subagent.invokeAgent(params)),
+          invokeAgentStream: (params) =>
+            withPluginRuntimePluginIdScope(pluginId, () => subagent.invokeAgentStream(params)),
         } satisfies PluginRuntime["subagent"];
       },
     });
@@ -1167,6 +1171,9 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
         // without opting into the wider full-registration surface.
         registerCli: (registrar, opts) => registerCli(record, registrar, opts),
         registerChannel: (registration) => registerChannel(record, registration, registrationMode),
+        invokeAgent: async (opts) => resolvePluginRuntime(record.id).subagent.invokeAgent(opts),
+        invokeAgentStream: async (opts) =>
+          resolvePluginRuntime(record.id).subagent.invokeAgentStream(opts),
       },
     });
   };

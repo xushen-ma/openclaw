@@ -61,6 +61,27 @@ import type { PluginRuntime } from "./runtime/types.js";
 export type { PluginRuntime } from "./runtime/types.js";
 export type { AnyAgentTool } from "../agents/tools/common.js";
 
+export type { AgentMessage } from "@mariozechner/pi-agent-core";
+
+export type PluginAgentInvokeOptions = {
+  agentId: string;
+  prompt?: string;
+  messages?: Array<{ role: string; content: string }>;
+  sessionKey?: string;
+  mode?: "run" | "session";
+  timeoutSeconds?: number;
+  stream?: boolean;
+  idempotencyKey?: string;
+};
+
+export type PluginAgentInvokeResult = {
+  success: boolean;
+  error?: string;
+  content?: string;
+  messages?: AgentMessage[];
+  sessionKey?: string;
+};
+
 export type ProviderAuthOptionBag = {
   token?: string;
   tokenProvider?: string;
@@ -1768,6 +1789,10 @@ export type OpenClawPluginApi = {
     adapter: import("./memory-embedding-providers.js").MemoryEmbeddingProviderAdapter,
   ) => void;
   resolvePath: (input: string) => string;
+  /** Invoke an agent directly (non-streaming) */
+  invokeAgent?: (opts: PluginAgentInvokeOptions) => Promise<PluginAgentInvokeResult>;
+  /** Invoke an agent with streaming response */
+  invokeAgentStream?: (opts: PluginAgentInvokeOptions) => Promise<ReadableStream<Uint8Array>>;
   /** Register a lifecycle hook handler */
   on: <K extends PluginHookName>(
     hookName: K,

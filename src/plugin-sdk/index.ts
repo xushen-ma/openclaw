@@ -48,6 +48,9 @@ export type {
   OpenClawPluginApi,
   OpenClawPluginConfigSchema,
   PluginLogger,
+  AgentMessage,
+  PluginAgentInvokeOptions,
+  PluginAgentInvokeResult,
   ProviderAuthContext,
   ProviderAuthResult,
   ProviderRuntimeModel,
@@ -85,3 +88,4 @@ export { emptyPluginConfigSchema } from "../plugins/config-schema.js";
 export { registerContextEngine } from "../context-engine/registry.js";
 export { delegateCompactionToRuntime } from "../context-engine/delegate.js";
 export { onDiagnosticEvent } from "../infra/diagnostic-events.js";
+export { invokeAgent, invokeAgentStream } from "./agent-invoke.js";
