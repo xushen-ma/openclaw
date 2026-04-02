@@ -42,6 +42,17 @@ function shouldSkipPinnedMainDmRouteUpdate(
   return true;
 }
 
+async function reportRecordError(
+  onRecordError: (err: unknown) => void,
+  err: unknown,
+): Promise<void> {
+  try {
+    onRecordError(err);
+  } catch {
+    // Best-effort containment for telemetry/logging handlers.
+  }
+}
+
 export async function recordInboundSession(params: {
   storePath: string;
   sessionKey: string;
@@ -62,7 +73,9 @@ export async function recordInboundSession(params: {
       groupResolution,
       createIfMissing,
     })
-    .catch(params.onRecordError);
+    .catch((err) => {
+      void reportRecordError(params.onRecordError, err);
+    });
 
   const update = params.updateLastRoute;
   if (!update) {
@@ -72,17 +85,21 @@ export async function recordInboundSession(params: {
     return;
   }
   const targetSessionKey = normalizeSessionStoreKey(update.sessionKey);
-  await runtime.updateLastRoute({
-    storePath,
-    sessionKey: targetSessionKey,
-    deliveryContext: {
-      channel: update.channel,
-      to: update.to,
-      accountId: update.accountId,
-      threadId: update.threadId,
-    },
-    // Avoid leaking inbound origin metadata into a different target session.
-    ctx: targetSessionKey === canonicalSessionKey ? ctx : undefined,
-    groupResolution,
-  });
+  try {
+    await runtime.updateLastRoute({
+      storePath,
+      sessionKey: targetSessionKey,
+      deliveryContext: {
+        channel: update.channel,
+        to: update.to,
+        accountId: update.accountId,
+        threadId: update.threadId,
+      },
+      // Avoid leaking inbound origin metadata into a different target session.
+      ctx: targetSessionKey === canonicalSessionKey ? ctx : undefined,
+      groupResolution,
+    });
+  } catch (error) {
+    await reportRecordError(params.onRecordError, error);
+  }
 }

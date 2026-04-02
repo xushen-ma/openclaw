@@ -20,6 +20,8 @@ type LockFilePayload = {
   createdAt: string;
 };
 
+const PARTIAL_LOCK_STALE_MS = 2_500;
+
 type HeldLock = {
   count: number;
   handle: fs.FileHandle;
@@ -87,6 +89,10 @@ async function readLockPayload(lockPath: string): Promise<LockFilePayload | null
   }
 }
 
+function resolvePartialLockWindowMs(staleMs: number): number {
+  return Math.min(staleMs, PARTIAL_LOCK_STALE_MS);
+}
+
 async function resolveNormalizedFilePath(filePath: string): Promise<string> {
   const resolved = path.resolve(filePath);
   const dir = path.dirname(resolved);
@@ -101,6 +107,7 @@ async function resolveNormalizedFilePath(filePath: string): Promise<string> {
 
 async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> {
   const payload = await readLockPayload(lockPath);
+  const isPartiallyWritten = payload === null;
   if (payload?.pid && !isPidAlive(payload.pid)) {
     return true;
   }
@@ -112,9 +119,25 @@ async function isStaleLock(lockPath: string, staleMs: number): Promise<boolean> 
   }
   try {
     const stat = await fs.stat(lockPath);
+    if (isPartiallyWritten) {
+      return Date.now() - stat.mtimeMs > resolvePartialLockWindowMs(staleMs);
+    }
     return Date.now() - stat.mtimeMs > staleMs;
   } catch {
     return true;
+  }
+}
+
+async function writeLockPayload(lockPath: string, handle: fs.FileHandle): Promise<void> {
+  try {
+    await handle.writeFile(
+      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
+      "utf8",
+    );
+  } catch (err) {
+    await handle.close().catch(() => undefined);
+    await fs.rm(lockPath, { force: true }).catch(() => undefined);
+    throw err;
   }
 }
 
@@ -166,10 +189,7 @@ export async function acquireFileLock(
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       const handle = await fs.open(lockPath, "wx");
-      await handle.writeFile(
-        JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }, null, 2),
-        "utf8",
-      );
+      await writeLockPayload(lockPath, handle);
       HELD_LOCKS.set(normalizedFile, { count: 1, handle, lockPath });
       return {
         lockPath,

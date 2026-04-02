@@ -30,6 +30,59 @@ describe("recordInboundSession", () => {
     updateLastRouteMock.mockClear();
   });
 
+  it("survives record-session lock/write failures and still updates last route", async () => {
+    const onRecordError = vi.fn();
+    const unhandledErrors: unknown[] = [];
+    const captureUnhandled = (reason: unknown) => {
+      unhandledErrors.push(reason);
+    };
+    process.on("unhandledRejection", captureUnhandled);
+    try {
+      recordSessionMetaFromInboundMock.mockRejectedValue(new Error("transient lock write failure"));
+
+      await recordInboundSession({
+        storePath: "/tmp/openclaw-session-store.json",
+        sessionKey: "agent:main:demo-channel:1234:thread:42",
+        ctx,
+        updateLastRoute: {
+          sessionKey: "agent:main:demo-channel:1234:thread:42",
+          channel: "demo-channel",
+          to: "demo-channel:1234",
+        },
+        onRecordError,
+      });
+
+      await Promise.resolve();
+    } finally {
+      process.off("unhandledRejection", captureUnhandled);
+    }
+
+    expect(unhandledErrors).toEqual([]);
+    expect(onRecordError).toHaveBeenCalledTimes(1);
+    expect(updateLastRouteMock).toHaveBeenCalled();
+  });
+
+  it("records last-route lock failures without blocking inbound flow", async () => {
+    const onRecordError = vi.fn();
+    updateLastRouteMock.mockRejectedValue(new Error("route lock timeout"));
+    recordSessionMetaFromInboundMock.mockResolvedValue(undefined);
+
+    await recordInboundSession({
+      storePath: "/tmp/openclaw-session-store.json",
+      sessionKey: "agent:main:demo-channel:1234:thread:42",
+      ctx,
+      updateLastRoute: {
+        sessionKey: "agent:main:demo-channel:1234:thread:42",
+        channel: "demo-channel",
+        to: "demo-channel:1234",
+      },
+      onRecordError,
+    });
+
+    expect(onRecordError).toHaveBeenCalledTimes(1);
+    expect(updateLastRouteMock).toHaveBeenCalled();
+  });
+
   it("does not pass ctx when updating a different session key", async () => {
     await recordInboundSession({
       storePath: "/tmp/openclaw-session-store.json",
