@@ -1,5 +1,5 @@
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
-import { jsonResult, readNumberParam, readStringParam } from "openclaw/plugin-sdk";
+import { jsonResult, readNumberParam, readStringParam } from "openclaw/plugin-sdk/memory-core";
 import { classifyOvFailure, type OvFailureClass, writeOvStats } from "./ov-stats.js";
 import { createQuickSessionSearchTool } from "./session-search.js";
 
@@ -18,7 +18,10 @@ function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/$/, "")}/${path.replace(/^\//, "")}`;
 }
 
-function resolveAttempts(cfg: { perAgentBaseUrl: string; legacyBaseUrl: string }, agentId: string): Attempt[] {
+function resolveAttempts(
+  cfg: { perAgentBaseUrl: string; legacyBaseUrl: string },
+  agentId: string,
+): Attempt[] {
   const attempts: Attempt[] = [];
   if (cfg.perAgentBaseUrl) {
     attempts.push({
@@ -65,20 +68,30 @@ function formatFailure(params: {
   return payload;
 }
 
-function createQuickMemorySearchTool(cfg: { perAgentBaseUrl: string; legacyBaseUrl: string }, agentId: string): AnyAgentTool {
+function createQuickMemorySearchTool(
+  cfg: { perAgentBaseUrl: string; legacyBaseUrl: string },
+  agentId: string,
+): AnyAgentTool {
   return {
     label: "Quick Memory Search",
     name: "quick_memory_search",
     description: "Fast semantic search across workspace knowledge.",
     parameters: QuickMemorySearchSchema as any,
     execute: async (_toolCallId: string, params: unknown) => {
-      const query = readStringParam(params, "query", { required: true });
-      const maxResults = readNumberParam(params, "maxResults") ?? 5;
+      const safeParams =
+        typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+      const query = readStringParam(safeParams, "query", { required: true });
+      const maxResults = readNumberParam(safeParams, "maxResults") ?? 5;
       if (!query || !query.trim()) return jsonResult({ results: [], error: "query is required" });
 
       const normalizedQuery = query.trim();
       const startedAt = Date.now();
-      const failures: Array<{ mode: "per-agent" | "legacy"; status?: number; reason: string; failureClass: OvFailureClass }> = [];
+      const failures: Array<{
+        mode: "per-agent" | "legacy";
+        status?: number;
+        reason: string;
+        failureClass: OvFailureClass;
+      }> = [];
 
       for (const attempt of resolveAttempts(cfg, agentId)) {
         try {
@@ -106,7 +119,8 @@ function createQuickMemorySearchTool(cfg: { perAgentBaseUrl: string; legacyBaseU
             path: item.uri ?? `result-${idx}`,
             score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
             snippet: item.abstract ?? item.overview ?? "(no abstract)",
-            source: attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
+            source:
+              attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
             citation: item.uri ?? "",
           }));
 
@@ -126,7 +140,11 @@ function createQuickMemorySearchTool(cfg: { perAgentBaseUrl: string; legacyBaseU
           return jsonResult({ results, routing: attempt.mode, agentId });
         } catch (err) {
           const reason = err instanceof Error ? err.message : String(err);
-          failures.push({ mode: attempt.mode, reason: reason.slice(0, 200), failureClass: classifyOvFailure({ reason }) });
+          failures.push({
+            mode: attempt.mode,
+            reason: reason.slice(0, 200),
+            failureClass: classifyOvFailure({ reason }),
+          });
         }
       }
 
@@ -150,7 +168,9 @@ function createQuickMemorySearchTool(cfg: { perAgentBaseUrl: string; legacyBaseU
 
       return jsonResult(
         formatFailure({
-          error: failures.map((f) => `${f.mode}${f.status ? `(${f.status})` : ""}`).join(" | ") || "quick memory search failed",
+          error:
+            failures.map((f) => `${f.mode}${f.status ? `(${f.status})` : ""}`).join(" | ") ||
+            "quick memory search failed",
           fallback: "Use memory_search as fallback.",
           failureClass: last?.failureClass ?? "backend",
           status: last?.status,
@@ -164,7 +184,8 @@ function createQuickMemorySearchTool(cfg: { perAgentBaseUrl: string; legacyBaseU
 export default function register(api: OpenClawPluginApi) {
   const cfg = (api.pluginConfig as any) || {};
   const httpConfig = {
-    perAgentBaseUrl: cfg.perAgentOvBaseUrl?.trim() || process.env.OV_PER_AGENT_HTTP_BASE?.trim() || "",
+    perAgentBaseUrl:
+      cfg.perAgentOvBaseUrl?.trim() || process.env.OV_PER_AGENT_HTTP_BASE?.trim() || "",
     legacyBaseUrl: cfg.ovBaseUrl?.trim() || process.env.OV_LEGACY_HTTP_BASE?.trim() || "",
   };
 

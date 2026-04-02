@@ -32,7 +32,7 @@ describe("quick_session_search stats logging", () => {
             ],
           },
         }),
-      }),
+      })),
     );
 
     const tool = createQuickSessionSearchTool(
@@ -43,7 +43,11 @@ describe("quick_session_search stats logging", () => {
     );
 
     const result = await tool.execute("call-1", { query: "session context", maxResults: 3 });
-    const payload = JSON.parse(result.content[0].text);
+    const firstContent = result.content[0];
+    if (!("text" in firstContent)) {
+      throw new Error("Expected text content from quick_session_search response");
+    }
+    const payload = JSON.parse(firstContent.text);
 
     expect(payload.provider).toBe("openviking-sessions-agent-http");
     expect(payload.routing).toBe("per-agent");
