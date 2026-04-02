@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PERMISSIONS_SH="$SCRIPT_DIR/internal/permissions.sh"
+SANITY_CHECK_SH="$SCRIPT_DIR/internal/sanity-check.sh"
+
+. "$PERMISSIONS_SH"
+. "$SANITY_CHECK_SH"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  releasectl repair-perms <path>...
+  releasectl sanity-check <secret-path>...
+
+Commands:
+  repair-perms   Normalize permissions for release trees:
+                 directories -> 755, files -> 644
+  sanity-check   Normalize secret paths to chmod 600
+EOF
+}
+
+if [[ $# -lt 1 ]]; then
+  usage >&2
+  exit 1
+fi
+
+COMMAND="$1"
+shift
+
+case "$COMMAND" in
+  repair-perms)
+    repair_permissions "$@"
+    ;;
+  sanity-check)
+    sanity_check_secrets "$@"
+    ;;
+  --help|-h|help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $COMMAND" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

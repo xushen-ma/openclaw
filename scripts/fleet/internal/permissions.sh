@@ -1,32 +1,62 @@
 #!/usr/bin/env bash
-# permissions.sh — shared permission utility primitives for governed scripts
 
 set -euo pipefail
 
-file_mode() {
-  stat -f '%Lp' "$1"
-}
+RELEASECTL_DIR_MODE="755"
+RELEASECTL_FILE_MODE="644"
 
-directory_mode() {
-  stat -f '%Lp' "$1"
-}
-
-ensure_mode() {
-  local target="$1"
-  local mode="$2"
-
-  [[ -e "$target" ]] || return 0
-  local current
-  current="$(file_mode "$target")"
-  if [[ "$current" != "$mode" ]]; then
-    chmod "$mode" "$target"
+repair_permissions() {
+  local target
+  local -a sorted_targets=()
+  if [[ $# -lt 1 ]]; then
+    echo "repair-perms requires at least one path" >&2
+    return 1
   fi
+
+  while IFS= read -r target; do
+    sorted_targets+=("$target")
+  done < <(printf '%s\n' "$@" | LC_ALL=C sort -u)
+
+  for target in "${sorted_targets[@]}"; do
+    if [[ -L "$target" ]]; then
+      echo "Unsupported symlink path: $target" >&2
+      return 1
+    fi
+
+    if [[ -f "$target" ]]; then
+      chmod "$RELEASECTL_FILE_MODE" "$target"
+      continue
+    fi
+
+    if [[ -d "$target" ]]; then
+      normalize_permissions_in_dir "$target"
+      continue
+    fi
+
+    echo "Unsupported path: $target" >&2
+    return 1
+  done
 }
 
-ensure_ownership() {
-  local target="$1"
-  local owner_group="$2"
+normalize_permissions_in_dir() {
+  local root="$1"
+  local -a dirs=()
+  local -a files=()
 
-  [[ -e "$target" ]] || return 0
-  chown "$owner_group" "$target"
+  while IFS= read -r path; do
+    dirs+=("$path")
+  done < <(LC_ALL=C find "$root" -type d -print | sort)
+
+  while IFS= read -r path; do
+    files+=("$path")
+  done < <(LC_ALL=C find "$root" -type f -print | sort)
+
+  local path
+  for path in "${dirs[@]}"; do
+    chmod "$RELEASECTL_DIR_MODE" "$path"
+  done
+
+  for path in "${files[@]}"; do
+    chmod "$RELEASECTL_FILE_MODE" "$path"
+  done
 }
