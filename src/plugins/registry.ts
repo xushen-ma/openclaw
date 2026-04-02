@@ -1145,7 +1145,13 @@ export function createPluginRegistry(registryParams: PluginRegistryParams) {
       pluginConfig: params.pluginConfig,
       runtime: resolvePluginRuntime(record.id),
       logger: normalizeLogger(registryParams.logger),
-      resolvePath: (input: string) => resolveUserPath(input),
+      resolvePath: (input: string) => {
+        const trimmed = input.trim();
+        if (trimmed && !trimmed.startsWith("/") && !trimmed.startsWith("~")) {
+          return path.resolve(path.dirname(record.source), trimmed);
+        }
+        return resolveUserPath(input);
+      },
       handlers: {
         ...(registrationMode === "full"
           ? {
