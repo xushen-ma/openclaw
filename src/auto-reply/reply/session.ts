@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { normalizeConversationText } from "../../acp/conversation-id.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
@@ -31,7 +32,7 @@ import { getSessionBindingService } from "../../infra/outbound/session-binding-s
 import { deliverSessionMaintenanceWarning } from "../../infra/session-maintenance-warning.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
-import { normalizeMainKey } from "../../routing/session-key.js";
+import { normalizeMainKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { normalizeSessionDeliveryFields } from "../../utils/delivery-context.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
@@ -52,6 +53,71 @@ const log = createSubsystemLogger("session-init");
 let sessionArchiveRuntimePromise: Promise<
   typeof import("../../gateway/session-archive.runtime.js")
 > | null = null;
+
+async function readSessionMessagesForReset(sessionFile: string | undefined): Promise<unknown[]> {
+  if (!sessionFile) {
+    return [];
+  }
+
+  try {
+    const content = await fs.readFile(sessionFile, "utf-8");
+    const messages: unknown[] = [];
+    for (const line of content.split("\n")) {
+      if (!line.trim()) {
+        continue;
+      }
+      try {
+        const entry = JSON.parse(line);
+        if (entry?.type === "message" && entry.message) {
+          messages.push(entry.message);
+        }
+      } catch {
+        // Skip malformed JSON lines.
+      }
+    }
+    return messages;
+  } catch (error: unknown) {
+    log.debug(`Unable to read stale session file before reset: ${String(error)}`);
+  }
+  return [];
+}
+
+async function maybeRunBeforeResetForStaleRollover(params: {
+  previousSessionEntry?: SessionEntry;
+  sessionKey: string;
+  workspaceDir?: string;
+}) {
+  const hookRunner = getGlobalHookRunner();
+  if (!hookRunner?.hasHooks("before_reset")) {
+    return;
+  }
+
+  const previousSessionId = params.previousSessionEntry?.sessionId;
+  const sessionFile =
+    params.previousSessionEntry?.sessionFile ??
+    (previousSessionId && params.workspaceDir
+      ? path.join(params.workspaceDir, `${previousSessionId}.jsonl`)
+      : undefined);
+  const messages = await readSessionMessagesForReset(sessionFile);
+
+  try {
+    await hookRunner.runBeforeReset(
+      {
+        sessionFile,
+        messages,
+        reason: "reset",
+      },
+      {
+        agentId: resolveAgentIdFromSessionKey(params.sessionKey),
+        sessionKey: params.sessionKey,
+        sessionId: previousSessionId,
+        workspaceDir: params.workspaceDir,
+      },
+    );
+  } catch (error: unknown) {
+    log.debug(`before_reset hook failed: ${String(error)}`);
+  }
+}
 
 function loadSessionArchiveRuntime() {
   sessionArchiveRuntimePromise ??= import("../../gateway/session-archive.runtime.js");
@@ -597,6 +663,13 @@ export async function initSessionState(params: {
     sessionEntry.compactionCount = 0;
     sessionEntry.memoryFlushCompactionCount = undefined;
     sessionEntry.memoryFlushAt = undefined;
+    if (!resetTriggered && previousSessionEntry?.sessionId) {
+      void maybeRunBeforeResetForStaleRollover({
+        previousSessionEntry,
+        sessionKey,
+        workspaceDir: path.dirname(storePath),
+      });
+    }
     // Clear stale context hash so the first flush in the new session is not
     // incorrectly skipped due to a hash match with the old transcript (#30115).
     sessionEntry.memoryFlushContextHash = undefined;

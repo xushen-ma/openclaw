@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { HookRunner } from "../../plugins/hooks.js";
 import * as bootstrapCache from "../../agents/bootstrap-cache.js";
 import {
   __testing as sessionMcpTesting,
@@ -24,6 +25,19 @@ import {
 import { drainFormattedSystemEvents } from "./session-updates.js";
 import { persistSessionUsageUpdate } from "./session-usage.js";
 import { initSessionState } from "./session.js";
+
+const hookRunnerMocks = vi.hoisted(() => ({
+  hasHooks: vi.fn<HookRunner["hasHooks"]>(),
+  runBeforeReset: vi.fn<HookRunner["runBeforeReset"]>(),
+}));
+
+vi.mock("../../plugins/hook-runner-global.js", () => ({
+  getGlobalHookRunner: () =>
+    ({
+      hasHooks: hookRunnerMocks.hasHooks,
+      runBeforeReset: hookRunnerMocks.runBeforeReset,
+    }) as unknown as HookRunner,
+}));
 
 // Perf: session-store locks are exercised elsewhere; most session tests don't need FS lock files.
 vi.mock("../../agents/session-write-lock.js", () => ({
@@ -197,6 +211,10 @@ function registerCurrentConversationBindingAdapterForTest(params: {
 
 beforeEach(() => {
   sessionBindingTesting.resetSessionBindingAdaptersForTests();
+  hookRunnerMocks.hasHooks.mockReset();
+  hookRunnerMocks.runBeforeReset.mockReset();
+  hookRunnerMocks.hasHooks.mockImplementation((hookName) => hookName === "before_reset");
+  hookRunnerMocks.runBeforeReset.mockResolvedValue(undefined);
 });
 afterEach(async () => {
   await sessionMcpTesting.resetSessionMcpRuntimeManager();
@@ -1758,6 +1776,69 @@ describe("initSessionState preserves behavior overrides across /new and /reset",
       entry.startsWith(`${existingSessionId}.jsonl.reset.`),
     );
     expect(archived).toHaveLength(1);
+  });
+
+  it("fires before_reset for stale/session rollover", async () => {
+    const storePath = await createStorePath("openclaw-stale-before-reset-");
+    const sessionKey = "agent:main:telegram:dm:reset-hook-stale-user";
+    const existingSessionId = "stale-session-to-hook";
+    const transcriptPath = path.join(path.dirname(storePath), `${existingSessionId}.jsonl`);
+
+    await writeSessionStoreFast(storePath, {
+      [sessionKey]: {
+        sessionId: existingSessionId,
+        updatedAt: Date.now() - 5 * 24 * 60 * 60 * 1000,
+      },
+    });
+    await fs.writeFile(
+      transcriptPath,
+      [
+        '{"type":"session","version":3}',
+        '{"type":"message","message":{"role":"user","content":"old"}}',
+        'malformed',
+        '{"type":"message","message":{"role":"assistant","content":"reply"}}',
+      ].join("\n"),
+      "utf8",
+    );
+
+    const cfg = { session: { store: storePath } } as OpenClawConfig;
+    const result = await initSessionState({
+      ctx: {
+        Body: "hello",
+        RawBody: "hello",
+        CommandBody: "hello",
+        From: "user-stale-hook",
+        To: "bot",
+        ChatType: "direct",
+        SessionKey: sessionKey,
+        Provider: "telegram",
+        Surface: "telegram",
+      },
+      cfg,
+      commandAuthorized: true,
+    });
+
+    expect(result.isNewSession).toBe(true);
+    expect(result.resetTriggered).toBe(false);
+
+    await vi.waitFor(() => {
+      expect(hookRunnerMocks.runBeforeReset).toHaveBeenCalledTimes(1);
+    });
+
+    const [event, hookCtx] = hookRunnerMocks.runBeforeReset.mock.calls[0] ?? [];
+    expect(event).toMatchObject({
+      reason: "reset",
+      sessionFile: transcriptPath,
+      messages: [
+        { role: "user", content: "old" },
+        { role: "assistant", content: "reply" },
+      ],
+    });
+    expect(hookCtx).toMatchObject({
+      agentId: "main",
+      sessionId: existingSessionId,
+      sessionKey,
+    });
   });
 
   it("archives the old session transcript on daily/scheduled reset (stale session)", async () => {
