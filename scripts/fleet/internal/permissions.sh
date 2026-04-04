@@ -56,6 +56,13 @@ normalize_runtime_shared_write_paths() {
   done
 }
 
+find_worktree_paths() {
+  local repo_root="$1" kind="$2"
+  find "$repo_root" -xdev \
+    \( -path "$repo_root/.git" -o -path '*/.git/*' -o -path "$repo_root/.tmp-pnpm" -o -path '*/.tmp-pnpm/*' -o -path "$repo_root/.test-instance" -o -path '*/.test-instance/*' \) -prune -o \
+    -type "$kind" -print0 2>/dev/null
+}
+
 normalize_repo_permissions() {
   local repo_root="$1"
   local mode="${2:-apply}" # apply|dry-run
@@ -73,17 +80,12 @@ normalize_repo_permissions() {
   local dir_count=0
   while IFS= read -r -d '' _; do
     ((dir_count++))
-  done < <(find "$repo_root" -xdev -type d \
-    ! -path "$repo_root/.git" \
-    ! -path '*/.git/*' \
-    -print0)
+  done < <(find_worktree_paths "$repo_root" d)
 
   local file_count=0
   while IFS= read -r -d '' _; do
     ((file_count++))
-  done < <(find "$repo_root" -xdev -type f \
-    ! -path '*/.git/*' \
-    -print0)
+  done < <(find_worktree_paths "$repo_root" f)
 
   local -a tracked_exec_targets=()
   while IFS= read -r rec; do
@@ -158,14 +160,9 @@ PY
     return 0
   fi
 
-  find "$repo_root" -xdev -type d \
-    ! -path "$repo_root/.git" \
-    ! -path '*/.git/*' \
-    -print0 | xargs -0 "$chmod_bin" 755
+  find_worktree_paths "$repo_root" d | xargs -0 "$chmod_bin" 755
 
-  find "$repo_root" -xdev -type f \
-    ! -path '*/.git/*' \
-    -print0 | xargs -0 "$chmod_bin" 644
+  find_worktree_paths "$repo_root" f | xargs -0 "$chmod_bin" 644
 
   if ((${#tracked_exec_targets[@]} > 0)); then
     "$chmod_bin" 755 "${tracked_exec_targets[@]}"
