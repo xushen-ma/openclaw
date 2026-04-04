@@ -2,14 +2,59 @@
 set -euo pipefail
 
 # Permission policy for governed release repos:
-# - Directories: 0755
+# - Directories: 0755 baseline
 # - Regular files: 0644 baseline
 # - Git-tracked executable files: restored to 0755 from index mode
 # - Runtime executable entrypoints (node_modules/.bin targets + package.json bin targets + dist shebang files): 0755
+# - Selected runtime scratch/build paths that later run as `openclaw` stay
+#   group-writable under the shared `staff` group (2775 dirs / 664 files)
 #
-# This keeps oc-release as the writer while ensuring normal users retain
-# read/execute access needed for runtime and tooling operations without
-# smearing executable bits across tracked source files.
+# This keeps oc-release as the primary writer while ensuring the normal
+# openclaw runtime can still write the narrow set of temp/build output paths
+# used by doctor/UI verification, without smearing writability across the
+# whole checkout or changing ownership.
+
+normalize_runtime_shared_write_paths() {
+  local repo_root="$1"
+  local mode="${2:-apply}" # apply|dry-run
+  local chmod_bin="$3"
+
+  local -a writable_dirs=(
+    "$repo_root/dist"
+    "$repo_root/dist/control-ui"
+    "$repo_root/ui/node_modules"
+    "$repo_root/ui/node_modules/.vite-temp"
+  )
+
+  local dir_count=0 file_count=0
+  local path
+  for path in "${writable_dirs[@]}"; do
+    [[ -e "$path" ]] || continue
+    if [[ -d "$path" ]]; then
+      ((dir_count++))
+      while IFS= read -r -d '' _; do
+        ((dir_count++))
+      done < <(find "$path" -xdev -mindepth 1 -type d -print0 2>/dev/null)
+      while IFS= read -r -d '' _; do
+        ((file_count++))
+      done < <(find "$path" -xdev -type f -print0 2>/dev/null)
+    fi
+  done
+
+  if [[ "$mode" == "dry-run" ]]; then
+    echo "[dry-run] normalize shared-write dirs to 2775: $dir_count"
+    echo "[dry-run] normalize shared-write files to 0664: $file_count"
+    return 0
+  fi
+
+  for path in "${writable_dirs[@]}"; do
+    [[ -e "$path" ]] || continue
+    if [[ -d "$path" ]]; then
+      find "$path" -xdev -type d -print0 | xargs -0 "$chmod_bin" 2775 2>/dev/null || true
+      find "$path" -xdev -type f -print0 | xargs -0 "$chmod_bin" 664 2>/dev/null || true
+    fi
+  done
+}
 
 normalize_repo_permissions() {
   local repo_root="$1"
@@ -129,6 +174,8 @@ PY
   if ((${#runtime_exec_targets[@]} > 0)); then
     "$chmod_bin" 755 "${runtime_exec_targets[@]}"
   fi
+
+  normalize_runtime_shared_write_paths "$repo_root" "$mode" "$chmod_bin"
 
   echo "normalized permissions in $repo_root"
 }
