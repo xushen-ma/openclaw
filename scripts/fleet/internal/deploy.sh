@@ -86,7 +86,7 @@ cd "$DEV_REPO"
 git fetch "$FORK_REMOTE" --tags --quiet 2>/dev/null || true
 git fetch origin --tags --quiet 2>/dev/null || true
 
-MAIN_SHA="${FLEET_TARGET_SHA:-}"
+CANDIDATE_SHA="${FLEET_TARGET_SHA:-}"
 MAIN_REF="${FLEET_MAIN_REF:-refs/remotes/$FORK_REMOTE/$MAIN_BRANCH}"
 LINEAGE_REF="${FLEET_LINEAGE_REF:-}"
 
@@ -120,27 +120,27 @@ resolve_lineage_ref() {
 
 LINEAGE_REF="$(resolve_lineage_ref "$LINEAGE_REF" "$MAIN_REF")"
 
-if [[ -n "$MAIN_SHA" && "$MAIN_SHA" != "unknown" ]]; then
-  echo "📌 Using pinned candidate SHA: $MAIN_SHA"
-  git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1 || {
+if [[ -n "$CANDIDATE_SHA" && "$CANDIDATE_SHA" != "unknown" ]]; then
+  echo "📌 Using pinned candidate SHA: $CANDIDATE_SHA"
+  git merge-base --is-ancestor "$CANDIDATE_SHA" "$LINEAGE_REF" >/dev/null 2>&1 || {
     MAIN_HEAD="$(git rev-parse "$MAIN_REF" 2>/dev/null || echo unknown)"
     PROD_HEAD="$(git rev-parse "$LINEAGE_REF" 2>/dev/null || echo unknown)"
     ON_MAIN=no
     ON_PROD=no
-    git merge-base --is-ancestor "$MAIN_SHA" "$MAIN_REF" >/dev/null 2>&1 && ON_MAIN=yes || true
-    git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1 && ON_PROD=yes || true
-    echo "❌ Cannot deploy pinned SHA $MAIN_SHA to production directly."
+    git merge-base --is-ancestor "$CANDIDATE_SHA" "$MAIN_REF" >/dev/null 2>&1 && ON_MAIN=yes || true
+    git merge-base --is-ancestor "$CANDIDATE_SHA" "$LINEAGE_REF" >/dev/null 2>&1 && ON_PROD=yes || true
+    echo "❌ Cannot deploy pinned SHA $CANDIDATE_SHA to production directly."
     echo ""
     echo "Reason:"
-    echo "- candidate is not an ancestor of production lineage: $LINEAGE_REF"
-    echo "- origin/main head: $MAIN_HEAD"
+    echo "- candidate is not an ancestor of resolved production lineage: $LINEAGE_REF"
+    echo "- main lane head: $MAIN_HEAD"
     echo "- production lineage head: $PROD_HEAD"
-    echo "- candidate on main lineage: $ON_MAIN"
+    echo "- candidate on main lane: $ON_MAIN"
     echo "- candidate on production lineage: $ON_PROD"
     echo ""
     echo "What this means:"
     echo "- releasectl deploy is the governed production tag+deploy step"
-    echo "- it only accepts candidates that are already on the production lineage"
+    echo "- it only accepts candidates that are already on the resolved production lineage"
     echo "- a merged main SHA is not automatically a production deploy candidate"
     echo ""
     echo "What to do next:"
@@ -154,7 +154,7 @@ if [[ -n "$MAIN_SHA" && "$MAIN_SHA" != "unknown" ]]; then
     exit 1
   }
 else
-  MAIN_SHA=$(git rev-parse "$MAIN_REF")
+  CANDIDATE_SHA=$(git rev-parse "$LINEAGE_REF")
 fi
 
 # Prefer the active fork release line when one already exists on this candidate.
@@ -162,7 +162,7 @@ fi
 # rather than falling back to an older plain upstream tag found deeper in history.
 FORK_BASE=""
 EXISTING_MAX=""
-LATEST_FORK_TAG="$(git tag --merged "$MAIN_SHA" \
+LATEST_FORK_TAG="$(git tag --merged "$CANDIDATE_SHA" \
   | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9]+)?-x\.[0-9]+$' \
   | sort -V \
   | tail -1 || true)"
@@ -182,7 +182,7 @@ if [[ -n "${RELEASE_BASE_VERSION:-}" ]]; then
   fi
   UPSTREAM_BASE="$RELEASE_BASE_VERSION"
 elif [[ -z "$FORK_BASE" ]]; then
-  UPSTREAM_BASE="$(git tag --merged "$MAIN_SHA" \
+  UPSTREAM_BASE="$(git tag --merged "$CANDIDATE_SHA" \
     | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(\.[0-9]+)?$' \
     | grep -v beta \
     | sort -V \
@@ -219,7 +219,7 @@ if [[ "$DRY_RUN" == true ]]; then
   echo ""
   echo "── Dry run — would deploy: $VERSION"
   echo "   Upstream base: $UPSTREAM_BASE"
-  echo "   Main SHA: $MAIN_SHA"
+  echo "   Candidate SHA: $CANDIDATE_SHA"
   exit 0
 fi
 
@@ -259,11 +259,11 @@ if git tag | grep -q "^${VERSION}$"; then
   exit 1
 fi
 
-export FLEET_TARGET_SHA="$MAIN_SHA"
+export FLEET_TARGET_SHA="$CANDIDATE_SHA"
 
-auto_validated_tag="$(git tag --points-at "$MAIN_SHA" | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9]+)?-x\.[0-9]+$' | sort -V | tail -1 || true)"
+auto_validated_tag="$(git tag --points-at "$CANDIDATE_SHA" | grep -E '^v[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9]+)?-x\.[0-9]+$' | sort -V | tail -1 || true)"
 already_on_production_lineage=false
-if git merge-base --is-ancestor "$MAIN_SHA" "$LINEAGE_REF" >/dev/null 2>&1; then
+if git merge-base --is-ancestor "$CANDIDATE_SHA" "$LINEAGE_REF" >/dev/null 2>&1; then
   already_on_production_lineage=true
 fi
 already_validated_and_promoted=false
@@ -271,13 +271,14 @@ if [[ -n "$auto_validated_tag" && "$already_on_production_lineage" == true ]]; t
   already_validated_and_promoted=true
 fi
 
-echo "📌 Candidate main SHA: $MAIN_SHA"
-echo "🧾 Last sanity SHA:     ${SANITY_SHA:-missing}"
+echo "📌 Candidate SHA:       $CANDIDATE_SHA"
+echo "📌 Resolved lineage ref: $LINEAGE_REF"
+echo "🧾 Last sanity SHA:      ${SANITY_SHA:-missing}"
 if [[ "$already_validated_and_promoted" == true ]]; then
   echo "✅ Candidate already validated/promoted (tag $auto_validated_tag on production lineage)"
 fi
 
-if [[ "${SANITY_SHA:-}" != "$MAIN_SHA" ]]; then
+if [[ "${SANITY_SHA:-}" != "$CANDIDATE_SHA" ]]; then
   if [[ "$already_validated_and_promoted" == true ]]; then
     echo "ℹ️  Skipping stale local sanity guard (candidate already validated/promoted)."
   elif [[ -z "${SANITY_SHA:-}" ]]; then
@@ -285,24 +286,24 @@ if [[ "${SANITY_SHA:-}" != "$MAIN_SHA" ]]; then
     echo "   Run sanity-check.sh successfully before deploy."
     exit 1
   else
-    echo "❌ Refusing deploy: sanity check was for a different main SHA"
+    echo "❌ Refusing deploy: sanity check was for a different candidate SHA"
     echo "   sanity: ${SANITY_SHA:-missing}"
-    echo "   current: $MAIN_SHA"
+    echo "   current: $CANDIDATE_SHA"
     echo "   Rerun sanity-check.sh before deploy."
     exit 1
   fi
 fi
 
-echo "📌 Tagging $VERSION at $MAIN_SHA"
+echo "📌 Tagging $VERSION at $CANDIDATE_SHA"
 
 # ── Tag ───────────────────────────────────────────────────────────────────────
-git tag "$VERSION" "$MAIN_SHA"
+git tag "$VERSION" "$CANDIDATE_SHA"
 git push "$FORK_REMOTE" "$VERSION"
 echo "✅ Tag pushed"
 
 # ── Reset production pointer ──────────────────────────────────────────────────
 echo "🔀 Resetting production → $VERSION"
-git push "$FORK_REMOTE" "$MAIN_SHA:production" --force
+git push "$FORK_REMOTE" "$CANDIDATE_SHA:production" --force
 echo "✅ production branch updated"
 
 # ── Pull to release workspace ─────────────────────────────────────────────────
@@ -360,7 +361,7 @@ LOG_FILE="$DEPLOY_LOG_DIR/$(date '+%Y-%m-%d')-deploy-${VERSION}.md"
 if cat > "$LOG_FILE" <<EOF
 # Deploy Log: $VERSION
 Date: $(date '+%Y-%m-%d %H:%M %Z')
-Commit: $MAIN_SHA
+Commit: $CANDIDATE_SHA
 Upstream base: $UPSTREAM_BASE
 
 ## Checks
