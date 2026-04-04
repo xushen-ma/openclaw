@@ -180,6 +180,13 @@ if [[ -n "${RELEASE_BASE_VERSION:-}" ]]; then
     echo "❌ RELEASE_BASE_VERSION must be stable vYYYY.M.D or vYYYY.M.D.PATCH (got: ${RELEASE_BASE_VERSION})"
     exit 1
   fi
+  # Explicit RELEASE_BASE_VERSION overrides any detected fork tag base.
+  # This allows a clean version reset when rebasing onto a new upstream.
+  if [[ -n "$FORK_BASE" && "$FORK_BASE" != "$RELEASE_BASE_VERSION" ]]; then
+    echo "⚠️  RELEASE_BASE_VERSION=$RELEASE_BASE_VERSION overrides detected fork base $FORK_BASE"
+    FORK_BASE=""
+    EXISTING_MAX=""
+  fi
   UPSTREAM_BASE="$RELEASE_BASE_VERSION"
 elif [[ -z "$FORK_BASE" ]]; then
   UPSTREAM_BASE="$(git tag --merged "$CANDIDATE_SHA" \
