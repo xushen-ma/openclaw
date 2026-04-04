@@ -159,7 +159,7 @@ if [[ -d "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/internal" ]]; then
     basename_file="$(basename "$src")"
     dest="$WORK_CONTROLLED/internal/$basename_file"
     
-    cp "$src" "$dest"
+    cp -r "$src" "$dest"
     
     if [[ "$basename_file" == *.sh ]]; then
       chmod 0755 "$dest"
