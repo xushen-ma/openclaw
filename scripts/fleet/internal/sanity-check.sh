@@ -245,7 +245,8 @@ fi
 
 # Default ancestry check tracks the main lane, but hotfix/governed re-release
 # workflows can override this to the current production lane ref.
-LINEAGE_REF="${FLEET_LINEAGE_REF:-refs/remotes/$FORK_REMOTE/$MAIN_BRANCH}"
+LINEAGE_REF="${FLEET_LINEAGE_REF:-refs/remotes/$FORK_REMOTE/$PROD_BRANCH}"
+[[ -z "$LINEAGE_REF" ]] || git rev-parse --verify "$LINEAGE_REF" >/dev/null 2>&1 || LINEAGE_REF="refs/remotes/$FORK_REMOTE/$MAIN_BRANCH"
 if git rev-parse --verify "$LINEAGE_REF" >/dev/null 2>&1; then
   if git merge-base --is-ancestor "$PATCH_REF" "$LINEAGE_REF"; then
     check_pass "Lineage: candidate is an ancestor of $LINEAGE_REF"
