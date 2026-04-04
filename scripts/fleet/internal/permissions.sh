@@ -160,9 +160,15 @@ PY
     return 0
   fi
 
-  find_worktree_paths "$repo_root" d | xargs -0 "$chmod_bin" 755
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" ]] || continue
+    "$chmod_bin" 755 "$path" 2>/dev/null || true
+  done < <(find_worktree_paths "$repo_root" d)
 
-  find_worktree_paths "$repo_root" f | xargs -0 "$chmod_bin" 644
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" ]] || continue
+    "$chmod_bin" 644 "$path" 2>/dev/null || true
+  done < <(find_worktree_paths "$repo_root" f)
 
   if ((${#tracked_exec_targets[@]} > 0)); then
     "$chmod_bin" 755 "${tracked_exec_targets[@]}"
