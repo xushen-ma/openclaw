@@ -39,8 +39,7 @@ commit "c1"
 C_SHA="$(git -C "$repo" rev-parse HEAD)"
 
 # Remote-tracking refs to emulate governed checkout layout.
-# Keep legacy origin/xushen/production pointing at an older commit to assert
-# deploy.sh no longer prefers it when resolving the default production lineage.
+# Prefer the resolved production lineage when an explicit production ref is available.
 git -C "$repo" update-ref refs/remotes/origin/main "$C_SHA"
 git -C "$repo" update-ref refs/remotes/origin/production "$B_SHA"
 git -C "$repo" update-ref refs/remotes/origin/xushen/production "$A_SHA"
@@ -57,6 +56,7 @@ out="$({
 } 2>&1)" || fail "deploy dry-run should accept candidate on origin/production lineage"
 
 [[ "$out" == *"Using pinned candidate SHA"* ]] || fail "expected pinned candidate output"
+[[ "$out" == *"Candidate SHA: $B_SHA"* ]] || fail "expected candidate sha output"
 [[ "$out" == *"Next version: v2026.3.11-x.2"* ]] || fail "expected normal version resolution on accepted lineage"
 
-pass "pinned candidate ancestry defaults to refs/remotes/origin/production (legacy xushen path ignored)"
+pass "deploy dry-run uses candidate SHA semantics on production lineage"
