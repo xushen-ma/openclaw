@@ -1,0 +1,31 @@
+{
+  "id": "quick-memory-search",
+  "kind": "tool",
+  "name": "Quick Memory & Session Search (OV)",
+  "description": "Fast semantic search for workspace knowledge and session history via OpenViking.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "perAgentOvBaseUrl": {
+        "type": "string",
+        "description": "Preferred per-agent OV HTTP base URL (e.g. sidecar/proxy that resolves agent-scoped stores)."
+      },
+      "agentRouting": {
+        "type": "string",
+        "enum": ["header", "query", "path"],
+        "default": "header",
+        "description": "How agent identity is sent to the per-agent OV HTTP endpoint."
+      },
+      "agentHeaderName": {
+        "type": "string",
+        "default": "x-openclaw-agent-id",
+        "description": "Header used when agentRouting=header."
+      },
+      "ovBaseUrl": {
+        "type": "string",
+        "description": "Legacy shared OV HTTP base URL (transitional fallback only)."
+      }
+    }
+  }
+}
