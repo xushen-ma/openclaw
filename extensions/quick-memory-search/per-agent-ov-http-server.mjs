@@ -40,33 +40,36 @@ async function searchStore({ storePath, query, limit }) {
   }
 
   const script = `
-import json, sys
-import openviking
+import json, sys, requests
 
 store, query, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
-client = None
+agent_scope = store.rstrip('/').split('/')[-1]
+base_url = 'http://127.0.0.1:8087'
+
 try:
-    client = openviking.SyncOpenViking(path=store)
-    client.initialize()
-    res = client.search(query=query, target_uri="viking://resources", limit=limit)
+    payload = {
+        "query": query,
+        "limit": limit,
+        "filter": {"path_contains": agent_scope},
+    }
+    resp = requests.post(f"{base_url}/api/v1/search/find", json=payload, timeout=10)
+    resp.raise_for_status()
+    data = resp.json()
+    result = data.get("result", {})
     items = []
     for key in ("resources", "memories", "skills", "instructions"):
-        values = getattr(res, key, None) or []
-        for item in values:
+        for item in result.get(key, []) or []:
+            uri = item.get("uri", "") if isinstance(item, dict) else getattr(item, "uri", "")
+            if agent_scope not in uri:
+                continue
             items.append({
-                "uri": getattr(item, "uri", ""),
-                "score": float(getattr(item, "score", 0.0)),
-                "abstract": getattr(item, "abstract", ""),
+                "uri": uri,
+                "score": float(item.get("score", 0.0) if isinstance(item, dict) else getattr(item, "score", 0.0)),
+                "abstract": item.get("abstract", "") if isinstance(item, dict) else getattr(item, "abstract", ""),
             })
-    print(json.dumps({"total": int(getattr(res, "total", len(items))), "items": items[:limit]}))
+    print(json.dumps({"total": int(result.get("total", len(items))), "items": items[:limit]}))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
-finally:
-    if client:
-        try:
-            client.close()
-        except Exception:
-            pass
 `;
 
   const { stdout } = await execFileAsync(
