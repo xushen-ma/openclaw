@@ -29,6 +29,9 @@ git -C "$dev_repo" config user.name "Test User"
 git -C "$dev_repo" config user.email "test@example.com"
 
 echo '#!/usr/bin/env bash' > "$pnpm_home/pnpm"
+echo 'if [[ "$1" == "install" ]]; then exit 0; fi' >> "$pnpm_home/pnpm"
+echo 'if [[ "$1" == "build" ]]; then mkdir -p "$PWD/dist"; printf "dist" > "$PWD/dist/entry.js"; exit 0; fi' >> "$pnpm_home/pnpm"
+echo 'if [[ "$1" == "ui:build" ]]; then mkdir -p "$PWD/dist/control-ui"; printf "<html/>" > "$PWD/dist/control-ui/index.html"; exit 0; fi' >> "$pnpm_home/pnpm"
 echo 'exit 0' >> "$pnpm_home/pnpm"
 chmod +x "$pnpm_home/pnpm"
 
@@ -37,6 +40,30 @@ echo 'if [[ "$1" == "gateway" && "$2" == "status" ]]; then echo "running"; exit 
 echo 'if [[ "$1" == "gateway" && "$2" == "restart" ]]; then echo "restarted"; exit 0; fi' >> "$fake_bin/openclaw"
 echo 'exit 0' >> "$fake_bin/openclaw"
 chmod +x "$fake_bin/openclaw"
+
+cat > "$fake_bin/pnpm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$1" == "install" ]]; then
+  exit 0
+fi
+
+if [[ "$1" == "build" ]]; then
+  mkdir -p "$PWD/dist"
+  printf 'dist' > "$PWD/dist/entry.js"
+  exit 0
+fi
+
+if [[ "$1" == "ui:build" ]]; then
+  mkdir -p "$PWD/dist/control-ui"
+  printf '<html/>' > "$PWD/dist/control-ui/index.html"
+  exit 0
+fi
+
+exit 0
+EOF
+chmod +x "$fake_bin/pnpm"
 
 commit() {
   local msg="$1"
