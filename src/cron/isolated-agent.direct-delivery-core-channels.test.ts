@@ -344,6 +344,33 @@ describe("runCronIsolatedAgentTurn core-channel direct delivery", () => {
       });
     });
   }
+
+  it("routes Discord user:<id> announce delivery as DM target (preserves user kind)", async () => {
+    await withTempCronHome(async (home) => {
+      const storePath = await writeSessionStore(home, { lastProvider: "webchat", lastTo: "" });
+      const deps = createCliDeps();
+      mockAgentPayloads([{ text: "hello from cron" }]);
+
+      const res = await runExplicitAnnounceTurn({
+        home,
+        storePath,
+        deps,
+        channel: "discord",
+        to: "user:789",
+      });
+
+      expect(res.status).toBe("ok");
+      expect(res.delivered).toBe(true);
+      expect(res.deliveryAttempted).toBe(true);
+      expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
+      expect(deps.sendMessageDiscord).toHaveBeenCalledTimes(1);
+      expect(deps.sendMessageDiscord).toHaveBeenCalledWith(
+        "user:789",
+        "hello from cron",
+        expect.any(Object),
+      );
+    });
+  });
 });
 
 describe("runCronIsolatedAgentTurn telegram forum-topic direct delivery", () => {
