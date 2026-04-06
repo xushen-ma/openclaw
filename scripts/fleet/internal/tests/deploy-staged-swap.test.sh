@@ -115,7 +115,14 @@ create_repo_with_commits() {
   git -C "$repo" config user.email "test@example.com"
 
   echo "base" > "$repo/file.txt"
+  mkdir -p "$repo/bin"
+  cat > "$repo/bin/run.sh" <<'EOF'
+#!/usr/bin/env bash
+echo run
+EOF
+  chmod +x "$repo/bin/run.sh"
   git -C "$repo" add file.txt
+  git -C "$repo" add bin/run.sh
   git -C "$repo" commit -q -m "base"
   echo "$1_base" >> "$repo/file.txt"
   git -C "$repo" add file.txt
@@ -228,6 +235,7 @@ success_out="$({
 [[ ! -d "$release_repo/.git" ]] || fail "expected deployed release tree to contain no .git"
 [[ -f "$release_repo/dist/entry.js" ]] || fail "expected dist/entry.js in deployed release"
 [[ -f "$release_repo/dist/control-ui/index.html" ]] || fail "expected dist/control-ui/index.html in deployed release"
+[[ -x "$release_repo/bin/run.sh" ]] || fail "expected executable artifact to remain executable after normalization and promotion"
 
 backup_path="$(printf '%s\n' "$success_out" | grep -F 'Backup path:' | tail -n1 | sed 's/.*Backup path: //')"
 [[ -n "$backup_path" ]] || fail "expected backup path output"

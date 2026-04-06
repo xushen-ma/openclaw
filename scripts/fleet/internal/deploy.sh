@@ -113,9 +113,9 @@ normalize_candidate_permissions() {
   fi
 
   # shellcheck disable=SC2016
-  "$find_cmd" "$root" -xdev -type d -print0 | xargs -0 chmod 755
+  "$find_cmd" "$root" -xdev -type d -print0 | xargs -0 chmod u+rwx,go+rx
   # shellcheck disable=SC2016
-  "$find_cmd" "$root" -xdev -type f -print0 | xargs -0 chmod 644
+  "$find_cmd" "$root" -xdev -type f -print0 | xargs -0 chmod u+rw,go+r
 }
 
 prepare_release_candidate() {
