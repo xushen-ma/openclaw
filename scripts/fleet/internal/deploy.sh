@@ -22,15 +22,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/fleet.env"
 source "$SCRIPT_DIR/lock.sh"
+source "$SCRIPT_DIR/permissions.sh"
 
-# If sudo preserved caller HOME, re-anchor to the actual runtime user's home.
-RUNTIME_HOME="$(python3 - <<'PY'
+# If running under sudo with a preserved caller HOME, re-anchor to the runtime
+# user's home so permissions and cache locations are correct.
+if [[ -n "${SUDO_UID:-}" || -n "${SUDO_USER:-}" || -n "${SUDO_COMMAND:-}" ]]; then
+  RUNTIME_HOME="$(python3 - <<'PY'
 import os, pwd
 print(pwd.getpwuid(os.getuid()).pw_dir)
 PY
 )"
-if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
-  export HOME="$RUNTIME_HOME"
+  if [[ -n "$RUNTIME_HOME" && "${HOME:-}" != "$RUNTIME_HOME" ]]; then
+    export HOME="$RUNTIME_HOME"
+  fi
 fi
 
 setup_release_runtime_env() {
@@ -68,6 +72,105 @@ assert_control_ui_assets() {
   for item in "$root/dist/control-ui" "$root/dist/control-ui/index.html"; do
     [[ -e "$item" ]] || { echo "❌ Missing required Control UI asset/path: $item"; exit 1; }
   done
+}
+
+candidate_release_assertions() {
+  local root="$1"
+
+  [[ -e "$root/dist/entry.js" ]] || {
+    echo "❌ Missing required entry artifact: $root/dist/entry.js"
+    return 1
+  }
+  assert_control_ui_assets "$root"
+}
+
+mktemp_candidate_dir() {
+  local target_parent="$1"
+  local prefix="$2"
+  local fallback_tmpdir="${TMPDIR:-/tmp}"
+
+  local mktemp_path="${target_parent}/${prefix}.XXXXXX"
+  local created_dir=""
+
+  if ! created_dir="$(mktemp -d "$mktemp_path" 2>/dev/null)"; then
+    created_dir="$(mktemp -d "${fallback_tmpdir}/${prefix}.XXXXXX")"
+  fi
+
+  printf '%s\n' "$created_dir"
+}
+
+normalize_candidate_permissions() {
+  local root="$1"
+
+  if [[ -z "$root" || ! -d "$root" ]]; then
+    echo "❌ Candidate directory missing for permission normalization: $root" >&2
+    return 1
+  fi
+
+  local find_cmd="find"
+  if command -v gfind >/dev/null 2>&1; then
+    find_cmd="gfind"
+  fi
+
+  # shellcheck disable=SC2016
+  "$find_cmd" "$root" -xdev -type d -print0 | xargs -0 chmod 755
+  # shellcheck disable=SC2016
+  "$find_cmd" "$root" -xdev -type f -print0 | xargs -0 chmod 644
+}
+
+prepare_release_candidate() {
+  local source_ref="$1"
+  local candidate_dir="$2"
+  local source_worktree="$3"
+
+  cd "$DEV_REPO"
+  git worktree add --detach "$source_worktree" "$source_ref" >/dev/null
+
+  mkdir -p "$candidate_dir"
+  (cd "$source_worktree" && git archive "$source_ref" | tar -x -C "$candidate_dir")
+
+  setup_release_runtime_env
+  assert_path_traversable "$candidate_dir"
+  echo "🔨 Building candidate in: $candidate_dir"
+  echo "   candidate ref: $source_ref"
+  (
+    cd "$candidate_dir"
+    pnpm install --frozen-lockfile 2>&1 | tail -5
+    pnpm build 2>&1 | tail -5
+    echo "🖥️  Building Control UI"
+    pnpm ui:build 2>&1 | tail -5
+
+    if [[ -d extensions/matrix ]]; then
+      echo "📦 Installing matrix extension deps..."
+      (cd extensions/matrix && pnpm install --frozen-lockfile 2>&1 | tail -3)
+    fi
+  )
+
+  candidate_release_assertions "$candidate_dir"
+  normalize_candidate_permissions "$candidate_dir"
+  echo "✅ Candidate build and validation complete"
+}
+
+promote_release_candidate() {
+  local candidate_dir="$1"
+  local backup_dir="$2"
+
+  mkdir -p "$(dirname "$backup_dir")"
+  if [[ -d "$RELEASE_DIR" ]]; then
+    mv "$RELEASE_DIR" "$backup_dir"
+  fi
+  mv "$candidate_dir" "$RELEASE_DIR"
+}
+
+rollback_release_candidate() {
+  local candidate_dir="$1"
+  local backup_dir="$2"
+
+  if [[ -d "$RELEASE_DIR" ]]; then
+    rm -rf "$RELEASE_DIR"
+  fi
+  mv "$backup_dir" "$RELEASE_DIR"
+  rm -rf "$candidate_dir"
 }
 
 DRY_RUN=false
@@ -234,7 +337,22 @@ export FLEET_SESSION="${FLEET_SESSION:-agent:main:discord:direct:965214128090255
 export FLEET_PURPOSE="deploy"
 OWNER_NAME="${FLEET_OWNER:-${FLEET_AGENT}/${FLEET_PURPOSE}}"
 lock_acquire "$RELEASE_LOCK_FILE" "$OWNER_NAME"
-trap 'lock_release "$RELEASE_LOCK_FILE"' EXIT
+
+WORKTREE_DIR=""
+CANDIDATE_DIR=""
+BACKUP_DIR=""
+SWAP_COMPLETED="false"
+
+cleanup_release_staging() {
+  if [[ -n "${WORKTREE_DIR:-}" && -d "$WORKTREE_DIR" ]]; then
+    git -C "$DEV_REPO" worktree remove --force "$WORKTREE_DIR" >/dev/null 2>&1 || true
+  fi
+  if [[ "$SWAP_COMPLETED" != "true" && -n "${CANDIDATE_DIR:-}" && -d "$CANDIDATE_DIR" ]]; then
+    rm -rf "$CANDIDATE_DIR"
+  fi
+  lock_release "$RELEASE_LOCK_FILE"
+}
+trap cleanup_release_staging EXIT
 
 if [[ ! -f "$SANITY_STATE_FILE" ]]; then
   SANITY_SHA=""
@@ -305,30 +423,18 @@ echo "🔀 Resetting production → $VERSION"
 git push "$FORK_REMOTE" "$MAIN_SHA:production" --force
 echo "✅ production branch updated"
 
-# ── Pull to release workspace ─────────────────────────────────────────────────
-echo "📥 Pulling release workspace..."
-cd "$RELEASE_DIR"
-git fetch origin --tags --quiet
-git checkout production
-git pull origin production
-echo "✅ Release workspace at: $(git log --oneline -1)"
+# ── Candidate prep (staged-swap) ───────────────────────────────────────────────
+release_parent="$(dirname "$RELEASE_DIR")"
+CANDIDATE_DIR="$(mktemp_candidate_dir "$release_parent" "releasectl-candidate")"
+WORKTREE_DIR="$(mktemp_candidate_dir "$release_parent" "releasectl-worktree")"
+BACKUP_DIR="${release_parent}/$(basename "$RELEASE_DIR").backup.$(date '+%Y%m%d-%H%M%S')-$$"
 
-# ── Build ─────────────────────────────────────────────────────────────────────
-setup_release_runtime_env
-assert_path_traversable "$RELEASE_DIR"
-echo "🔨 Building as $(id -un) with HOME=$HOME TMPDIR=$TMPDIR"
-pnpm install --frozen-lockfile 2>&1 | tail -5
-pnpm build 2>&1 | tail -5
-echo "🖥️  Building Control UI"
-pnpm ui:build 2>&1 | tail -5
-assert_control_ui_assets "$RELEASE_DIR"
+echo "🧱 Candidate path: $CANDIDATE_DIR"
+echo "🧰 Backup path: $BACKUP_DIR"
+echo "🚀 Promoted commit/ref: $MAIN_SHA / $VERSION"
 
-# Matrix extension deps
-if [[ -d extensions/matrix ]]; then
-  echo "📦 Installing matrix extension deps..."
-  (cd extensions/matrix && pnpm install --frozen-lockfile 2>&1 | tail -3)
-fi
-echo "✅ Build complete (Control UI assets verified)"
+prepare_release_candidate "$MAIN_SHA" "$CANDIDATE_DIR" "$WORKTREE_DIR"
+echo "✅ Candidate prepared successfully: $CANDIDATE_DIR"
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 OPENCLAW_BIN="${OPENCLAW_BIN:-$(command -v openclaw || true)}"
@@ -338,7 +444,19 @@ fi
 [[ -n "$OPENCLAW_BIN" ]] || { echo "❌ openclaw CLI not found in PATH"; exit 1; }
 
 echo "🚀 Restarting gateway..."
-"$OPENCLAW_BIN" gateway restart
+promote_release_candidate "$CANDIDATE_DIR" "$BACKUP_DIR"
+SWAP_COMPLETED="true"
+echo "✅ Promotion complete: $BACKUP_DIR -> $RELEASE_DIR"
+
+if ! "$OPENCLAW_BIN" gateway restart; then
+  echo "⚠️  Gateway restart failed, rolling back to backup..."
+  rollback_release_candidate "$CANDIDATE_DIR" "$BACKUP_DIR"
+  SWAP_COMPLETED="false"
+  if ! "$OPENCLAW_BIN" gateway restart; then
+    echo "❌ Gateway restart failed after rollback"
+    exit 1
+  fi
+fi
 sleep 8
 
 STATUS=$("$OPENCLAW_BIN" gateway status 2>&1 || echo "unknown")
@@ -368,6 +486,9 @@ Upstream base: $UPSTREAM_BASE
 
 ## Deploy
 - Tagged: $VERSION
+- Candidate path: $CANDIDATE_DIR
+- Backup path: $BACKUP_DIR
+- Promoted commit/ref: $MAIN_SHA / $VERSION
 - Deployed: $(date '+%H:%M %Z')
 - Post-deploy gateway status: $STATUS
 
