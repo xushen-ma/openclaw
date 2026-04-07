@@ -38,6 +38,27 @@ afterEach(() => {
 });
 
 describe("buildStatusMessage", () => {
+  it("prefers OPENCLAW_VERSION for the status version line", () => {
+    vi.stubEnv("OPENCLAW_VERSION", "v2026.3.13-1-x.8");
+    try {
+      const text = buildStatusMessage({
+        agent: {
+          model: "anthropic/pi:opus",
+        },
+        sessionEntry: {
+          sessionId: "abc",
+          updatedAt: 0,
+        },
+        sessionKey: "agent:main:main",
+        queue: { mode: "collect", depth: 0 },
+      });
+
+      expect(normalizeTestText(text)).toContain("OpenClaw v2026.3.13-1-x.8");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("summarizes agent readiness and context usage", () => {
     const text = buildStatusMessage({
       config: {
