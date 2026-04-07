@@ -66,8 +66,8 @@ export function readVersionFromBuildInfoForModuleUrl(moduleUrl: string): string 
 
 export function resolveVersionFromModuleUrl(moduleUrl: string): string | null {
   return (
-    readVersionFromPackageJsonForModuleUrl(moduleUrl) ||
-    readVersionFromBuildInfoForModuleUrl(moduleUrl)
+    readVersionFromBuildInfoForModuleUrl(moduleUrl) ||
+    readVersionFromPackageJsonForModuleUrl(moduleUrl)
   );
 }
 
