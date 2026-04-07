@@ -58,7 +58,7 @@ const resolveVersionFromTagContext = () => {
   }
 
   try {
-    const raw = execSync("git tag --points-at HEAD", {
+    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
       cwd: rootDir,
       stdio: ["ignore", "pipe", "ignore"],
     })
@@ -67,12 +67,11 @@ const resolveVersionFromTagContext = () => {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    const latest = (matcher: RegExp) =>
-      raw
-        .filter((tag) => matcher.test(tag))
-        .toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true }))
-        .at(-1) ?? null;
-    return latest(FORK_TAG_PATTERN) ?? latest(STABLE_TAG_PATTERN);
+    return (
+      raw.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
+      raw.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
+      null
+    );
   } catch {
     return null;
   }
