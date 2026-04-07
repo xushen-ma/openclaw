@@ -162,7 +162,7 @@ const readCommitFromPackageJson = () => {
 const readCommitFromBuildInfo = () => {
   try {
     const require = createRequire(import.meta.url);
-    const candidates = ["../build-info.json", "./build-info.json"];
+    const candidates = ["../build-info.json", "../../build-info.json", "./build-info.json"];
     for (const candidate of candidates) {
       try {
         const info = require(candidate) as {
