@@ -34,11 +34,56 @@ const resolveCommit = () => {
   }
 };
 
-const version = readPackageVersion();
+const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
+const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
+
+const normalizeCandidate = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
+
+const resolveVersionFromTagContext = () => {
+  const envCandidates = [
+    process.env.OPENCLAW_BUILD_VERSION,
+    process.env.OPENCLAW_VERSION,
+    process.env.GIT_TAG,
+    process.env.CI_COMMIT_TAG,
+    process.env.GITHUB_REF_NAME,
+  ];
+  for (const candidate of envCandidates) {
+    const normalized = normalizeCandidate(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  try {
+    const raw = execSync("git tag --points-at HEAD", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const latest = (matcher: RegExp) =>
+      raw
+        .filter((tag) => matcher.test(tag))
+        .toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+        .at(-1) ?? null;
+    return latest(FORK_TAG_PATTERN) ?? latest(STABLE_TAG_PATTERN);
+  } catch {
+    return null;
+  }
+};
+
+const version = resolveVersionFromTagContext() ?? readPackageVersion();
 const commit = resolveCommit();
 
 const buildInfo = {
   version,
+  packageVersion: readPackageVersion(),
   commit,
   builtAt: new Date().toISOString(),
 };
