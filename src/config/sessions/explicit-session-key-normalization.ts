@@ -5,6 +5,7 @@ type ExplicitSessionKeyNormalizer = (sessionKey: string, ctx: MsgContext) => str
 type ExplicitSessionKeyNormalizerEntry = {
   provider: string;
   normalize: ExplicitSessionKeyNormalizer;
+  preserveCase?: boolean;
   matches: (params: {
     sessionKey: string;
     provider?: string;
@@ -17,6 +18,7 @@ const EXPLICIT_SESSION_KEY_NORMALIZERS: ExplicitSessionKeyNormalizerEntry[] = [
   {
     provider: "discord",
     normalize: normalizeExplicitDiscordSessionKey,
+    preserveCase: false,
     matches: ({ sessionKey, provider, surface, from }) =>
       surface === "discord" ||
       provider === "discord" ||
@@ -24,12 +26,23 @@ const EXPLICIT_SESSION_KEY_NORMALIZERS: ExplicitSessionKeyNormalizerEntry[] = [
       sessionKey.startsWith("discord:") ||
       sessionKey.includes(":discord:"),
   },
+  {
+    provider: "matrix",
+    normalize: (sessionKey) => sessionKey.trim(),
+    preserveCase: true,
+    matches: ({ sessionKey, provider, surface, from }) =>
+      surface === "matrix" ||
+      provider === "matrix" ||
+      from.startsWith("matrix:") ||
+      sessionKey.startsWith("matrix:") ||
+      sessionKey.includes(":matrix:"),
+  },
 ];
 
 function resolveExplicitSessionKeyNormalizer(
   sessionKey: string,
   ctx: Pick<MsgContext, "From" | "Provider" | "Surface">,
-): ExplicitSessionKeyNormalizer | undefined {
+): ExplicitSessionKeyNormalizerEntry | undefined {
   const normalizedProvider = ctx.Provider?.trim().toLowerCase();
   const normalizedSurface = ctx.Surface?.trim().toLowerCase();
   const normalizedFrom = (ctx.From ?? "").trim().toLowerCase();
@@ -40,11 +53,16 @@ function resolveExplicitSessionKeyNormalizer(
       surface: normalizedSurface,
       from: normalizedFrom,
     }),
-  )?.normalize;
+  );
 }
 
 export function normalizeExplicitSessionKey(sessionKey: string, ctx: MsgContext): string {
-  const normalized = sessionKey.trim().toLowerCase();
-  const normalize = resolveExplicitSessionKeyNormalizer(normalized, ctx);
-  return normalize ? normalize(normalized, ctx) : normalized;
+  const rawSessionKey = sessionKey.trim();
+  const normalizedSessionKey = rawSessionKey.toLowerCase();
+  const normalizerEntry = resolveExplicitSessionKeyNormalizer(normalizedSessionKey, ctx);
+  if (!normalizerEntry) {
+    return normalizedSessionKey;
+  }
+  const input = normalizerEntry.preserveCase ? rawSessionKey : normalizedSessionKey;
+  return normalizerEntry.normalize(input, ctx);
 }
