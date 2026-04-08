@@ -14,12 +14,14 @@ describe("filterSupportedLanguageHints", () => {
   });
 
   it("drops invalid languages and falls back to text", async () => {
-    await expect(filterSupportedLanguageHints(["not-a-real-language"])).resolves.toEqual(["text"]);
+    await expect(filterSupportedLanguageHints(["not-a-real-language" as never])).resolves.toEqual([
+      "text",
+    ]);
   });
 
   it("keeps valid languages when invalid hints are mixed in", async () => {
     await expect(
-      filterSupportedLanguageHints(["typescript", "not-a-real-language"]),
+      filterSupportedLanguageHints(["typescript", "not-a-real-language" as never]),
     ).resolves.toEqual(["typescript"]);
   });
 });

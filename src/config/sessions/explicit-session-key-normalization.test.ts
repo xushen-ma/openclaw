@@ -45,6 +45,20 @@ describe("normalizeExplicitSessionKey", () => {
     ).toBe("agent:fina:discord:direct:123456");
   });
 
+  it("preserves mixed-case Matrix room/thread keys for explicit session keys", () => {
+    expect(
+      normalizeExplicitSessionKey(
+        "agent:ops:matrix:channel:!Room:Example.org:thread:$AbC123:example.org",
+        makeCtx({
+          Surface: "matrix",
+          ChatType: "channel",
+          From: "matrix:!Room:Example.org",
+          SenderId: "@alice:example.org",
+        }),
+      ),
+    ).toBe("agent:ops:matrix:channel:!Room:Example.org:thread:$AbC123:example.org");
+  });
+
   it("lowercases and passes through unknown providers unchanged", () => {
     expect(
       normalizeExplicitSessionKey(
