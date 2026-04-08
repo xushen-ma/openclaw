@@ -229,9 +229,8 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
 
         if (!hasSeededDmCache) {
           log(
-            `matrix: dm detected via exact 2-member fallback before dm cache seed room=${roomId}`,
+            `matrix: dm unresolved before dm cache seed room=${roomId}; refusing plain 2-member fallback`,
           );
-          return true;
         }
 
         if (hasLocallyPromotedDirectRoom(roomId, senderId)) {
