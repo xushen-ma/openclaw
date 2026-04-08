@@ -65,5 +65,18 @@ describe("resolveSessionKey", () => {
       });
       expect(resolveSessionKey("per-sender", ctx)).toBe("discord:direct:123456");
     });
+
+    it("preserves explicit Matrix room/thread-scoped keys without canonicalizing case", () => {
+      const ctx = makeCtx({
+        SessionKey: "agent:ops:matrix:channel:!Room:Example.org:thread:$AbC123:example.org",
+        Surface: "matrix",
+        From: "matrix:!Room:Example.org",
+        ChatType: "channel",
+      });
+
+      expect(resolveSessionKey("per-sender", ctx)).toBe(
+        "agent:ops:matrix:channel:!Room:Example.org:thread:$AbC123:example.org",
+      );
+    });
   });
 });
