@@ -49,7 +49,15 @@ type MatrixHandlerTestHarnessOptions = {
   shouldHandleTextCommands?: () => boolean;
   hasControlCommand?: () => boolean;
   resolveMarkdownTableMode?: () => string;
-  resolveAgentRoute?: () => typeof DEFAULT_ROUTE;
+  resolveAgentRoute?: () => {
+    agentId: string;
+    channel: string;
+    accountId: string;
+    sessionKey: string;
+    mainSessionKey: string;
+    matchedBy: string;
+    lastRoutePolicy?: "main" | "session";
+  };
   resolveStorePath?: () => string;
   readSessionUpdatedAt?: () => number | undefined;
   recordInboundSession?: (...args: unknown[]) => Promise<void>;
@@ -94,7 +102,7 @@ type MatrixHandlerTestHarness = {
   handler: ReturnType<typeof createMatrixRoomMessageHandler>;
   readAllowFromStore: MatrixMonitorHandlerParams["core"]["channel"]["pairing"]["readAllowFromStore"];
   recordInboundSession: (...args: unknown[]) => Promise<void>;
-  resolveAgentRoute: () => typeof DEFAULT_ROUTE;
+  resolveAgentRoute: NonNullable<MatrixHandlerTestHarnessOptions["resolveAgentRoute"]>;
   upsertPairingRequest: MatrixMonitorHandlerParams["core"]["channel"]["pairing"]["upsertPairingRequest"];
 };
 
