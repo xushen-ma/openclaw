@@ -73,11 +73,42 @@ export function registerMatrixMonitorEvents(params: {
     readStoreAllowFrom,
     logVerboseMessage,
   });
+  const handledMessageEventIds = new Set<string>();
 
-  client.on("room.message", (roomId: string, event: MatrixRawEvent) => {
+  const shouldHandleRoomMessageEvent = (roomId: string, event: MatrixRawEvent): boolean => {
+    if (event?.type !== EventType.RoomMessage) {
+      return false;
+    }
+    const eventId = typeof event.event_id === "string" ? event.event_id.trim() : "";
+    if (!eventId) {
+      return true;
+    }
+    const dedupeKey = `${roomId}:${eventId}`;
+    if (handledMessageEventIds.has(dedupeKey)) {
+      return false;
+    }
+    handledMessageEventIds.add(dedupeKey);
+    if (handledMessageEventIds.size > 2048) {
+      const oldestEventId = handledMessageEventIds.values().next().value;
+      if (typeof oldestEventId === "string") {
+        handledMessageEventIds.delete(oldestEventId);
+      }
+    }
+    return true;
+  };
+
+  const handleRoomMessageFromSource = (
+    source: "room.message" | "room.decrypted_event",
+    roomId: string,
+    event: MatrixRawEvent,
+  ) => {
+    if (!shouldHandleRoomMessageEvent(roomId, event)) {
+      return;
+    }
     logger.info("matrix room.message event", {
       roomId,
       accountId: auth.accountId,
+      source,
       eventId: event?.event_id,
       eventType: event?.type,
       senderId: event?.sender,
@@ -86,6 +117,7 @@ export function registerMatrixMonitorEvents(params: {
       logger.info("matrix room.message routed as verification", {
         roomId,
         accountId: auth.accountId,
+        source,
         eventId: event?.event_id,
         senderId: event?.sender,
       });
@@ -94,10 +126,15 @@ export function registerMatrixMonitorEvents(params: {
     logger.info("matrix room.message forwarding to handler", {
       roomId,
       accountId: auth.accountId,
+      source,
       eventId: event?.event_id,
       senderId: event?.sender,
     });
     void onRoomMessage(roomId, event);
+  };
+
+  client.on("room.message", (roomId: string, event: MatrixRawEvent) => {
+    handleRoomMessageFromSource("room.message", roomId, event);
   });
 
   client.on("room.encrypted_event", (roomId: string, event: MatrixRawEvent) => {
@@ -110,6 +147,7 @@ export function registerMatrixMonitorEvents(params: {
     const eventId = event?.event_id ?? "unknown";
     const eventType = event?.type ?? "unknown";
     logVerboseMessage(`matrix: decrypted event room=${roomId} type=${eventType} id=${eventId}`);
+    handleRoomMessageFromSource("room.decrypted_event", roomId, event);
   });
 
   client.on(
