@@ -1,6 +1,7 @@
 import { resolveControlCommandGate } from "openclaw/plugin-sdk/command-auth";
 import { getSessionBindingService } from "openclaw/plugin-sdk/conversation-runtime";
 import type { CoreConfig, MatrixRoomConfig, ReplyToMode } from "../../types.js";
+import { isStrictDirectMembership } from "../direct-room.js";
 import { createMatrixDraftStream } from "../draft-stream.js";
 import {
   formatMatrixMediaUnavailableText,
@@ -663,12 +664,38 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         const selfDisplayName = content.formatted_body
           ? await getMemberDisplayName(roomId, selfUserId).catch(() => undefined)
           : undefined;
+        const shouldRequireMention = isRoom
+          ? roomConfig?.autoReply === true
+            ? false
+            : roomConfig?.autoReply === false
+              ? true
+              : typeof roomConfig?.requireMention === "boolean"
+                ? roomConfig?.requireMention
+                : true
+          : false;
+        const shouldBypassMentionInDirectLikeRoom = isRoom && shouldRequireMention;
+        let isDirectLikeRoom = false;
+        if (shouldBypassMentionInDirectLikeRoom) {
+          const resolveJoinedMembers = async () => {
+            if (!client.getJoinedRoomMembers) {
+              return null;
+            }
+            return client.getJoinedRoomMembers(roomId).catch(() => null);
+          };
+          const joinedMembers = await resolveJoinedMembers();
+          isDirectLikeRoom = isStrictDirectMembership({
+            selfUserId,
+            remoteUserId: senderId,
+            joinedMembers: joinedMembers ?? undefined,
+          });
+        }
         const { wasMentioned, hasExplicitMention } = resolveMentions({
           content,
           userId: selfUserId,
           displayName: selfDisplayName,
           text: mentionPrecheckText,
           mentionRegexes: agentMentionRegexes,
+          trustMetadataOnlyUserMentions: isDirectLikeRoom,
         });
         if (
           isConfiguredBotSender &&
@@ -708,15 +735,6 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           await commitInboundEventIfClaimed();
           return;
         }
-        const shouldRequireMention = isRoom
-          ? roomConfig?.autoReply === true
-            ? false
-            : roomConfig?.autoReply === false
-              ? true
-              : typeof roomConfig?.requireMention === "boolean"
-                ? roomConfig?.requireMention
-                : true
-          : false;
         const shouldBypassMention =
           allowTextCommands &&
           isRoom &&
@@ -725,8 +743,14 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           !hasExplicitMention &&
           commandAuthorized &&
           hasControlCommandInMessage;
+        const shouldBypassDirectRoomMention = isRoom && shouldRequireMention && isDirectLikeRoom;
         const canDetectMention = agentMentionRegexes.length > 0 || hasExplicitMention;
-        if (isRoom && shouldRequireMention && !wasMentioned && !shouldBypassMention) {
+        if (
+          isRoom &&
+          shouldRequireMention &&
+          !wasMentioned &&
+          !(shouldBypassMention || shouldBypassDirectRoomMention)
+        ) {
           const pendingHistoryBody = pendingHistoryText || pendingHistoryPollText;
           if (historyLimit > 0 && pendingHistoryBody) {
             const pendingEntry: HistoryEntry = {
