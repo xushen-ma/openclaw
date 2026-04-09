@@ -173,6 +173,9 @@ function createHarness(params?: {
     formatNativeDependencyHint,
     logVerboseMessage,
     roomMessageListener: listeners.get("room.message") as RoomEventListener | undefined,
+    roomDecryptedEventListener: listeners.get("room.decrypted_event") as
+      | RoomEventListener
+      | undefined,
     failedDecryptListener: listeners.get("room.failed_decryption") as
       | FailedDecryptListener
       | undefined,
@@ -254,6 +257,62 @@ describe("registerMatrixMonitorEvents verification routing", () => {
       );
     });
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("forwards decrypted room messages into the shared handler when room.message is absent", async () => {
+    const { onRoomMessage, roomDecryptedEventListener } = createHarness();
+    if (!roomDecryptedEventListener) {
+      throw new Error("room.decrypted_event listener was not registered");
+    }
+
+    roomDecryptedEventListener("!room:example.org", {
+      event_id: "$decrypted1",
+      sender: "@alice:example.org",
+      type: EventType.RoomMessage,
+      origin_server_ts: Date.now(),
+      content: {
+        msgtype: "m.text",
+        body: "hello from fresh encrypted dm",
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(onRoomMessage).toHaveBeenCalledWith(
+        "!room:example.org",
+        expect.objectContaining({
+          event_id: "$decrypted1",
+          type: EventType.RoomMessage,
+        }),
+      );
+    });
+  });
+
+  it("deduplicates room.message and room.decrypted_event for the same event id", async () => {
+    const { onRoomMessage, roomMessageListener, roomDecryptedEventListener } = createHarness();
+    if (!roomMessageListener) {
+      throw new Error("room.message listener was not registered");
+    }
+    if (!roomDecryptedEventListener) {
+      throw new Error("room.decrypted_event listener was not registered");
+    }
+
+    const event = {
+      event_id: "$same1",
+      sender: "@alice:example.org",
+      type: EventType.RoomMessage,
+      origin_server_ts: Date.now(),
+      content: {
+        msgtype: "m.text",
+        body: "same event from two sdk callbacks",
+      },
+    };
+
+    roomDecryptedEventListener("!room:example.org", event);
+    roomMessageListener("!room:example.org", event);
+
+    await vi.waitFor(() => {
+      expect(onRoomMessage).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("invalidates direct-room membership cache on room member events", async () => {
