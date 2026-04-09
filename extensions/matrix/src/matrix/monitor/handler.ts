@@ -945,6 +945,22 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         effectiveRoomUsers,
       } = resolvedIngressResult;
 
+      logger.info("matrix inbound resolved", {
+        roomId,
+        senderId,
+        accountId: _route.accountId,
+        agentId: _route.agentId,
+        sessionKey: _route.sessionKey,
+        mainSessionKey: _route.mainSessionKey,
+        isDirectMessage,
+        shouldRequireMention,
+        wasMentioned,
+        shouldBypassMention,
+        commandAuthorized,
+        threadId: thread.threadId,
+        messageId: _messageId || undefined,
+      });
+
       // Keep the per-room ingress gate focused on ordering-sensitive state updates.
       // Prompt/session enrichment below can run concurrently after the history snapshot is fixed.
       const replyToEventId = resolveMatrixReplyToEventId(event.content as RoomMessageEventContent);
@@ -1055,6 +1071,15 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         OriginatingTo: `room:${roomId}`,
       });
 
+      logger.info("matrix inbound pre-record", {
+        roomId,
+        senderId,
+        accountId: _route.accountId,
+        agentId: _route.agentId,
+        storePath,
+        sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+      });
+
       await core.channel.session.recordInboundSession({
         storePath,
         sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
@@ -1077,6 +1102,14 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         },
       });
 
+      logger.info("matrix inbound recorded", {
+        roomId,
+        senderId,
+        accountId: _route.accountId,
+        agentId: _route.agentId,
+        sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+      });
+
       const preview = bodyText.slice(0, 200).replace(/\n/g, "\\n");
       logVerboseMessage(`matrix inbound: room=${roomId} from=${senderId} preview="${preview}"`);
 
@@ -1085,6 +1118,15 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         runtime.error?.("matrix: missing reply target");
         return;
       }
+
+      logger.info("matrix inbound pre-dispatch", {
+        roomId,
+        senderId,
+        accountId: _route.accountId,
+        agentId: _route.agentId,
+        sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+        replyTarget,
+      });
 
       const { ackReaction, ackReactionScope: ackScope } = resolveMatrixAckReactionConfig({
         cfg,
