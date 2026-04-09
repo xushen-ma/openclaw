@@ -747,6 +747,40 @@ describe("matrix monitor handler pairing account scope", () => {
     expect(recordInboundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionKey: "agent:ops:main",
+        updateLastRoute: expect.objectContaining({
+          sessionKey: "agent:ops:main",
+          to: "room:!dm:example.org",
+        }),
+      }),
+    );
+  });
+
+  it("does not overwrite the main session route from room-scoped direct sessions", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: true,
+      resolveAgentRoute: vi.fn(() => ({
+        agentId: "ops",
+        channel: "matrix",
+        accountId: "ops",
+        sessionKey: "agent:ops:direct:room:abc",
+        mainSessionKey: "agent:ops:main",
+        matchedBy: "binding.channel" as const,
+        lastRoutePolicy: "session" as const,
+      })),
+    });
+
+    await handler(
+      "!newdm:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$newdm1",
+        body: "hello from the new room",
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:ops:direct:room:abc",
+        updateLastRoute: undefined,
       }),
     );
   });
