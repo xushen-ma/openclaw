@@ -300,6 +300,13 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
     let claimedInboundEvent = false;
     let draftStreamRef: ReturnType<typeof createMatrixDraftStream> | undefined;
     try {
+      logger.info("matrix handler entry", {
+        roomId,
+        eventId: event.event_id,
+        eventType: event.type,
+        senderId: event.sender,
+        accountId,
+      });
       const eventType = event.type;
       if (eventType === EventType.RoomMessageEncrypted) {
         // Encrypted payloads are emitted separately after decryption.
@@ -342,6 +349,13 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
       const readIngressPrefix = async () => {
         const selfUserId = await client.getUserId();
         if (senderId === selfUserId) {
+          logger.info("matrix ingress drop self-message", {
+            roomId,
+            eventId,
+            senderId,
+            selfUserId,
+            accountId,
+          });
           return;
         }
         if (dropPreStartupMessages) {
@@ -366,6 +380,12 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             body: content.body,
           })
         ) {
+          logger.info("matrix ingress drop verification/system message", {
+            roomId,
+            eventId,
+            senderId,
+            accountId,
+          });
           logVerboseMessage(`matrix: skip verification/system room message room=${roomId}`);
           return;
         }
@@ -382,6 +402,12 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         if (eventId && inboundDeduper) {
           claimedInboundEvent = inboundDeduper.claimEvent({ roomId, eventId });
           if (!claimedInboundEvent) {
+            logger.info("matrix ingress drop duplicate", {
+              roomId,
+              eventId,
+              senderId,
+              accountId,
+            });
             logVerboseMessage(`matrix: skip duplicate inbound event room=${roomId} id=${eventId}`);
             return;
           }
@@ -391,6 +417,13 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
           roomId,
           senderId,
           selfUserId,
+        });
+        logger.info("matrix ingress prefix resolved", {
+          roomId,
+          eventId,
+          senderId,
+          accountId,
+          isDirectMessage,
         });
         return { content, isDirectMessage, locationPayload, selfUserId };
       };

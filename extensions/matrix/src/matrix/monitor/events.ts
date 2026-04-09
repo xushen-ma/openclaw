@@ -75,9 +75,28 @@ export function registerMatrixMonitorEvents(params: {
   });
 
   client.on("room.message", (roomId: string, event: MatrixRawEvent) => {
+    logger.info("matrix room.message event", {
+      roomId,
+      accountId: auth.accountId,
+      eventId: event?.event_id,
+      eventType: event?.type,
+      senderId: event?.sender,
+    });
     if (routeVerificationEvent(roomId, event)) {
+      logger.info("matrix room.message routed as verification", {
+        roomId,
+        accountId: auth.accountId,
+        eventId: event?.event_id,
+        senderId: event?.sender,
+      });
       return;
     }
+    logger.info("matrix room.message forwarding to handler", {
+      roomId,
+      accountId: auth.accountId,
+      eventId: event?.event_id,
+      senderId: event?.sender,
+    });
     void onRoomMessage(roomId, event);
   });
 
