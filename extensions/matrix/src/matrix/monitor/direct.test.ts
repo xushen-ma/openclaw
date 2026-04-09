@@ -253,6 +253,37 @@ describe("createDirectRoomTracker", () => {
     );
   });
 
+  it("promotes recent invite candidates when self is_direct metadata is unavailable", async () => {
+    const client = createMockClient({
+      isDm: false,
+      dmCacheAvailable: true,
+      stateEvents: {
+        "!room:example.org|m.room.member|@bot:example.org": {},
+      },
+    });
+    const tracker = createDirectRoomTracker(client);
+    tracker.rememberInvite("!room:example.org", "@alice:example.org");
+
+    await expect(
+      tracker.isDirectMessage({
+        roomId: "!room:example.org",
+        senderId: "@alice:example.org",
+      }),
+    ).resolves.toBe(true);
+
+    expect(client.getRoomStateEvent).toHaveBeenCalledWith(
+      "!room:example.org",
+      "m.room.member",
+      "@bot:example.org",
+    );
+    expect(client.setAccountData).toHaveBeenCalledWith(
+      EventType.Direct,
+      expect.objectContaining({
+        "@alice:example.org": ["!room:example.org"],
+      }),
+    );
+  });
+
   it("keeps recent invite candidates across room invalidation", async () => {
     const client = createMockClient({ isDm: false, dmCacheAvailable: true });
     const tracker = createDirectRoomTracker(client);
