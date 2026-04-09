@@ -106,7 +106,8 @@ function checkFormattedBodyMention(params: {
   if (!params.formattedBody || !params.userId) {
     return false;
   }
-  const anchorPattern = /<a\b[^>]*href=(["'])(https:\/\/matrix\.to\/#[^"']+)\1[^>]*>(.*?)<\/a>/gis;
+  const anchorPattern =
+    /<a\b[^>]*href=(["'])(https:\/\/matrix\.to\/#\/[^"\']+)\1[^>]*>(.*?)<\/a>/gis;
   for (const match of params.formattedBody.matchAll(anchorPattern)) {
     const href = match[2];
     const visibleLabel = match[3] ?? "";
@@ -141,6 +142,7 @@ export function resolveMentions(params: {
   userId?: string | null;
   displayName?: string | null;
   text?: string;
+  trustMetadataOnlyUserMentions?: boolean;
   mentionRegexes: RegExp[];
 }) {
   const mentions = params.content["m.mentions"];
@@ -166,7 +168,7 @@ export function resolveMentions(params: {
   const metadataBackedUserMention = Boolean(
     params.userId &&
     mentionedUsers.has(params.userId) &&
-    (mentionedInFormattedBody || textMentioned),
+    (mentionedInFormattedBody || textMentioned || params.trustMetadataOnlyUserMentions),
   );
   const metadataBackedRoomMention = Boolean(mentions?.room) && visibleRoomMention;
   const explicitMention =

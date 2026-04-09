@@ -49,6 +49,22 @@ describe("resolveMentions", () => {
       expect(result.hasExplicitMention).toBe(false);
     });
 
+    it("accepts metadata-only m.mentions.user_ids when trustMetadataOnlyUserMentions is enabled", () => {
+      const result = resolveMentions({
+        content: {
+          msgtype: "m.text",
+          body: "hello",
+          "m.mentions": { user_ids: ["@bot:matrix.org"] },
+        },
+        userId,
+        text: "hello",
+        mentionRegexes,
+        trustMetadataOnlyUserMentions: true,
+      });
+      expect(result.wasMentioned).toBe(true);
+      expect(result.hasExplicitMention).toBe(true);
+    });
+
     it("detects room mention via visible @room text", () => {
       const result = resolveMentions({
         content: {

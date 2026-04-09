@@ -128,7 +128,7 @@ describe("createDirectRoomTracker", () => {
     expect(client.getJoinedRoomMembers).toHaveBeenCalledWith("!room:example.org");
   });
 
-  it("falls back to strict 2-member membership before m.direct account data is available", async () => {
+  it("does not classify plain strict 2-member rooms as DMs before m.direct account data is available", async () => {
     const client = createMockClient({ isDm: false, dmCacheAvailable: false });
     const tracker = createDirectRoomTracker(client);
 
@@ -137,12 +137,12 @@ describe("createDirectRoomTracker", () => {
         roomId: "!room:example.org",
         senderId: "@alice:example.org",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
     expect(client.getJoinedRoomMembers).toHaveBeenCalledWith("!room:example.org");
   });
 
-  it("keeps using the strict 2-member fallback until the dm cache seeds successfully", async () => {
+  it("keeps refusing plain strict 2-member fallback until explicit DM evidence exists", async () => {
     const client = createMockClient({ isDm: false, dmCacheAvailable: false });
     const tracker = createDirectRoomTracker(client);
 
@@ -151,18 +151,18 @@ describe("createDirectRoomTracker", () => {
         roomId: "!room:example.org",
         senderId: "@alice:example.org",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
     await expect(
       tracker.isDirectMessage({
         roomId: "!room:example.org",
         senderId: "@alice:example.org",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
     expect(client.dms.update).toHaveBeenCalledTimes(1);
   });
 
-  it("does not classify rooms with extra members as DMs when falling back", async () => {
+  it("does not classify rooms with extra members as DMs when dm cache is unavailable", async () => {
     const client = createMockClient({
       isDm: false,
       members: ["@alice:example.org", "@bot:example.org", "@observer:example.org"],
@@ -245,6 +245,37 @@ describe("createDirectRoomTracker", () => {
       }),
     ).resolves.toBe(true);
 
+    expect(client.setAccountData).toHaveBeenCalledWith(
+      EventType.Direct,
+      expect.objectContaining({
+        "@alice:example.org": ["!room:example.org"],
+      }),
+    );
+  });
+
+  it("promotes recent invite candidates when self is_direct metadata is unavailable", async () => {
+    const client = createMockClient({
+      isDm: false,
+      dmCacheAvailable: true,
+      stateEvents: {
+        "!room:example.org|m.room.member|@bot:example.org": {},
+      },
+    });
+    const tracker = createDirectRoomTracker(client);
+    tracker.rememberInvite("!room:example.org", "@alice:example.org");
+
+    await expect(
+      tracker.isDirectMessage({
+        roomId: "!room:example.org",
+        senderId: "@alice:example.org",
+      }),
+    ).resolves.toBe(true);
+
+    expect(client.getRoomStateEvent).toHaveBeenCalledWith(
+      "!room:example.org",
+      "m.room.member",
+      "@bot:example.org",
+    );
     expect(client.setAccountData).toHaveBeenCalledWith(
       EventType.Direct,
       expect.objectContaining({
@@ -424,7 +455,7 @@ describe("createDirectRoomTracker", () => {
     ).resolves.toBe(false);
   });
 
-  it("re-checks room membership after invalidation when fallback membership changes", async () => {
+  it("re-checks room membership after invalidation while still refusing plain fallback classification", async () => {
     const client = createMockClient({ isDm: false, dmCacheAvailable: false });
     const tracker = createDirectRoomTracker(client);
 
@@ -433,7 +464,7 @@ describe("createDirectRoomTracker", () => {
         roomId: "!room:example.org",
         senderId: "@alice:example.org",
       }),
-    ).resolves.toBe(true);
+    ).resolves.toBe(false);
 
     client.__setMembers(["@alice:example.org", "@bot:example.org", "@mallory:example.org"]);
     tracker.invalidateRoom("!room:example.org");

@@ -508,6 +508,69 @@ describe("matrix monitor handler pairing account scope", () => {
     expect(resolveAgentRoute).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts authorized control commands without an explicit mention in room mention-gated paths", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: false,
+      allowFrom: ["@user:example.org"],
+      shouldHandleTextCommands: () => true,
+      hasControlCommand: () => true,
+      getMemberDisplayName: async () => "sender",
+      mentionRegexes: [/@bot/i],
+    });
+
+    await handler(
+      "!room:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$authorized-control-command",
+        body: "/status",
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalled();
+  });
+
+  it("accepts metadata-only mentions in 1:1 room-like conversations", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: false,
+      mentionRegexes: [/@bot/i],
+      client: {
+        getJoinedRoomMembers: async () => ["@user:example.org", "@bot:example.org"],
+      },
+      getMemberDisplayName: async () => "sender",
+    });
+
+    await handler(
+      "!room:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$metadata-mention",
+        body: "hello",
+        mentions: { user_ids: ["@bot:example.org"] },
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalled();
+  });
+
+  it("processes no-mention messages in 1:1 room-like conversations without requiring explicit mention", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: false,
+      client: {
+        getJoinedRoomMembers: async () => ["@user:example.org", "@bot:example.org"],
+      },
+      getMemberDisplayName: async () => "sender",
+    });
+
+    await handler(
+      "!room:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$no-mention-direct-like",
+        body: "hello team",
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalled();
+  });
+
   it("skips media downloads for unmentioned group media messages", async () => {
     const downloadContent = vi.fn(async () => Buffer.from("image"));
     const getMemberDisplayName = vi.fn(async () => "sender");
