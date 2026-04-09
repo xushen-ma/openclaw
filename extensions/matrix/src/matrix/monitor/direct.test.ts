@@ -298,6 +298,25 @@ describe("createDirectRoomTracker", () => {
     ).resolves.toBe(true);
   });
 
+  it("promotes recent invite candidates even when senderId is unavailable on first evaluation", async () => {
+    const client = createMockClient({ isDm: false, dmCacheAvailable: true });
+    const tracker = createDirectRoomTracker(client);
+    tracker.rememberInvite("!room:example.org", "@alice:example.org");
+
+    await expect(
+      tracker.isDirectMessage({
+        roomId: "!room:example.org",
+      }),
+    ).resolves.toBe(true);
+
+    expect(client.setAccountData).toHaveBeenCalledWith(
+      EventType.Direct,
+      expect.objectContaining({
+        "@alice:example.org": ["!room:example.org"],
+      }),
+    );
+  });
+
   it("still rejects recent invite candidates when self member state is_direct is false", async () => {
     const client = createMockClient({
       isDm: false,
