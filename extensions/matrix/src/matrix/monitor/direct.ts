@@ -116,20 +116,28 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
     return isDirect;
   };
 
+  const getRecentInviteCandidate = (roomId: string): string | null => {
+    const cached = recentInviteCandidates.get(roomId);
+    if (!cached) {
+      return null;
+    }
+    if (Date.now() - cached.ts >= RECENT_INVITE_TTL_MS) {
+      recentInviteCandidates.delete(roomId);
+      return null;
+    }
+    return cached.remoteUserId;
+  };
+
   const hasRecentInviteCandidate = (roomId: string, remoteUserId?: string | null): boolean => {
     const normalizedRemoteUserId = remoteUserId?.trim();
     if (!normalizedRemoteUserId) {
       return false;
     }
-    const cached = recentInviteCandidates.get(roomId);
-    if (!cached) {
+    const rememberedRemoteUserId = getRecentInviteCandidate(roomId);
+    if (!rememberedRemoteUserId) {
       return false;
     }
-    if (Date.now() - cached.ts >= RECENT_INVITE_TTL_MS) {
-      recentInviteCandidates.delete(roomId);
-      return false;
-    }
-    return cached.remoteUserId === normalizedRemoteUserId;
+    return rememberedRemoteUserId === normalizedRemoteUserId;
   };
 
   const canPromoteRecentInvite = async (roomId: string): Promise<boolean> => {
@@ -195,10 +203,12 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
     isDirectMessage: async (params: DirectMessageCheck): Promise<boolean> => {
       const { roomId, senderId } = params;
       const selfUserId = params.selfUserId ?? (await ensureSelfUserId());
+      const rememberedInviteRemoteUserId = getRecentInviteCandidate(roomId);
+      const effectiveRemoteUserId = senderId?.trim() || rememberedInviteRemoteUserId || undefined;
       const joinedMembers = await resolveJoinedMembers(roomId);
       const strictDirectMembership = isStrictDirectMembership({
         selfUserId,
-        remoteUserId: senderId,
+        remoteUserId: effectiveRemoteUserId,
         joinedMembers,
       });
 
@@ -234,7 +244,8 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
           return true;
         }
 
-        if (hasLocallyPromotedDirectRoom(roomId, senderId)) {
+        const localPromotionMatched = hasLocallyPromotedDirectRoom(roomId, effectiveRemoteUserId);
+        if (localPromotionMatched) {
           const shouldKeep = await shouldKeepLocallyPromotedDirectRoom(roomId);
           if (shouldKeep !== false) {
             log(`matrix: dm detected via local promotion room=${roomId}`);
@@ -244,20 +255,27 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
           log(`matrix: local promotion cleared room=${roomId}`);
         }
 
-        if (hasRecentInviteCandidate(roomId, senderId) && (await canPromoteRecentInvite(roomId))) {
+        const promotionRemoteUserId = effectiveRemoteUserId || "";
+        const recentInviteMatched = Boolean(
+          promotionRemoteUserId && hasRecentInviteCandidate(roomId, promotionRemoteUserId),
+        );
+        if (recentInviteMatched && (await canPromoteRecentInvite(roomId))) {
           const promotion = await promoteMatrixDirectRoomCandidate({
             client,
-            remoteUserId: senderId ?? "",
+            remoteUserId: promotionRemoteUserId,
             roomId,
             selfUserId,
           });
           if (promotion.classifyAsDirect) {
-            rememberLocallyPromotedDirectRoom(roomId, senderId ?? "");
+            rememberLocallyPromotedDirectRoom(roomId, promotionRemoteUserId);
             log(
-              `matrix: dm detected via recent invite room=${roomId} reason=${promotion.reason} repaired=${String(promotion.repaired)}`,
+              `matrix: dm detected via recent invite room=${roomId} remote=${promotionRemoteUserId} reason=${promotion.reason} repaired=${String(promotion.repaired)}`,
             );
             return true;
           }
+          log(
+            `matrix: recent invite promotion did not classify as direct room=${roomId} remote=${promotionRemoteUserId} reason=${promotion.reason}`,
+          );
         }
       }
 
