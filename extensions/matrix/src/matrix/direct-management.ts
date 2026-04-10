@@ -10,6 +10,7 @@ export type MatrixDirectRoomCandidate = {
   joinedMembers: string[] | null;
   strict: boolean;
   explicit: boolean;
+  nameMatch: boolean;
   source: "account-data" | "joined";
 };
 
@@ -149,6 +150,26 @@ async function writeMatrixDirectRoomMapping(params: {
   );
 }
 
+function normalizeRoomNameMatchValue(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+async function readRoomNameMatchValue(client: MatrixClient, roomId: string): Promise<string> {
+  try {
+    const state = await client.getRoomStateEvent(roomId, "m.room.name", "");
+    return normalizeRoomNameMatchValue(state?.name);
+  } catch {
+    return "";
+  }
+}
+
+function deriveRemoteDisplayHint(remoteUserId: string): string {
+  const trimmed = remoteUserId.trim();
+  const withoutSigil = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
+  const localpart = withoutSigil.split(":", 1)[0] ?? "";
+  return localpart.trim().toLowerCase();
+}
+
 async function classifyDirectRoomCandidate(params: {
   client: MatrixClient;
   roomId: string;
@@ -162,6 +183,8 @@ async function classifyDirectRoomCandidate(params: {
     remoteUserId: params.remoteUserId,
     selfUserId: params.selfUserId,
   });
+  const roomName = await readRoomNameMatchValue(params.client, params.roomId);
+  const remoteHint = deriveRemoteDisplayHint(params.remoteUserId);
   return {
     roomId: params.roomId,
     joinedMembers: evidence.joinedMembers,
@@ -171,6 +194,7 @@ async function classifyDirectRoomCandidate(params: {
       evidence.strict &&
       (params.source === "account-data" || evidence.memberStateFlag !== false) &&
       (params.source === "account-data" || evidence.viaMemberState),
+    nameMatch: Boolean(roomName && remoteHint && roomName === remoteHint),
     source: params.source,
   };
 }
@@ -301,6 +325,18 @@ export async function inspectMatrixDirectRooms(params: {
       discoveredStrictRooms.push(candidate);
     }
   }
+  discoveredStrictRooms.sort((a, b) => {
+    const explicitDelta = Number(b.explicit) - Number(a.explicit);
+    if (explicitDelta !== 0) {
+      return explicitDelta;
+    }
+    const nameMatchDelta = Number(b.nameMatch) - Number(a.nameMatch);
+    if (nameMatchDelta !== 0) {
+      return nameMatchDelta;
+    }
+    return a.roomId.localeCompare(b.roomId);
+  });
+
   const discoveredStrictRoomIds = discoveredStrictRooms.map((room) => room.roomId);
   const discoveredExplicit = discoveredStrictRooms.find((room) => room.explicit);
 
