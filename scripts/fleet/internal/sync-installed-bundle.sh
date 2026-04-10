@@ -7,7 +7,15 @@
 # Rules:
 # - Intended as a Mini-approved maintenance path for /usr/local/lib/openclaw-fleet/*
 # - Must run through releasectl / privileged ops, not ad-hoc shell habit
-# - Source of truth is the version-controlled workspace copy under scripts/fleet/
+# - Source of truth is the controlled governed repo for this machine
+#   (fast-forwarded from its configured remote/branch during --sync)
+#   unless RELEASECTL_SOURCE_ROOT explicitly overrides it.
+#
+#   Normal model:
+#     remote branch -> controlled repo -> installed bundle
+#
+#   The product repo workspace tree is an authoring surface, not the default
+#   file-copy source for bundle-sync.
 
 set -euo pipefail
 
@@ -35,9 +43,9 @@ if [[ "$CURRENT_USER" != "oc-release" && "$FLEET_AGENT_NAME" != "Mini" && "$FLEE
   exit 1
 fi
 
-# Source of truth is Mini's local fleet-ops tree for this machine, not the
-# OpenClaw product repo. Keep it on a path the governed user can traverse/read.
-SRC_ROOT="${RELEASECTL_SOURCE_ROOT:-/Users/openclaw/workspace/openclaw/scripts/fleet}"
+# Source of truth is the controlled governed repo for this machine by default.
+# Keep it on a path the governed user can traverse/read.
+SRC_ROOT="${RELEASECTL_SOURCE_ROOT:-${RELEASECTL_CONTROLLED_REPO:-/Users/openclaw/workspace/openclaw-fleet-mgmt}}"
 DST_ROOT="${RELEASECTL_INSTALL_ROOT:-/usr/local/lib/openclaw-fleet}"
 
 sha256_of() {
