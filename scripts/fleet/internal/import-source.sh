@@ -12,6 +12,98 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/fleet.env"
 
+RELEASE_USER="${RELEASE_USER:-oc-release}"
+RELEASECTL_ALLOW_SUDO="${RELEASECTL_ALLOW_SUDO:-1}"
+RELEASECTL_SUDO_PASSWORD="${RELEASECTL_SUDO_PASSWORD:-}"
+RELEASECTL_SUDO_PASSWORD_FILE="${RELEASECTL_SUDO_PASSWORD_FILE:-$HOME/.openclaw/releasectl/sudo-password}"
+
+resolve_user_home() {
+  local user="$1"
+  local home=""
+  home="$(dscl . -read "/Users/$user" NFSHomeDirectory 2>/dev/null | awk '{print $2}' || true)"
+  if [[ -z "$home" ]]; then
+    home="$(python3 - "$user" <<'PY'
+import pwd, sys
+try:
+  print(pwd.getpwnam(sys.argv[1]).pw_dir)
+except KeyError:
+  pass
+PY
+)"
+  fi
+  printf '%s\n' "$home"
+}
+
+resolve_sudo_password() {
+  if [[ -n "$RELEASECTL_SUDO_PASSWORD" ]]; then
+    printf '%s' "$RELEASECTL_SUDO_PASSWORD"
+    return 0
+  fi
+  if [[ -f "$RELEASECTL_SUDO_PASSWORD_FILE" ]]; then
+    head -n 1 "$RELEASECTL_SUDO_PASSWORD_FILE"
+    return 0
+  fi
+  return 1
+}
+
+run_controlled() {
+  if [[ $# -eq 0 ]]; then
+    echo "error: missing controlled command" >&2
+    exit 1
+  fi
+
+  local current_user
+  current_user="$(id -un 2>/dev/null || true)"
+  if [[ "$current_user" == "$RELEASE_USER" ]]; then
+    "$@"
+    return $?
+  fi
+
+  [[ "$RELEASECTL_ALLOW_SUDO" == "1" ]] || {
+    echo "error: controlled repo operations require $RELEASE_USER (sudo handoff disabled)" >&2
+    exit 1
+  }
+
+  local release_home
+  release_home="$(resolve_user_home "$RELEASE_USER")"
+  [[ -n "$release_home" ]] || {
+    echo "error: unable to resolve home for governed user $RELEASE_USER" >&2
+    exit 1
+  }
+
+  local err_file
+  err_file="$(mktemp)"
+  if sudo -n -u "$RELEASE_USER" env HOME="$release_home" XDG_CONFIG_HOME="$release_home/.config" XDG_CACHE_HOME="$release_home/.cache" "$@" 2>"$err_file"; then
+    rm -f "$err_file"
+    return 0
+  fi
+
+  local rc="$?"
+  local sudo_err
+  sudo_err="$(cat "$err_file")"
+  rm -f "$err_file"
+
+  if [[ "$sudo_err" != *"a password is required"* ]] \
+     && [[ "$sudo_err" != *"no tty present"* ]] \
+     && [[ "$sudo_err" != *"a terminal is required"* ]]; then
+    [[ -n "$sudo_err" ]] && echo "$sudo_err" >&2
+    return "$rc"
+  fi
+
+  local sudo_pw
+  sudo_pw="$(resolve_sudo_password 2>/dev/null || true)"
+  if [[ -z "$sudo_pw" ]]; then
+    echo "error: governed handoff requires sudo access to $RELEASE_USER" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$sudo_pw" | sudo -S -p '' -u "$RELEASE_USER" env HOME="$release_home" XDG_CONFIG_HOME="$release_home/.config" XDG_CACHE_HOME="$release_home/.cache" "$@"
+}
+
+controlled_git() {
+  run_controlled git -C "$CONTROLLED_REPO" "$@"
+}
+
 SOURCE_REF="${1:-}"
 DRY_RUN=0
 
@@ -86,7 +178,7 @@ fi
 echo "CONTROLLED-REPO path=$CONTROLLED_REPO"
 
 # Check controlled working tree status
-CONTROLLED_STATUS="$(git -C "$CONTROLLED_REPO" status --porcelain 2>/dev/null || true)"
+CONTROLLED_STATUS="$(controlled_git status --porcelain 2>/dev/null || true)"
 if [[ -n "$CONTROLLED_STATUS" ]]; then
   echo "error: controlled repo has uncommitted changes" >&2
   echo "$CONTROLLED_STATUS" >&2
@@ -95,25 +187,27 @@ fi
 
 # Fetch and fast-forward controlled repo
 echo "FETCH controlled remote=$CONTROLLED_REMOTE branch=$CONTROLLED_BRANCH"
-git -C "$CONTROLLED_REPO" fetch "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
+controlled_git fetch "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
 
-CONTROLLED_HEAD="$(git -C "$CONTROLLED_REPO" rev-parse HEAD)"
-CONTROLLED_UPSTREAM="$(git -C "$CONTROLLED_REPO" rev-parse "$CONTROLLED_REMOTE/$CONTROLLED_BRANCH")"
+CONTROLLED_HEAD="$(controlled_git rev-parse HEAD)"
+CONTROLLED_UPSTREAM="$(controlled_git rev-parse "$CONTROLLED_REMOTE/$CONTROLLED_BRANCH")"
 
 if [[ "$CONTROLLED_HEAD" != "$CONTROLLED_UPSTREAM" ]]; then
   echo "FF-ONLY controlled head=$CONTROLLED_HEAD upstream=$CONTROLLED_UPSTREAM"
-  git -C "$CONTROLLED_REPO" merge --ff-only "$CONTROLLED_REMOTE/$CONTROLLED_BRANCH"
-  echo "FAST-FORWARDED to $(git -C "$CONTROLLED_REPO" rev-parse HEAD)"
+  controlled_git merge --ff-only "$CONTROLLED_REMOTE/$CONTROLLED_BRANCH"
+  echo "FAST-FORWARDED to $(controlled_git rev-parse HEAD)"
 fi
 
 # Create temporary export directory
-EXPORT_DIR="$(mktemp -d)"
+EXPORT_DIR="$(mktemp -d /tmp/releasectl-import.XXXXXX)"
+chmod 755 "$EXPORT_DIR"
 trap 'rm -rf "$EXPORT_DIR"' EXIT
 
 # Export source subtree at specified ref
 echo "EXPORT source=$SOURCE_REPO/$SOURCE_BUNDLE_PATH@$SOURCE_SHA"
 git -C "$SOURCE_REPO" archive --format=tar "$SOURCE_SHA" "$SOURCE_BUNDLE_PATH" \
   | tar -x -C "$EXPORT_DIR"
+chmod -R a+rX "$EXPORT_DIR"
 
 # Map source bundle structure to controlled repo structure
 # Source: scripts/fleet/{releasectl,internal/*.sh,internal/fleet.env}
@@ -123,17 +217,16 @@ IMPORT_MANIFEST=()
 
 # In dry-run mode, create a temporary controlled copy to avoid modifying the real one
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  DRY_RUN_CONTROLLED="$(mktemp -d)"
+  DRY_RUN_CONTROLLED="$(mktemp -d /tmp/releasectl-controlled.XXXXXX)"
+  chmod 0777 "$DRY_RUN_CONTROLLED"
   trap 'rm -rf "$EXPORT_DIR" "$DRY_RUN_CONTROLLED"' EXIT
   
-  # Copy .git directory for git operations
-  cp -R "$CONTROLLED_REPO/.git" "$DRY_RUN_CONTROLLED/"
-  # Copy existing content
-  if [[ -d "$CONTROLLED_REPO/bin" ]]; then
-    cp -R "$CONTROLLED_REPO/bin" "$DRY_RUN_CONTROLLED/"
+  run_controlled cp -R "$CONTROLLED_REPO/.git" "$DRY_RUN_CONTROLLED/"
+  if run_controlled test -d "$CONTROLLED_REPO/bin"; then
+    run_controlled cp -R "$CONTROLLED_REPO/bin" "$DRY_RUN_CONTROLLED/"
   fi
-  if [[ -d "$CONTROLLED_REPO/internal" ]]; then
-    cp -R "$CONTROLLED_REPO/internal" "$DRY_RUN_CONTROLLED/"
+  if run_controlled test -d "$CONTROLLED_REPO/internal"; then
+    run_controlled cp -R "$CONTROLLED_REPO/internal" "$DRY_RUN_CONTROLLED/"
   fi
   
   WORK_CONTROLLED="$DRY_RUN_CONTROLLED"
@@ -143,15 +236,15 @@ fi
 
 # Copy releasectl to bin/
 if [[ -f "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/releasectl" ]]; then
-  mkdir -p "$WORK_CONTROLLED/bin"
-  cp "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/releasectl" "$WORK_CONTROLLED/bin/releasectl"
-  chmod 0755 "$WORK_CONTROLLED/bin/releasectl"
+  run_controlled mkdir -p "$WORK_CONTROLLED/bin"
+  run_controlled cp "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/releasectl" "$WORK_CONTROLLED/bin/releasectl"
+  run_controlled chmod 0755 "$WORK_CONTROLLED/bin/releasectl"
   IMPORT_MANIFEST+=("bin/releasectl")
 fi
 
 # Copy internal/ directory
 if [[ -d "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/internal" ]]; then
-  mkdir -p "$WORK_CONTROLLED/internal"
+  run_controlled mkdir -p "$WORK_CONTROLLED/internal"
   
   for src in "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/internal"/*; do
     [[ -e "$src" ]] || continue
@@ -159,12 +252,19 @@ if [[ -d "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/internal" ]]; then
     basename_file="$(basename "$src")"
     dest="$WORK_CONTROLLED/internal/$basename_file"
     
-    cp "$src" "$dest"
-    
-    if [[ "$basename_file" == *.sh ]]; then
-      chmod 0755 "$dest"
+    run_controlled rm -rf "$dest"
+    if [[ -d "$src" ]]; then
+      run_controlled cp -R "$src" "$dest"
+      run_controlled find "$dest" -type d -exec chmod 0755 {} +
+      run_controlled find "$dest" -type f -exec chmod 0644 {} +
+      run_controlled find "$dest" -type f -name '*.sh' -exec chmod 0755 {} +
     else
-      chmod 0644 "$dest"
+      run_controlled cp "$src" "$dest"
+      if [[ "$basename_file" == *.sh ]]; then
+        run_controlled chmod 0755 "$dest"
+      else
+        run_controlled chmod 0644 "$dest"
+      fi
     fi
     
     IMPORT_MANIFEST+=("internal/$basename_file")
@@ -172,22 +272,34 @@ if [[ -d "$EXPORT_DIR/$SOURCE_BUNDLE_PATH/internal" ]]; then
 fi
 
 # Stage changes
-cd "$WORK_CONTROLLED"
 for rel_path in "${IMPORT_MANIFEST[@]}"; do
-  git add "$rel_path"
+  if [[ "$WORK_CONTROLLED" == "$CONTROLLED_REPO" ]]; then
+    controlled_git add "$rel_path"
+  else
+    git -C "$WORK_CONTROLLED" add "$rel_path"
+  fi
 done
 
 # Check for changes
-if git diff --cached --quiet; then
-  echo "NO-CHANGES source and controlled already in sync"
-  exit 0
+if [[ "$WORK_CONTROLLED" == "$CONTROLLED_REPO" ]]; then
+  if controlled_git diff --cached --quiet; then
+    echo "NO-CHANGES source and controlled already in sync"
+    exit 0
+  fi
+  echo
+  echo "IMPORT-DIFF:"
+  controlled_git diff --cached --stat
+  echo
+else
+  if git -C "$WORK_CONTROLLED" diff --cached --quiet; then
+    echo "NO-CHANGES source and controlled already in sync"
+    exit 0
+  fi
+  echo
+  echo "IMPORT-DIFF:"
+  git -C "$WORK_CONTROLLED" diff --cached --stat
+  echo
 fi
-
-# Show diff summary
-echo
-echo "IMPORT-DIFF:"
-git diff --cached --stat
-echo
 
 # Build commit message with provenance
 COMMIT_MSG="Import fleet scripts from source
@@ -202,23 +314,20 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "DRY-RUN commit message:"
   echo "$COMMIT_MSG"
   echo
-  git diff --cached
+  git -C "$WORK_CONTROLLED" diff --cached
   echo
   echo "DRY-RUN complete (no commit or push)"
   exit 0
 fi
 
-# Switch back to real controlled repo for actual commit
-cd "$CONTROLLED_REPO"
-
 # Commit changes
-git commit -m "$COMMIT_MSG"
-IMPORT_COMMIT="$(git rev-parse HEAD)"
+controlled_git commit -m "$COMMIT_MSG"
+IMPORT_COMMIT="$(controlled_git rev-parse HEAD)"
 echo "COMMITTED sha=$IMPORT_COMMIT"
 
 # Push to remote
 echo "PUSH remote=$CONTROLLED_REMOTE branch=$CONTROLLED_BRANCH"
-git push "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
+controlled_git push "$CONTROLLED_REMOTE" "$CONTROLLED_BRANCH"
 echo "PUSHED"
 
 # Verify post-import parity
@@ -255,14 +364,14 @@ for rel_path in "${IMPORT_MANIFEST[@]}"; do
     continue
   fi
   
-  if [[ ! -f "$ctl_path" ]]; then
+  if ! run_controlled test -f "$ctl_path"; then
     echo "VERIFY-MISSING-CONTROLLED $rel_path"
     VERIFY_STATUS=1
     VERIFY_DIFF=$((VERIFY_DIFF + 1))
     continue
   fi
   
-  if cmp -s "$src_path" "$ctl_path"; then
+  if run_controlled cmp -s "$src_path" "$ctl_path"; then
     src_sha="$(shasum -a 256 "$src_path" | awk '{print $1}')"
     echo "VERIFY-OK $rel_path sha=$src_sha"
     VERIFY_OK=$((VERIFY_OK + 1))
