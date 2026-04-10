@@ -97,6 +97,23 @@ git reset --hard "$RESOLVED_SHA"
 echo "🔨 Installing dependencies"
 pnpm install --frozen-lockfile
 
+if [[ -d extensions/matrix ]]; then
+  echo "📦 Installing matrix extension deps"
+  (
+    cd extensions/matrix
+    pnpm install --frozen-lockfile
+  )
+fi
+
+if [[ -d extensions/acpx ]]; then
+  echo "📦 Installing ACPX extension deps"
+  (
+    cd extensions/acpx
+    npm install --omit=dev --no-save
+    ./node_modules/.bin/acpx --version
+  )
+fi
+
 echo "🏗️  Building staging checkout"
 pnpm build
 

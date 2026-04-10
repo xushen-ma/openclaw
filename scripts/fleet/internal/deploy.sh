@@ -325,10 +325,18 @@ echo "🖥️  Building Control UI"
 pnpm ui:build 2>&1 | tail -5
 assert_control_ui_assets "$RELEASE_DIR"
 
-# Matrix extension deps
+# Extension-local runtime deps/materialization
 if [[ -d extensions/matrix ]]; then
   echo "📦 Installing matrix extension deps..."
   (cd extensions/matrix && pnpm install --frozen-lockfile 2>&1 | tail -3)
+fi
+if [[ -d extensions/acpx ]]; then
+  echo "📦 Installing ACPX extension deps..."
+  (
+    cd extensions/acpx
+    npm install --omit=dev --no-save 2>&1 | tail -5
+    ./node_modules/.bin/acpx --version 2>&1 | tail -1
+  )
 fi
 echo "✅ Build complete (Control UI assets verified)"
 
