@@ -107,7 +107,7 @@ function checkFormattedBodyMention(params: {
     return false;
   }
   const anchorPattern =
-    /<a\b[^>]*href=(["'])(https:\/\/matrix\.to\/#\/[^"\']+)\1[^>]*>(.*?)<\/a>/gis;
+    /<a\b[^>]*href=(["'])(https:\/\/matrix\.to\/#\/[^"']+)\1[^>]*>(.*?)<\/a>/gis;
   for (const match of params.formattedBody.matchAll(anchorPattern)) {
     const href = match[2];
     const visibleLabel = match[3] ?? "";
