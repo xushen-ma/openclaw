@@ -5,25 +5,35 @@ export const DEFAULT_MEMORY_ROOT = "/Users/openclaw/.openclaw/memory/openviking"
 
 export function normalizeAgentId(raw) {
   const value = String(raw || "").trim();
-  if (!value) return "main";
+  if (!value) {
+    return "main";
+  }
 
   // keep this surgical: only permit simple ids used by OpenClaw agent names
   let normalized = value.replace(/[^a-zA-Z0-9._-]/g, "");
   // prevent path traversal-ish identities like ".", "..", "...", etc.
   normalized = normalized.replace(/^\.+/, "");
-  if (!normalized || normalized === "." || normalized === "..") return "main";
+  if (!normalized || normalized === "." || normalized === "..") {
+    return "main";
+  }
   return normalized;
 }
 
 export function resolveRequestScope(urlPathname) {
-  if (urlPathname.endsWith("/api/v1/search/session-find")) return "sessions";
-  if (urlPathname.endsWith("/api/v1/search/find")) return "memory";
+  if (urlPathname.endsWith("/api/v1/search/session-find")) {
+    return "sessions";
+  }
+  if (urlPathname.endsWith("/api/v1/search/find")) {
+    return "memory";
+  }
   return null;
 }
 
 export function resolveAgentAndScope({ pathname, query, headers }) {
   const scope = resolveRequestScope(pathname);
-  if (!scope) return { scope: null, agentId: "main" };
+  if (!scope) {
+    return { scope: null, agentId: "main" };
+  }
 
   // path form: /agents/<agent>/api/v1/search/find
   const pathMatch = pathname.match(/^\/agents\/([^/]+)\/(api\/v1\/search\/(?:find|session-find))$/);

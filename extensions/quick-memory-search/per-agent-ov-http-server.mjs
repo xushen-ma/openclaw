@@ -82,13 +82,17 @@ except Exception as e:
   );
 
   const parsed = JSON.parse(String(stdout || "{}").trim() || "{}");
-  if (parsed.error) throw new Error(parsed.error);
+  if (parsed.error) {
+    throw new Error(parsed.error);
+  }
   return parsed;
 }
 
 async function readJsonBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
   const raw = Buffer.concat(chunks).toString("utf8").trim();
   return raw ? JSON.parse(raw) : {};
 }
@@ -116,7 +120,9 @@ const server = http.createServer(async (req, res) => {
     const body = await readJsonBody(req);
     const query = String(body?.query || "").trim();
     const limit = Math.max(1, Math.min(Number(body?.limit || 5), 25));
-    if (!query) return writeJson(res, 400, { error: "query is required" });
+    if (!query) {
+      return writeJson(res, 400, { error: "query is required" });
+    }
 
     const storePath = resolveStorePath({ memoryRoot: MEMORY_ROOT, agentId, scope });
     const searchResult = await searchStore({ storePath, query, limit });
@@ -131,7 +137,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  // eslint-disable-next-line no-console
   console.log(
     `[ov-per-agent-http] listening on http://${HOST}:${PORT} (mock=${MOCK_MODE ? "on" : "off"})`,
   );
