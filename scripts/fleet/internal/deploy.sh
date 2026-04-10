@@ -144,6 +144,14 @@ prepare_release_candidate() {
       echo "📦 Installing matrix extension deps..."
       (cd extensions/matrix && pnpm install --frozen-lockfile 2>&1 | tail -3)
     fi
+    if [[ -d extensions/acpx ]]; then
+      echo "📦 Installing ACPX extension deps..."
+      (
+        cd extensions/acpx
+        npm install --omit=dev --no-save 2>&1 | tail -5
+        ./node_modules/.bin/acpx --version 2>&1 | tail -1
+      )
+    fi
   )
 
   candidate_release_assertions "$candidate_dir"
