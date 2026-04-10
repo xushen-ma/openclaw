@@ -51,7 +51,7 @@ load_releasectl_config() {
 
 is_governed_write_action() {
   case "${1:-}" in
-    test-deploy|staging-deploy|test-release|promote-production|sanity-check|deploy|rollback|bundle-sync|import-source|repair-perms)
+    test-deploy|staging-deploy|test-release|promote-production|sanity-check|deploy|rollback|bundle-sync|repair-perms)
       return 0
       ;;
     *)
