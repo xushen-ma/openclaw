@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/homebrew/bin/node /opt/homebrew/lib/node_modules/pnpm/bin/pnpm.cjs "$@"
