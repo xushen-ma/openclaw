@@ -15,6 +15,7 @@ function createClient(overrides: Partial<MatrixClient> = {}): MatrixClient {
     getJoinedRooms: vi.fn(async () => [] as string[]),
     getJoinedRoomMembers: vi.fn(async () => [] as string[]),
     getRoomStateEvent: vi.fn(async () => ({})),
+    getRoomName: vi.fn(async (_roomId: string) => null),
     setAccountData: vi.fn(async () => undefined),
     createDirectRoom: vi.fn(async () => "!created:example.org"),
     ...overrides,
@@ -87,8 +88,8 @@ describe("inspectMatrixDirectRooms", () => {
 
     expect(result.activeRoomId).toBe("!explicit:example.org");
     expect(result.discoveredStrictRoomIds).toEqual([
-      "!fallback:example.org",
       "!explicit:example.org",
+      "!fallback:example.org",
     ]);
   });
 
@@ -109,6 +110,38 @@ describe("inspectMatrixDirectRooms", () => {
     });
 
     expect(result.activeRoomId).toBe("!fallback:example.org");
+  });
+
+  it("prefers strict discovered rooms whose room name matches the remote user", async () => {
+    const client = createClient({
+      getAccountData: vi.fn(async () => ({
+        "@alice:example.org": ["!stale:example.org"],
+      })),
+      getJoinedRooms: vi.fn(async () => [
+        "!stale:example.org",
+        "!fallback:example.org",
+        "!named:example.org",
+      ]),
+      getJoinedRoomMembers: vi.fn(async (roomId: string) =>
+        roomId === "!stale:example.org"
+          ? ["@bot:example.org", "@alice:example.org", "@mallory:example.org"]
+          : ["@bot:example.org", "@alice:example.org"],
+      ),
+      getRoomStateEvent: vi.fn(async (roomId: string, eventType: string, stateKey: string) => {
+        if (eventType === "m.room.name" && stateKey === "") {
+          return { name: roomId === "!named:example.org" ? "Alice" : "notes room" };
+        }
+        return {};
+      }),
+    });
+
+    const result = await inspectMatrixDirectRooms({
+      client,
+      remoteUserId: "@alice:example.org",
+    });
+
+    expect(result.activeRoomId).toBe("!named:example.org");
+    expect(result.discoveredStrictRoomIds).toEqual(["!named:example.org", "!fallback:example.org"]);
   });
 
   it("does not treat discovered rooms with local is_direct false as active DMs", async () => {
