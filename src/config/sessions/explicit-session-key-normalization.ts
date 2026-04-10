@@ -38,7 +38,11 @@ function resolveExplicitSessionKeyNormalizerCandidates(
 export function normalizeExplicitSessionKey(sessionKey: string, ctx: MsgContext): string {
   const rawSessionKey = sessionKey.trim();
   const normalized = normalizeLowercaseStringOrEmpty(rawSessionKey);
+  let matrixCandidateSeen = false;
   for (const channelId of resolveExplicitSessionKeyNormalizerCandidates(normalized, ctx)) {
+    if (channelId === "matrix") {
+      matrixCandidateSeen = true;
+    }
     const normalize = getChannelPlugin(channelId)?.messaging?.normalizeExplicitSessionKey;
     const input = channelId === "matrix" ? rawSessionKey : normalized;
     const next = normalize?.({ sessionKey: input, ctx });
@@ -46,5 +50,5 @@ export function normalizeExplicitSessionKey(sessionKey: string, ctx: MsgContext)
       return channelId === "matrix" ? next.trim() : normalizeLowercaseStringOrEmpty(next);
     }
   }
-  return normalized;
+  return matrixCandidateSeen ? rawSessionKey : normalized;
 }

@@ -35,6 +35,8 @@ export type MatrixDraftStream = {
   reset: () => void;
   /** The event ID of the current draft message, if any. */
   eventId: () => string | undefined;
+  /** Last sent prepared text for the current draft message. */
+  lastSentText: () => string;
   /** True when the provided text matches the last rendered draft payload. */
   matchesPreparedText: (text: string) => boolean;
   /** True when preview streaming must fall back to normal final delivery. */
@@ -206,6 +208,7 @@ export function createMatrixDraftStream(params: {
     finalizeLive,
     reset,
     eventId: () => currentEventId,
+    lastSentText: () => lastSentText,
     matchesPreparedText: (text: string) =>
       prepareMatrixSingleText(text, {
         cfg,
