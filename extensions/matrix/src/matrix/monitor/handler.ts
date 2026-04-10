@@ -1506,6 +1506,17 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             }
             runtime.error?.(`matrix ${info.kind} reply failed: ${String(err)}`);
           },
+          onSkip: (_payload, info) => {
+            logger.info("matrix reply skipped", {
+              roomId,
+              senderId,
+              accountId: _route.accountId,
+              agentId: _route.agentId,
+              sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+              skipKind: info.kind,
+              skipReason: String(info.reason),
+            });
+          },
           onReplyStart: typingCallbacks.onReplyStart,
           onIdle: typingCallbacks.onIdle,
         });
@@ -1580,6 +1591,18 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         roomHistoryTracker.consumeHistory(_route.agentId, roomId, triggerSnapshot, _messageId);
       }
       if (!queuedFinal) {
+        logger.info("matrix inbound no final reply queued", {
+          roomId,
+          senderId,
+          accountId: _route.accountId,
+          agentId: _route.agentId,
+          sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
+          shouldRequireMention,
+          wasMentioned,
+          shouldBypassMention,
+          commandAuthorized,
+          isDirectMessage,
+        });
         await commitInboundEventIfClaimed();
         return;
       }
