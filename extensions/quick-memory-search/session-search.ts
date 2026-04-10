@@ -2,14 +2,36 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { AnyAgentTool } from "openclaw/plugin-sdk";
 
-function json(payload: unknown): any {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
+type SearchResponse = {
+  total?: unknown;
+  items?: unknown;
+  error?: unknown;
+};
+
+type SearchItem = {
+  uri?: unknown;
+  score?: unknown;
+  abstract?: unknown;
+};
+
+function json(payload: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+    details: payload,
+  };
 }
 function str(params: unknown, key: string): string | undefined {
-  return typeof (params as any)?.[key] === "string" ? (params as any)[key].trim() : undefined;
+  if (typeof params !== "object" || params === null) {
+    return undefined;
+  }
+  const value = (params as Record<string, unknown>)[key];
+  return typeof value === "string" ? value.trim() : undefined;
 }
 function num(params: unknown, key: string): number | undefined {
-  const v = (params as any)?.[key];
+  if (typeof params !== "object" || params === null) {
+    return undefined;
+  }
+  const v = (params as Record<string, unknown>)[key];
   return typeof v === "number" ? v : undefined;
 }
 import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
@@ -36,7 +58,7 @@ async function searchLocalStore(
   storePath: string,
   query: string,
   limit: number,
-): Promise<{ total: number; items: any[]; error?: string }> {
+): Promise<{ total: number; items: unknown[]; error?: string }> {
   const script = `
 import sys, json, time
 import openviking
@@ -80,7 +102,12 @@ for attempt in range(MAX_RETRIES + 1):
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
       },
     );
-    return JSON.parse(stdout.trim());
+    const parsed = JSON.parse(stdout.trim()) as SearchResponse;
+    return {
+      total: typeof parsed.total === "number" ? parsed.total : 0,
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      ...(typeof parsed.error === "string" ? { error: parsed.error } : {}),
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { total: 0, items: [], error: message.slice(0, 200) };
@@ -97,7 +124,7 @@ export function createQuickSessionSearchTool(
     description:
       "Search your past conversations and session history semantically. " +
       "Uses per-agent OV HTTP when configured, with local per-agent session-store fallback.",
-    parameters: QuickSessionSearchSchema as any,
+    parameters: QuickSessionSearchSchema as unknown as Record<string, unknown>,
     execute: async (_toolCallId: string, params: unknown, _signal?: AbortSignal) => {
       const query = str(params, "query");
       const maxResults = num(params, "maxResults") ?? 5;
@@ -116,27 +143,39 @@ export function createQuickSessionSearchTool(
       for (const attempt of httpAttempts) {
         try {
           const response = await fetch(attempt.url, attempt.init);
-          if (!response.ok) continue;
+          if (!response.ok) {
+            continue;
+          }
           const data = await response.json();
           const result = data?.result ?? data;
-          const items: any[] = [];
+          const items: unknown[] = [];
           for (const key of ["resources", "memories", "skills", "instructions"]) {
-            if (Array.isArray(result?.[key])) items.push(...result[key]);
+            if (Array.isArray(result?.[key])) {
+              items.push(...(result?.[key] || []));
+            }
           }
 
-          const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
-            path: item.uri ?? `session-${idx}`,
-            score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
-            snippet: item.abstract ?? "(no abstract)",
-            source: "openviking-sessions-agent-http",
-            citation: item.uri ?? "",
-          }));
+          const results = items.slice(0, maxResults).map((item: unknown, idx: number) => {
+            const searchItem =
+              typeof item === "object" && item !== null ? (item as SearchItem) : {};
+            return {
+              path: searchItem.uri ?? `session-${idx}`,
+              score:
+                typeof searchItem.score === "number"
+                  ? Math.round(searchItem.score * 1000) / 1000
+                  : 0,
+              snippet:
+                typeof searchItem.abstract === "string" ? searchItem.abstract : "(no abstract)",
+              source: "openviking-sessions-agent-http",
+              citation: searchItem.uri ?? "",
+            };
+          });
 
           return json({
             results,
             provider: "openviking-sessions-agent-http",
             agentId,
-            totalHits: result?.total ?? results.length,
+            totalHits: typeof result?.total === "number" ? result.total : results.length,
           });
         } catch {
           // continue to local fallback
@@ -155,13 +194,18 @@ export function createQuickSessionSearchTool(
           });
         }
 
-        const results = (data.items || []).map((item: any, idx: number) => ({
-          path: item.uri ?? `session-${idx}`,
-          score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
-          snippet: item.abstract ?? "(no abstract)",
-          source: "openviking-sessions-local",
-          citation: item.uri ?? "",
-        }));
+        const results = data.items.map((item: unknown, idx: number) => {
+          const searchItem = typeof item === "object" && item !== null ? (item as SearchItem) : {};
+          return {
+            path: searchItem.uri ?? `session-${idx}`,
+            score:
+              typeof searchItem.score === "number" ? Math.round(searchItem.score * 1000) / 1000 : 0,
+            snippet:
+              typeof searchItem.abstract === "string" ? searchItem.abstract : "(no abstract)",
+            source: "openviking-sessions-local",
+            citation: searchItem.uri ?? "",
+          };
+        });
 
         return json({
           results,
