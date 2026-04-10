@@ -34,13 +34,22 @@ const resolveCommit = () => {
   }
 };
 
-const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
-const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
+export const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
+export const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
 
 const normalizeCandidate = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
 };
+
+export function resolveVersionTagFromTagList(tags: readonly string[]): string | null {
+  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
+  return (
+    candidates.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
+    candidates.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
+    null
+  );
+}
 
 const resolveVersionFromTagContext = () => {
   const envCandidates = [
@@ -62,16 +71,12 @@ const resolveVersionFromTagContext = () => {
       cwd: rootDir,
       stdio: ["ignore", "pipe", "ignore"],
     })
-      .toString()
+    .toString()
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
 
-    return (
-      raw.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
-      raw.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
-      null
-    );
+    return resolveVersionTagFromTagList(raw);
   } catch {
     return null;
   }
