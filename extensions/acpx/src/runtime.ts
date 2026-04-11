@@ -12,7 +12,7 @@ import {
   type AcpRuntimeHandle,
   type AcpRuntimeOptions,
   type AcpRuntimeStatus,
-} from "acpx/runtime";
+} from "acpx/dist/runtime.js";
 import type { AcpRuntime } from "../runtime-api.js";
 
 type AcpSessionStore = AcpRuntimeOptions["sessionStore"];
@@ -58,10 +58,22 @@ function createResetAwareSessionStore(baseStore: AcpSessionStore): ResetAwareSes
   };
 }
 
-type AcpxRuntimeLike = AcpRuntime & {
+type AcpxRuntimeLike = {
   probeAvailability(): Promise<void>;
   isHealthy(): boolean;
   doctor(): Promise<AcpRuntimeDoctorReport>;
+  ensureSession: (input: Parameters<AcpRuntime["ensureSession"]>[0]) => Promise<AcpRuntimeHandle>;
+  runTurn: (input: Parameters<AcpRuntime["runTurn"]>[0]) => AsyncIterable<AcpRuntimeEvent>;
+  getCapabilities: () => ReturnType<BaseAcpxRuntime["getCapabilities"]>;
+  getStatus: (
+    input: Parameters<NonNullable<AcpRuntime["getStatus"]>>[0],
+  ) => Promise<AcpRuntimeStatus>;
+  setMode: (input: Parameters<NonNullable<AcpRuntime["setMode"]>>[0]) => Promise<void>;
+  setConfigOption: (
+    input: Parameters<NonNullable<AcpRuntime["setConfigOption"]>>[0],
+  ) => Promise<void>;
+  cancel: (input: Parameters<AcpRuntime["cancel"]>[0]) => Promise<void>;
+  close: (input: Parameters<AcpRuntime["close"]>[0]) => Promise<void>;
 };
 
 export class AcpxRuntime implements AcpxRuntimeLike {

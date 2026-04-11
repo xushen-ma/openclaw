@@ -245,7 +245,8 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
           );
         }
 
-        const localPromotionMatched = hasLocallyPromotedDirectRoom(roomId, senderId);
+        const promotionRemoteUserId = effectiveRemoteUserId;
+        const localPromotionMatched = hasLocallyPromotedDirectRoom(roomId, promotionRemoteUserId);
         if (localPromotionMatched) {
           const shouldKeep = await shouldKeepLocallyPromotedDirectRoom(roomId);
           if (shouldKeep !== false) {
@@ -256,8 +257,12 @@ export function createDirectRoomTracker(client: MatrixClient, opts: DirectRoomTr
           log(`matrix: local promotion cleared room=${roomId}`);
         }
 
-        const recentInviteMatched = hasRecentInviteCandidate(roomId, senderId);
-        if (recentInviteMatched && (await canPromoteRecentInvite(roomId))) {
+        const recentInviteMatched = hasRecentInviteCandidate(roomId, promotionRemoteUserId);
+        if (
+          recentInviteMatched &&
+          promotionRemoteUserId &&
+          (await canPromoteRecentInvite(roomId))
+        ) {
           const promotion = await promoteMatrixDirectRoomCandidate({
             client,
             remoteUserId: promotionRemoteUserId,
