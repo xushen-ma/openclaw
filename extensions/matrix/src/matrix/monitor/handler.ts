@@ -1463,10 +1463,15 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 // Media payload: finalize draft text, send media separately.
                 let textEditOk = !mustDeliverFinalNormally;
                 const payloadText = payload.text;
+                const payloadTextMatchesDraft =
+                  typeof payloadText === "string" && draftStream.matchesPreparedText(payloadText);
+                const reusesDraftTextUnchanged =
+                  typeof payloadText === "string" &&
+                  Boolean(payloadText.trim()) &&
+                  payloadTextMatchesDraft;
                 const requiresFinalTextEdit =
                   quietDraftStreaming ||
-                  (typeof payloadText === "string" &&
-                    !draftStream.matchesPreparedText(payloadText));
+                  (typeof payloadText === "string" && !payloadTextMatchesDraft);
                 if (textEditOk && payloadText && requiresFinalTextEdit) {
                   textEditOk = await editMessageMatrix(roomId, draftEventId, payloadText, {
                     client,
@@ -1507,10 +1512,12 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 });
                 draftConsumed = true;
               } else {
+                const draftRedacted =
+                  Boolean(draftEventId) && (payloadReplyMismatch || mustDeliverFinalNormally);
                 // Redact stale draft when the final delivery will create a
                 // new message (reply-target mismatch, preview overflow, or no
                 // usable draft).
-                if (draftEventId && (payloadReplyMismatch || mustDeliverFinalNormally)) {
+                if (draftRedacted && draftEventId) {
                   await redactMatrixDraftEvent(client, roomId, draftEventId);
                 }
                 const deliveredFallback = await deliverMatrixReplies({
