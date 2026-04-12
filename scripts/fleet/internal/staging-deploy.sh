@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/fleet.env"
 source "$SCRIPT_DIR/lock.sh"
+source "$SCRIPT_DIR/permissions.sh"
 
 TARGET_REF="${1:-}"
 if [[ -z "$TARGET_REF" ]]; then
@@ -40,6 +41,28 @@ setup_staging_runtime_env() {
   mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$PNPM_HOME" "$TMPDIR"
   chmod 700 "$TMPDIR" 2>/dev/null || true
   export PATH="$PNPM_HOME:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
+}
+
+verify_plugin_manifests_readable() {
+  local repo_root="$1"
+  local manifest_count=0
+  local unreadable=0
+  while IFS= read -r -d '' manifest; do
+    ((manifest_count++))
+    if [[ ! -r "$manifest" ]]; then
+      echo "unreadable plugin manifest: $manifest" >&2
+      unreadable=1
+    fi
+  done < <(find "$repo_root/extensions" -type f -name 'openclaw.plugin.json' -print0 2>/dev/null)
+
+  if ((manifest_count == 0)); then
+    echo "warning: no plugin manifests found under $repo_root/extensions" >&2
+    return 0
+  fi
+
+  if ((unreadable != 0)); then
+    return 1
+  fi
 }
 
 assert_path_traversable() {
@@ -116,6 +139,16 @@ fi
 
 echo "🏗️  Building staging checkout"
 pnpm build
+
+echo "🔐 Normalizing staged checkout permissions"
+normalize_repo_permissions "$STAGING_REPO" "apply"
+
+echo "🔎 Verifying plugin manifest readability"
+if ! verify_plugin_manifests_readable "$STAGING_REPO"; then
+  echo "⚠️  Plugin manifest readability check failed after normalize; applying targeted a+rX repair on extensions/"
+  chmod -R a+rX "$STAGING_REPO/extensions"
+  verify_plugin_manifests_readable "$STAGING_REPO"
+fi
 
 echo "STAGING-DEPLOY-OK"
 echo "staging_sha=$RESOLVED_SHA"
