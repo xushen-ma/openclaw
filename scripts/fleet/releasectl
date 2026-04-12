@@ -379,11 +379,12 @@ case "$command" in
     ;;
   test-deploy)
     target_ref="$(require_sha_flag "test-deploy" "$@")"
-    run_with_post_normalize "staging-deploy.sh" "$target_ref"
+    run_with_post_normalize "test-deploy.sh" "${TEST_REPO:-${TEST_DIR:-$HOME/workspace/openclaw-test}}" "$target_ref"
     ;;
   staging-deploy)
     target_ref="$(require_sha_flag "staging-deploy" "$@")"
-    run_with_post_normalize "staging-deploy.sh" "$target_ref"
+    "$INTERNAL_DIR/staging-deploy.sh" "$target_ref"
+    normalize_repo_permissions "${STAGING_REPO:-${STAGING_DIR:-$HOME/workspace/openclaw-staging}}" "apply"
     ;;
   test-status)
     # shellcheck disable=SC1091
