@@ -174,9 +174,13 @@ ensure_governed_handoff() {
   cd / || true
 
   if [[ "$action" == "bundle-sync" ]]; then
-    # Force bundle-sync source to the caller's checked-out scripts/fleet root so
-    # governed sync cannot drift back to legacy trees via stale config.
-    run_governed_sudo env RELEASECTL_SOURCE_ROOT="$SCRIPT_DIR" "$releasectl_exec" "$action" "$@"
+    # bundle-sync now means: import approved source-of-truth (default origin/main)
+    # into the controlled repo, then sync the installed bundle from that controlled
+    # repo so the local governed bundle materializes approved remote main.
+    local controlled_repo
+    controlled_repo="$(grep "^RELEASECTL_CONTROLLED_REPO=" "$SELF_DIR/internal/fleet.env" 2>/dev/null | cut -d= -f2 | tr -d '"'"'"'"'"')" || true
+    controlled_repo="${controlled_repo:-/Users/openclaw/workspace/openclaw-fleet-mgmt}"
+    run_governed_sudo env RELEASECTL_SOURCE_ROOT="$controlled_repo" RELEASECTL_BUNDLE_SYNC_IMPORT_REF="${RELEASECTL_BUNDLE_SYNC_IMPORT_REF:-origin/main}" "$releasectl_exec" "$action" "$@"
   fi
 
   run_governed_sudo "$releasectl_exec" "$action" "$@"
@@ -196,7 +200,6 @@ Usage:
   releasectl sanity-check [--sha <sha>] [--skip-smoke]
   releasectl deploy [args...]
   releasectl rollback [args...]
-  releasectl import-source <ref> [--dry-run]
   releasectl bundle-sync [--check|--sync]
   releasectl verify-config
 
@@ -216,9 +219,7 @@ Commands:
                   optional --skip-smoke).
   deploy          Run internal production deploy flow, then normalize permissions.
   rollback        Run internal rollback flow, then normalize permissions.
-  import-source   Import source-of-truth fleet scripts into controlled repo with
-                  provenance. Replaces ad-hoc copy scripts as normal lane.
-  bundle-sync     Check/sync installed governed bundle from scripts/fleet source.
+  bundle-sync     Check/sync installed governed bundle; on --sync, first import approved source repo ref (default origin/main) into the controlled repo, then sync installed files.
   verify-config   Print effective governed paths and detect legacy config drift.
 
 Notes:

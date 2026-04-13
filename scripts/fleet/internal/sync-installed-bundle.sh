@@ -30,6 +30,7 @@ MODE="check"
 CONTROLLED_REPO="${RELEASECTL_CONTROLLED_REPO:-/Users/openclaw/workspace/openclaw-fleet-mgmt}"
 CONTROLLED_REMOTE="${RELEASECTL_CONTROLLED_REMOTE:-origin}"
 CONTROLLED_BRANCH="${RELEASECTL_CONTROLLED_BRANCH:-main}"
+BUNDLE_SYNC_IMPORT_REF="${RELEASECTL_BUNDLE_SYNC_IMPORT_REF:-origin/main}"
 
 # Operational guardrail: this path is for Mini-approved maintenance only.
 # Technical note: after releasectl's sudo handoff, agent identity metadata may not
@@ -90,7 +91,15 @@ sync_controlled_repo() {
   echo "SYNCED   controlled-repo ($CONTROLLED_REMOTE/$CONTROLLED_BRANCH)"
 }
 
+import_approved_source() {
+  [[ "$MODE" == "sync" ]] || return 0
+
+  echo "IMPORT   approved source ref ($BUNDLE_SYNC_IMPORT_REF)"
+  "$SCRIPT_DIR/import-source.sh" "$BUNDLE_SYNC_IMPORT_REF"
+}
+
 sync_controlled_repo
+import_approved_source
 
 INTERNAL_SCRIPTS=()
 while IFS= read -r rel; do
