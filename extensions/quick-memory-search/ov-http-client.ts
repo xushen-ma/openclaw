@@ -1,3 +1,5 @@
+import { classifyOvFailure, writeOvStats, type OvStatsLayer } from "./ov-stats.js";
+
 export type OvSearchScope = "memory" | "sessions";
 
 export type OvHttpConfig = {
@@ -14,6 +16,15 @@ export type OvHttpConfig = {
 export type ResolvedRequest = {
   url: string;
   init: RequestInit;
+  mode: "per-agent" | "legacy";
+};
+
+export type LoggedOvHttpResult = {
+  ok: boolean;
+  status?: number;
+  data?: any;
+  text?: string;
+  error?: string;
   mode: "per-agent" | "legacy";
 };
 
@@ -84,4 +95,85 @@ export function resolveOvRequest(opts: {
   }
 
   return requests;
+}
+
+function layerFor(scope: OvSearchScope, mode: "per-agent" | "legacy"): OvStatsLayer {
+  if (scope === "sessions") return "session-history";
+  return mode === "legacy" ? "fast-pass-shared" : "fast-pass";
+}
+
+function uriFor(scope: OvSearchScope, agentId: string): string {
+  return scope === "sessions" ? `viking://resources/${agentId}-sessions` : "viking://resources";
+}
+
+export async function executeLoggedOvRequest(opts: {
+  request: ResolvedRequest;
+  scope: OvSearchScope;
+  agentId: string;
+  query: string;
+}): Promise<LoggedOvHttpResult> {
+  const { request, scope, agentId, query } = opts;
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch(request.url, request.init);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      await writeOvStats({
+        agent: agentId,
+        op: scope === "sessions" ? "session-search" : "search",
+        uri: uriFor(scope, agentId),
+        query,
+        latencyMs: Date.now() - startedAt,
+        resultCount: 0,
+        hit: false,
+        mode: request.mode,
+        layer: layerFor(scope, request.mode),
+        routing: request.mode,
+        status: response.status,
+        failureClass: classifyOvFailure({ status: response.status, reason: text }),
+        failure: text.slice(0, 200),
+      }).catch(() => {});
+      return { ok: false, status: response.status, text, mode: request.mode };
+    }
+
+    const data = await response.json();
+    const result = data?.result ?? data;
+    const items: any[] = [];
+    for (const key of ["resources", "memories", "skills", "instructions"]) {
+      if (Array.isArray(result?.[key])) items.push(...result[key]);
+    }
+
+    await writeOvStats({
+      agent: agentId,
+      op: scope === "sessions" ? "session-search" : "search",
+      uri: uriFor(scope, agentId),
+      query,
+      latencyMs: Date.now() - startedAt,
+      resultCount: items.length,
+      hit: items.length > 0,
+      mode: request.mode,
+      layer: layerFor(scope, request.mode),
+      routing: request.mode,
+    }).catch(() => {});
+
+    return { ok: true, status: response.status, data, mode: request.mode };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await writeOvStats({
+      agent: agentId,
+      op: scope === "sessions" ? "session-search" : "search",
+      uri: uriFor(scope, agentId),
+      query,
+      latencyMs: Date.now() - startedAt,
+      resultCount: 0,
+      hit: false,
+      mode: request.mode,
+      layer: layerFor(scope, request.mode),
+      routing: request.mode,
+      failureClass: classifyOvFailure({ reason }),
+      failure: reason.slice(0, 200),
+    }).catch(() => {});
+    return { ok: false, error: reason, mode: request.mode };
+  }
 }
