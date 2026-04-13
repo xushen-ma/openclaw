@@ -11,10 +11,8 @@ afterEach(() => {
 });
 
 describe("quick-memory-search plugin register", () => {
-  it("registers tools, sidecar service, and status gateway method", () => {
+  it("registers quick memory and session tools", () => {
     const registerTool = vi.fn();
-    const registerService = vi.fn();
-    const registerGatewayMethod = vi.fn();
 
     register({
       pluginConfig: {
@@ -23,20 +21,12 @@ describe("quick-memory-search plugin register", () => {
       },
       resolvePath: (p: string) => `/plugin/${p}`,
       registerTool,
-      registerService,
-      registerGatewayMethod,
+      registerService: vi.fn(),
+      registerGatewayMethod: vi.fn(),
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     } as never);
 
     expect(registerTool).toHaveBeenCalledTimes(2);
-    expect(registerService).toHaveBeenCalledTimes(1);
-    expect(registerGatewayMethod).toHaveBeenCalledWith(
-      "quick-memory-search.status",
-      expect.any(Function),
-    );
-
-    const [service] = registerService.mock.calls[0];
-    expect(service.id).toBe("quick-memory-search.per-agent-sidecar");
   });
 
   it("quick_memory_search logs per-agent fast-pass stats", async () => {
@@ -141,8 +131,12 @@ describe("quick-memory-search plugin register", () => {
     expect(payload.routing).toBe("legacy");
 
     const lines = (await readFile(statsPath, "utf8")).trim().split("\n");
-    const stat = JSON.parse(lines[0]);
-    expect(stat.layer).toBe("fast-pass-shared");
-    expect(stat.routing).toBe("legacy");
+    expect(lines.length).toBe(2);
+    const first = JSON.parse(lines[0]);
+    const second = JSON.parse(lines[1]);
+    expect(first.layer).toBe("fast-pass");
+    expect(first.routing).toBe("per-agent");
+    expect(second.layer).toBe("fast-pass-shared");
+    expect(second.routing).toBe("legacy");
   });
 });

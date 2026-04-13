@@ -12,7 +12,8 @@ function num(params: unknown, key: string): number | undefined {
   const v = (params as any)?.[key];
   return typeof v === "number" ? v : undefined;
 }
-import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { executeLoggedOvRequest, resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { classifyOvFailure, writeOvStats } from "./ov-stats.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -114,40 +115,57 @@ export function createQuickSessionSearchTool(
       }).filter((x) => x.mode === "per-agent");
 
       for (const attempt of httpAttempts) {
-        try {
-          const response = await fetch(attempt.url, attempt.init);
-          if (!response.ok) continue;
-          const data = await response.json();
-          const result = data?.result ?? data;
-          const items: any[] = [];
-          for (const key of ["resources", "memories", "skills", "instructions"]) {
-            if (Array.isArray(result?.[key])) items.push(...result[key]);
-          }
-
-          const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
-            path: item.uri ?? `session-${idx}`,
-            score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
-            snippet: item.abstract ?? "(no abstract)",
-            source: "openviking-sessions-agent-http",
-            citation: item.uri ?? "",
-          }));
-
-          return json({
-            results,
-            provider: "openviking-sessions-agent-http",
-            agentId,
-            totalHits: result?.total ?? results.length,
-          });
-        } catch {
-          // continue to local fallback
+        const response = await executeLoggedOvRequest({
+          request: attempt,
+          scope: "sessions",
+          agentId,
+          query: query.trim(),
+        });
+        if (!response.ok) continue;
+        const data = response.data;
+        const result = data?.result ?? data;
+        const items: any[] = [];
+        for (const key of ["resources", "memories", "skills", "instructions"]) {
+          if (Array.isArray(result?.[key])) items.push(...result[key]);
         }
+
+        const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
+          path: item.uri ?? `session-${idx}`,
+          score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
+          snippet: item.abstract ?? "(no abstract)",
+          source: "openviking-sessions-agent-http",
+          citation: item.uri ?? "",
+        }));
+
+        return json({
+          results,
+          provider: "openviking-sessions-agent-http",
+          agentId,
+          totalHits: result?.total ?? results.length,
+        });
       }
 
       const sessionStorePath = `${OV_LOCAL_ROOT}/${agentId}-sessions`;
+      const startedAt = Date.now();
       try {
         const data = await searchLocalStore(sessionStorePath, query.trim(), maxResults);
 
         if (data.error) {
+          const failureClass = classifyOvFailure({ reason: data.error });
+          await writeOvStats({
+            agent: agentId,
+            op: "session-search",
+            uri: `viking://resources/${agentId}-sessions`,
+            query: query.trim(),
+            latencyMs: Date.now() - startedAt,
+            resultCount: 0,
+            hit: false,
+            mode: "local",
+            layer: "session-history",
+            routing: "local",
+            failureClass,
+            failure: data.error.slice(0, 200),
+          }).catch(() => {});
           return json({
             results: [],
             error: data.error,
@@ -163,6 +181,19 @@ export function createQuickSessionSearchTool(
           citation: item.uri ?? "",
         }));
 
+        await writeOvStats({
+          agent: agentId,
+          op: "session-search",
+          uri: `viking://resources/${agentId}-sessions`,
+          query: query.trim(),
+          latencyMs: Date.now() - startedAt,
+          resultCount: results.length,
+          hit: results.length > 0,
+          mode: "local",
+          layer: "session-history",
+          routing: "local",
+        }).catch(() => {});
+
         return json({
           results,
           provider: "openviking-sessions-local",
@@ -171,6 +202,20 @@ export function createQuickSessionSearchTool(
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        await writeOvStats({
+          agent: agentId,
+          op: "session-search",
+          uri: `viking://resources/${agentId}-sessions`,
+          query: query.trim(),
+          latencyMs: Date.now() - startedAt,
+          resultCount: 0,
+          hit: false,
+          mode: "local",
+          layer: "session-history",
+          routing: "local",
+          failureClass: classifyOvFailure({ reason: message }),
+          failure: message.slice(0, 200),
+        }).catch(() => {});
         return json({
           results: [],
           error: message,

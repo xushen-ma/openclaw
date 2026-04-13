@@ -10,7 +10,7 @@ function num(params: unknown, key: string): number | undefined {
   const v = (params as any)?.[key];
   return typeof v === "number" ? v : undefined;
 }
-import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { executeLoggedOvRequest, resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
 import { createQuickSessionSearchTool } from "./session-search.js";
 
 const QuickMemorySearchSchema = {
@@ -56,42 +56,42 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
 
       const errors: string[] = [];
       for (const attempt of attempts) {
-        try {
-          const response = await fetch(attempt.url, attempt.init);
-          if (!response.ok) {
-            const text = await response.text().catch(() => "");
-            errors.push(`${attempt.mode}:${response.status} ${text.slice(0, 120)}`);
-            continue;
-          }
-
-          const data = await response.json();
-          const result = data?.result ?? data;
-          const items: any[] = [];
-          for (const key of ["resources", "memories", "skills", "instructions"]) {
-            if (Array.isArray(result?.[key])) items.push(...result[key]);
-          }
-
-          const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
-            path: item.uri ?? `result-${idx}`,
-            score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
-            snippet: item.abstract ?? item.overview ?? "(no abstract)",
-            source:
-              attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
-            citation: item.uri ?? "",
-          }));
-
-          return json({
-            results,
-            provider: results.length > 0 ? results[0].source : "openviking",
-            model: "openviking-local",
-            totalHits: result?.total ?? items.length,
-            routing: attempt.mode,
-            agentId,
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          errors.push(`${attempt.mode}:${message}`);
+        const response = await executeLoggedOvRequest({
+          request: attempt,
+          scope: "memory",
+          agentId,
+          query: query.trim(),
+        });
+        if (!response.ok) {
+          const problem =
+            response.error ?? `${response.status ?? "?"} ${(response.text ?? "").slice(0, 120)}`;
+          errors.push(`${attempt.mode}:${problem}`);
+          continue;
         }
+
+        const data = response.data;
+        const result = data?.result ?? data;
+        const items: any[] = [];
+        for (const key of ["resources", "memories", "skills", "instructions"]) {
+          if (Array.isArray(result?.[key])) items.push(...result[key]);
+        }
+
+        const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
+          path: item.uri ?? `result-${idx}`,
+          score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
+          snippet: item.abstract ?? item.overview ?? "(no abstract)",
+          source: attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
+          citation: item.uri ?? "",
+        }));
+
+        return json({
+          results,
+          provider: results.length > 0 ? results[0].source : "openviking",
+          model: "openviking-local",
+          totalHits: result?.total ?? items.length,
+          routing: attempt.mode,
+          agentId,
+        });
       }
 
       return json({
