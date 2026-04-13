@@ -177,13 +177,10 @@ ensure_governed_handoff() {
     # bundle-sync now means: import approved source-of-truth (default origin/main)
     # into the controlled repo, then sync the installed bundle from that controlled
     # repo so the local governed bundle materializes approved remote main.
-    local controlled_repo
-    controlled_repo="$(grep "^RELEASECTL_CONTROLLED_REPO=" "$SELF_DIR/internal/fleet.env" 2>/dev/null | cut -d= -f2 | tr -d '"'"'"'"'"')" || true
-    controlled_repo="${controlled_repo:-/Users/openclaw/workspace/openclaw-fleet-mgmt}"
-    run_governed_sudo env RELEASECTL_SOURCE_ROOT="$controlled_repo" RELEASECTL_BUNDLE_SYNC_IMPORT_REF="${RELEASECTL_BUNDLE_SYNC_IMPORT_REF:-origin/main}" "$releasectl_exec" "$action" "$@"
+    run_governed_sudo env       HOME="$release_home"       XDG_CONFIG_HOME="$release_home/.config"       XDG_CACHE_HOME="$release_home/.cache"       RELEASECTL_SOURCE_REF="${RELEASECTL_SOURCE_REF:-origin/main}"       "$releasectl_exec" "$action" "$@"
   fi
 
-  run_governed_sudo "$releasectl_exec" "$action" "$@"
+  run_governed_sudo env     HOME="$release_home"     XDG_CONFIG_HOME="$release_home/.config"     XDG_CACHE_HOME="$release_home/.cache"     "$releasectl_exec" "$action" "$@"
 }
 
 usage() {
