@@ -94,8 +94,21 @@ sync_controlled_repo() {
 import_approved_source() {
   [[ "$MODE" == "sync" ]] || return 0
 
-  echo "IMPORT   approved source ref ($BUNDLE_SYNC_IMPORT_REF)"
-  "$SCRIPT_DIR/import-source.sh" "$BUNDLE_SYNC_IMPORT_REF"
+  local source_repo source_sha
+  source_repo="${RELEASECTL_SOURCE_REPO:-/Users/openclaw/workspace/openclaw}"
+
+  source_sha="$(git -C "$source_repo" rev-parse "$BUNDLE_SYNC_IMPORT_REF" 2>/dev/null || true)"
+  if [[ -z "$source_sha" ]]; then
+    git -C "$source_repo" fetch origin main --quiet 2>/dev/null || true
+    source_sha="$(git -C "$source_repo" rev-parse FETCH_HEAD 2>/dev/null || true)"
+  fi
+  if [[ -z "$source_sha" ]]; then
+    echo "error: unable to resolve approved source ref: $BUNDLE_SYNC_IMPORT_REF" >&2
+    return 1
+  fi
+
+  echo "IMPORT   approved source ref ($BUNDLE_SYNC_IMPORT_REF) sha=$source_sha"
+  RELEASECTL_SOURCE_REPO="$source_repo" "$SCRIPT_DIR/import-source.sh" "$source_sha"
 }
 
 sync_controlled_repo
