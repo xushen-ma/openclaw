@@ -1,4 +1,4 @@
-import { classifyOvFailure, writeOvStats, type OvStatsLayer } from "./ov-stats.js";
+import { classifyOvFailure, resolveStatsLogPath, writeOvStats, type OvStatsLayer } from "./ov-stats.js";
 
 export type OvSearchScope = "memory" | "sessions";
 
@@ -114,6 +114,12 @@ export async function executeLoggedOvRequest(opts: {
 }): Promise<LoggedOvHttpResult> {
   const { request, scope, agentId, query } = opts;
   const startedAt = Date.now();
+  const debug = process.env.OV_STATS_DEBUG === "1";
+  if (debug) {
+    console.error(
+      `[ov-http] pid=${process.pid} begin scope=${scope} mode=${request.mode} query=${JSON.stringify(query).slice(0, 140)} path=${resolveStatsLogPath()}`,
+    );
+  }
 
   try {
     const response = await fetch(request.url, request.init);
@@ -156,6 +162,11 @@ export async function executeLoggedOvRequest(opts: {
       layer: layerFor(scope, request.mode),
       routing: request.mode,
     }).catch(() => {});
+    if (debug) {
+      console.error(
+        `[ov-http] pid=${process.pid} logged scope=${scope} mode=${request.mode} results=${items.length} path=${resolveStatsLogPath()}`,
+      );
+    }
 
     return { ok: true, status: response.status, data, mode: request.mode };
   } catch (err) {
@@ -174,6 +185,11 @@ export async function executeLoggedOvRequest(opts: {
       failureClass: classifyOvFailure({ reason }),
       failure: reason.slice(0, 200),
     }).catch(() => {});
+    if (debug) {
+      console.error(
+        `[ov-http] pid=${process.pid} fetch error scope=${scope} mode=${request.mode} path=${resolveStatsLogPath()} error=${reason}`,
+      );
+    }
     return { ok: false, error: reason, mode: request.mode };
   }
 }

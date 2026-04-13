@@ -2,6 +2,8 @@ import { appendFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 
+const OV_STATS_DEBUG = process.env.OV_STATS_DEBUG === "1";
+
 export type OvStatsLayer = "fast-pass" | "fast-pass-shared" | "session-history";
 export type OvFailureClass = "token" | "rate" | "resource" | "http" | "backend";
 
@@ -21,7 +23,7 @@ export type OvStatsEntry = {
   failure?: string;
 };
 
-function resolveStatsLogPath(): string {
+export function resolveStatsLogPath(): string {
   const fromEnv = process.env.OV_STATS_LOG_PATH?.trim();
   if (fromEnv) return fromEnv;
   return `${homedir()}/.openclaw/stats/ov-stats.jsonl`;
@@ -58,6 +60,11 @@ export function classifyOvFailure(params: { status?: number; reason?: string }):
 
 export async function writeOvStats(entry: OvStatsEntry): Promise<void> {
   const logPath = resolveStatsLogPath();
+  if (OV_STATS_DEBUG) {
+    console.error(
+      `[ov-stats] pid=${process.pid} preparing write path=${logPath} op=${entry.op} layer=${entry.layer} routing=${entry.routing ?? ""}`,
+    );
+  }
   const line = JSON.stringify({
     ts: new Date().toISOString(),
     agent: entry.agent,
@@ -75,6 +82,17 @@ export async function writeOvStats(entry: OvStatsEntry): Promise<void> {
     failure: entry.failure,
   });
 
-  await mkdir(dirname(logPath), { recursive: true });
-  await appendFile(logPath, `${line}\n`, "utf8");
+  try {
+    await mkdir(dirname(logPath), { recursive: true });
+    await appendFile(logPath, `${line}\n`, "utf8");
+    if (OV_STATS_DEBUG) {
+      console.error(`[ov-stats] pid=${process.pid} write ok path=${logPath}`);
+    }
+  } catch (err) {
+    if (OV_STATS_DEBUG) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[ov-stats] pid=${process.pid} write failed path=${logPath} error=${message}`);
+    }
+    throw err;
+  }
 }
