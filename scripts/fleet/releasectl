@@ -460,16 +460,6 @@ case "$command" in
   rollback)
     run_with_post_normalize "rollback.sh" "$@"
     ;;
-  import-source)
-    source_ref="${1:-}"
-    if [[ -z "$source_ref" ]]; then
-      echo "error: missing required argument: source ref" >&2
-      echo "usage: releasectl import-source <ref> [--dry-run]" >&2
-      exit 2
-    fi
-    shift
-    "$INTERNAL_DIR/import-source.sh" "$source_ref" "$@"
-    ;;
   bundle-sync)
     mode="--check"
     while (($#)); do
