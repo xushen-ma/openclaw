@@ -153,8 +153,13 @@ if [[ -n "$SOURCE_STATUS" ]]; then
   exit 1
 fi
 
-# Resolve source ref to SHA
+# Resolve source ref to SHA. For remote refs like origin/main, fetch first so the
+# governed runtime does not depend on a pre-populated local remote-tracking ref.
 SOURCE_SHA="$(git -C "$SOURCE_REPO" rev-parse "$SOURCE_REF" 2>/dev/null || true)"
+if [[ -z "$SOURCE_SHA" ]]; then
+  git -C "$SOURCE_REPO" fetch origin main --quiet 2>/dev/null || true
+  SOURCE_SHA="$(git -C "$SOURCE_REPO" rev-parse "$SOURCE_REF" 2>/dev/null || true)"
+fi
 if [[ -z "$SOURCE_SHA" ]]; then
   echo "error: unable to resolve source ref: $SOURCE_REF" >&2
   exit 1
