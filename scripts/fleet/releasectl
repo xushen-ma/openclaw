@@ -384,8 +384,7 @@ case "$command" in
     ;;
   staging-deploy)
     target_ref="$(require_sha_flag "staging-deploy" "$@")"
-    "$INTERNAL_DIR/staging-deploy.sh" "$target_ref"
-    normalize_repo_permissions "${STAGING_REPO:-${STAGING_DIR:-$HOME/workspace/openclaw-staging}}" "apply"
+    run_with_post_normalize "staging-deploy.sh" "${STAGING_REPO:-${STAGING_DIR:-/Users/openclaw/workspace/openclaw-staging}}" "$target_ref"
     ;;
   test-status)
     # shellcheck disable=SC1091
