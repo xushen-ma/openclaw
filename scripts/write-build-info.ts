@@ -34,11 +34,55 @@ const resolveCommit = () => {
   }
 };
 
-const version = readPackageVersion();
+const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
+const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
+
+const normalizeCandidate = (value: string | null | undefined): string | null => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+};
+
+const resolveVersionFromTagContext = () => {
+  const envCandidates = [
+    process.env.OPENCLAW_BUILD_VERSION,
+    process.env.OPENCLAW_VERSION,
+    process.env.GIT_TAG,
+    process.env.CI_COMMIT_TAG,
+    process.env.GITHUB_REF_NAME,
+  ];
+  for (const candidate of envCandidates) {
+    const normalized = normalizeCandidate(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  try {
+    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    return (
+      raw.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
+      raw.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
+      null
+    );
+  } catch {
+    return null;
+  }
+};
+
+const version = resolveVersionFromTagContext() ?? readPackageVersion();
 const commit = resolveCommit();
 
 const buildInfo = {
   version,
+  packageVersion: readPackageVersion(),
   commit,
   builtAt: new Date().toISOString(),
 };
