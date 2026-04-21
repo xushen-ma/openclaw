@@ -28,3 +28,28 @@ declare module "../../scripts/ci-changed-scope.mjs" {
     runControlUiI18n: boolean;
   };
 }
+
+declare module "../../scripts/bundled-runtime-deps-paths.mjs" {
+  export function resolveBundledRuntimeDepsStateDir(params?: {
+    env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
+    stateRoot?: string;
+  }): string;
+  export function resolveBundledRuntimeDepsExtensionDir(params?: {
+    env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
+    stateRoot?: string;
+  }): string;
+  export function resolveBundledRuntimeDepsNodeModulesDir(params: {
+    pluginId: string;
+    env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
+    stateRoot?: string;
+  }): string;
+  export function resolveBundledRuntimeDepsStampPath(params: {
+    pluginId: string;
+    env?: NodeJS.ProcessEnv;
+    homedir?: () => string;
+    stateRoot?: string;
+  }): string;
+}

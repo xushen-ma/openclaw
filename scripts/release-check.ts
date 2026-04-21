@@ -124,6 +124,7 @@ function checkBundledExtensionMetadata() {
   });
   const builtArtifactErrors = collectBuiltBundledPluginStagedRuntimeDependencyErrors({
     bundledPluginsDir: resolve("dist/extensions"),
+    stateRoot: process.env.OPENCLAW_STATE_DIR,
   });
   const errors = [...manifestErrors, ...rootMirrorErrors, ...builtArtifactErrors];
   if (errors.length > 0) {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { resolveBundledRuntimeDepsNodeModulesDir } from "./bundled-runtime-deps-paths.mjs";
 import { removePathIfExists } from "./runtime-postbuild-shared.mjs";
 
 function symlinkType() {
@@ -99,6 +100,17 @@ function writeRuntimeModuleWrapper(sourcePath, targetPath) {
   );
 }
 
+function resolvePluginRuntimeNodeModulesDir(params) {
+  const stateNodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({
+    pluginId: params.pluginId,
+    stateRoot: params.stateRoot,
+  });
+  if (fs.existsSync(stateNodeModulesDir)) {
+    return stateNodeModulesDir;
+  }
+  return params.distPluginNodeModulesDir;
+}
+
 function stagePluginRuntimeOverlay(sourceDir, targetDir) {
   fs.mkdirSync(targetDir, { recursive: true });
 
@@ -174,11 +186,16 @@ export function stageBundledPluginRuntime(params = {}) {
     const distPluginDir = path.join(distExtensionsRoot, dirent.name);
     const runtimePluginDir = path.join(runtimeExtensionsRoot, dirent.name);
     const distPluginNodeModulesDir = path.join(distPluginDir, "node_modules");
+    const runtimeNodeModulesDir = resolvePluginRuntimeNodeModulesDir({
+      distPluginNodeModulesDir,
+      pluginId: dirent.name,
+      stateRoot: params.stateRoot,
+    });
 
     stagePluginRuntimeOverlay(distPluginDir, runtimePluginDir);
     linkPluginNodeModules({
       runtimePluginDir,
-      sourcePluginNodeModulesDir: distPluginNodeModulesDir,
+      sourcePluginNodeModulesDir: runtimeNodeModulesDir,
     });
   }
 }

@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+// @ts-expect-error -- scripts module is runtime JS without emitted typings
+import { resolveBundledRuntimeDepsNodeModulesDir } from "../../scripts/bundled-runtime-deps-paths.mjs";
 import { formatCliCommand } from "../cli/command-format.js";
 import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import type { RuntimeEnv } from "../runtime.js";
@@ -27,8 +29,18 @@ function isSourceCheckoutRoot(packageRoot: string): boolean {
   );
 }
 
-function dependencySentinelPath(depName: string): string {
-  return path.join("node_modules", ...depName.split("/"), "package.json");
+function resolveDependencySentinelPaths(
+  extensionsDir: string,
+  stateRoot: string | undefined,
+  pluginId: string,
+  depName: string,
+): string[] {
+  const stateNodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({ pluginId, stateRoot });
+  const distNodeModulesDir = path.join(extensionsDir, pluginId, "node_modules");
+  return [
+    path.join(stateNodeModulesDir, ...depName.split("/"), "package.json"),
+    path.join(distNodeModulesDir, ...depName.split("/"), "package.json"),
+  ];
 }
 
 function collectRuntimeDeps(packageJson: Record<string, unknown>): Record<string, unknown> {
@@ -113,6 +125,19 @@ export function scanBundledPluginRuntimeDeps(params: { packageRoot: string }): {
   missing: RuntimeDepEntry[];
   conflicts: RuntimeDepConflict[];
 } {
+  return scanBundledPluginRuntimeDepsWithState({
+    ...params,
+    stateRoot: process.env.OPENCLAW_STATE_DIR,
+  });
+}
+
+export function scanBundledPluginRuntimeDepsWithState(params: {
+  packageRoot: string;
+  stateRoot?: string;
+}): {
+  missing: RuntimeDepEntry[];
+  conflicts: RuntimeDepConflict[];
+} {
   if (isSourceCheckoutRoot(params.packageRoot)) {
     return { missing: [], conflicts: [] };
   }
@@ -121,9 +146,17 @@ export function scanBundledPluginRuntimeDeps(params: { packageRoot: string }): {
     return { missing: [], conflicts: [] };
   }
   const { deps, conflicts } = collectBundledPluginRuntimeDeps({ extensionsDir });
-  const missing = deps.filter(
-    (dep) => !fs.existsSync(path.join(params.packageRoot, dependencySentinelPath(dep.name))),
-  );
+  const missing = deps.filter((dep) => {
+    return dep.pluginIds.some((pluginId) => {
+      const candidates = resolveDependencySentinelPaths(
+        extensionsDir,
+        params.stateRoot,
+        pluginId,
+        dep.name,
+      );
+      return candidates.every((candidatePath) => !fs.existsSync(candidatePath));
+    });
+  });
   return { missing, conflicts };
 }
 

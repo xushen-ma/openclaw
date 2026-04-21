@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  resolveBundledRuntimeDepsExtensionDir,
+  resolveBundledRuntimeDepsNodeModulesDir,
+} from "../bundled-runtime-deps-paths.mjs";
 
 const JS_EXTENSIONS = new Set([".cjs", ".js", ".mjs"]);
 const CURATED_ROOT_RUNTIME_MIRRORS = new Set([
@@ -53,12 +57,32 @@ function usesStagedRuntimeDependencies(packageJson) {
   return packageJson?.openclaw?.bundle?.stageRuntimeDependencies === true;
 }
 
-function dependencySentinelPath(packageRoot, dependencyName) {
-  return path.join(packageRoot, "node_modules", ...dependencyName.split("/"), "package.json");
+function dependencySentinelPath(nodeModulesRoot, dependencyName) {
+  return path.join(nodeModulesRoot, ...dependencyName.split("/"), "package.json");
 }
 
 function pluginIdFromPackageJsonPath(packageJsonPath) {
   return path.basename(path.dirname(packageJsonPath));
+}
+
+function resolveBundledRuntimeDepsNodeModulesRoot(pluginRoot, params = {}) {
+  const pluginId = path.basename(pluginRoot);
+  const stateNodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({
+    pluginId,
+    stateRoot: params.stateRoot,
+  });
+  if (fs.existsSync(stateNodeModulesDir)) {
+    return stateNodeModulesDir;
+  }
+  const distNodeModulesDir = path.join(pluginRoot, "node_modules");
+  if (fs.existsSync(distNodeModulesDir)) {
+    return distNodeModulesDir;
+  }
+  return path.join(
+    resolveBundledRuntimeDepsExtensionDir({ stateRoot: params.stateRoot }),
+    pluginId,
+    "node_modules",
+  );
 }
 
 export function collectBundledPluginRuntimeDependencySpecs(bundledPluginsDir) {
@@ -94,12 +118,15 @@ export function collectBuiltBundledPluginStagedRuntimeDependencyErrors(params) {
     }
     const pluginId = pluginIdFromPackageJsonPath(packageJsonPath);
     const pluginRoot = path.dirname(packageJsonPath);
+    const stagedNodeModulesDir = resolveBundledRuntimeDepsNodeModulesRoot(pluginRoot, {
+      stateRoot: params.stateRoot,
+    });
 
     for (const [dependencyName, spec] of collectRuntimeDependencySpecs(packageJson)) {
-      if (!fs.existsSync(dependencySentinelPath(pluginRoot, dependencyName))) {
+      if (!fs.existsSync(dependencySentinelPath(stagedNodeModulesDir, dependencyName))) {
         const specText = String(spec);
         errors.push(
-          `built bundled plugin '${pluginId}' is missing staged runtime dependency '${dependencyName}: ${specText}' under dist/extensions/${pluginId}/node_modules.`,
+          `built bundled plugin '${pluginId}' is missing staged runtime dependency '${dependencyName}: ${specText}' under ${stagedNodeModulesDir}.`,
         );
       }
     }

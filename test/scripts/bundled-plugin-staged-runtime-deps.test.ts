@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { resolveBundledRuntimeDepsNodeModulesDir } from "../../scripts/bundled-runtime-deps-paths.mjs";
 import { collectBuiltBundledPluginStagedRuntimeDependencyErrors } from "../../scripts/lib/bundled-plugin-root-runtime-mirrors.mjs";
 import { createScriptTestHarness } from "./test-helpers.js";
 
@@ -31,9 +32,10 @@ describe("collectBuiltBundledPluginStagedRuntimeDependencyErrors", () => {
     expect(
       collectBuiltBundledPluginStagedRuntimeDependencyErrors({
         bundledPluginsDir: path.join(repoRoot, "dist/extensions"),
+        stateRoot: repoRoot,
       }),
     ).toEqual([
-      "built bundled plugin 'diffs' is missing staged runtime dependency '@pierre/diffs: ^0.1.0' under dist/extensions/diffs/node_modules.",
+      `built bundled plugin 'diffs' is missing staged runtime dependency '@pierre/diffs: ^0.1.0' under ${resolveBundledRuntimeDepsNodeModulesDir({ pluginId: "diffs", stateRoot: repoRoot })}.`,
     ]);
   });
 
@@ -51,14 +53,23 @@ describe("collectBuiltBundledPluginStagedRuntimeDependencyErrors", () => {
         },
       },
     });
-    writeJson(repoRoot, "dist/extensions/diffs/node_modules/@pierre/diffs/package.json", {
-      name: "@pierre/diffs",
-      version: "0.1.0",
-    });
+    const stagedDepPath = path.join(
+      resolveBundledRuntimeDepsNodeModulesDir({ pluginId: "diffs", stateRoot: repoRoot }),
+      "@pierre",
+      "diffs",
+      "package.json",
+    );
+    fs.mkdirSync(path.dirname(stagedDepPath), { recursive: true });
+    fs.writeFileSync(
+      stagedDepPath,
+      `${JSON.stringify({ name: "@pierre/diffs", version: "0.1.0" }, null, 2)}\n`,
+      "utf8",
+    );
 
     expect(
       collectBuiltBundledPluginStagedRuntimeDependencyErrors({
         bundledPluginsDir: path.join(repoRoot, "dist/extensions"),
+        stateRoot: repoRoot,
       }),
     ).toEqual([]);
   });

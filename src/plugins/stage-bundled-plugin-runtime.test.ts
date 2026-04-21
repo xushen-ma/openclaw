@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
+// @ts-expect-error -- scripts module is runtime JS without emitted typings
+import { resolveBundledRuntimeDepsNodeModulesDir } from "../../scripts/bundled-runtime-deps-paths.mjs";
 import { stageBundledPluginRuntime } from "../../scripts/stage-bundled-plugin-runtime.mjs";
 import { bundledDistPluginFile } from "../../test/helpers/bundled-plugin-paths.js";
 import { discoverOpenClawPlugins } from "./discovery.js";
@@ -12,6 +14,10 @@ const tempDirs: string[] = [];
 
 function makeRepoRoot(prefix: string): string {
   return makeTrackedTempDir(prefix, tempDirs);
+}
+
+function createStateRoot(repoRoot: string): string {
+  return path.join(repoRoot, "state");
 }
 
 function createDistPluginDir(repoRoot: string, pluginId: string) {
@@ -78,30 +84,40 @@ afterEach(() => {
 describe("stageBundledPluginRuntime", () => {
   it("stages bundled dist plugins as runtime wrappers and links staged dist node_modules", () => {
     const repoRoot = makeRepoRoot("openclaw-stage-bundled-runtime-");
-    const distPluginDir = createDistPluginDir(repoRoot, "diffs");
+    createDistPluginDir(repoRoot, "diffs");
+    const pluginId = "diffs";
+    const stateRoot = createStateRoot(repoRoot);
+    const stateNodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({
+      pluginId,
+      stateRoot,
+    });
     fs.mkdirSync(path.join(repoRoot, "dist"), { recursive: true });
-    fs.mkdirSync(path.join(distPluginDir, "node_modules", "@pierre", "diffs"), {
+    fs.mkdirSync(stateNodeModulesDir, { recursive: true });
+    fs.mkdirSync(path.join(stateNodeModulesDir, "@pierre", "diffs"), {
       recursive: true,
     });
     setupRepoFiles(repoRoot, {
-      [bundledDistPluginFile("diffs", "index.js")]: "export default {}\n",
-      [bundledDistPluginFile("diffs", "node_modules/@pierre/diffs/index.js")]:
+      [bundledDistPluginFile(pluginId, "index.js")]: "export default {}\n",
+      [bundledDistPluginFile(pluginId, "node_modules/@pierre/diffs/index.js")]:
         "export default {}\n",
     });
 
-    stageBundledPluginRuntime({ repoRoot });
+    stageBundledPluginRuntime({ repoRoot, stateRoot } as unknown as {
+      repoRoot: string;
+      cwd?: string;
+    });
 
     const runtimePluginDir = path.join(repoRoot, "dist-runtime", "extensions", "diffs");
     expectRuntimePluginWrapperContains({
       repoRoot,
-      pluginId: "diffs",
+      pluginId,
       expectedImport: distRuntimeImportPath("diffs"),
     });
     expect(fs.lstatSync(path.join(runtimePluginDir, "node_modules")).isSymbolicLink()).toBe(true);
     expect(fs.realpathSync(path.join(runtimePluginDir, "node_modules"))).toBe(
-      fs.realpathSync(path.join(distPluginDir, "node_modules")),
+      fs.realpathSync(stateNodeModulesDir),
     );
-    expect(fs.existsSync(path.join(distPluginDir, "node_modules"))).toBe(true);
+    expect(fs.existsSync(stateNodeModulesDir)).toBe(true);
   });
 
   it("writes wrappers that forward plugin entry imports into canonical dist files", async () => {

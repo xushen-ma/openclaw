@@ -2,7 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { scanBundledPluginRuntimeDeps } from "./doctor-bundled-plugin-runtime-deps.js";
+// @ts-expect-error -- scripts module is runtime JS without emitted typings
+import { resolveBundledRuntimeDepsNodeModulesDir } from "../../scripts/bundled-runtime-deps-paths.mjs";
+import {
+  scanBundledPluginRuntimeDeps,
+  scanBundledPluginRuntimeDepsWithState,
+} from "./doctor-bundled-plugin-runtime-deps.js";
 
 function writeJson(filePath: string, value: unknown) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -59,9 +64,35 @@ describe("doctor bundled plugin runtime deps", () => {
     const result = scanBundledPluginRuntimeDeps({ packageRoot: root });
     const missing = result.missing.map((dep) => `${dep.name}@${dep.version}`);
 
-    expect(missing).toEqual(["@scope/dep-two@2.0.0", "dep-opt@3.0.0"]);
+    expect(missing).toEqual(["@scope/dep-two@2.0.0", "dep-one@1.0.0", "dep-opt@3.0.0"]);
     expect(result.conflicts).toHaveLength(1);
     expect(result.conflicts[0]?.name).toBe("dep-conflict");
     expect(result.conflicts[0]?.versions).toEqual(["1.0.0", "2.0.0"]);
+  });
+
+  it("uses state-backed staged runtime deps for missing checks", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-doctor-bundled-state-"));
+    const stateRoot = path.join(root, "state");
+    writeJson(path.join(root, "dist", "extensions", "alpha", "package.json"), {
+      dependencies: {
+        "state-scope": "5.0.0",
+      },
+      openclaw: {
+        bundle: {
+          stageRuntimeDependencies: true,
+        },
+      },
+    });
+    const stateNodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({
+      pluginId: "alpha",
+      stateRoot,
+    });
+    writeJson(path.join(stateNodeModulesDir, "state-scope", "package.json"), {
+      name: "state-scope",
+      version: "5.0.0",
+    });
+
+    const result = scanBundledPluginRuntimeDepsWithState({ packageRoot: root, stateRoot });
+    expect(result.missing).toEqual([]);
   });
 });

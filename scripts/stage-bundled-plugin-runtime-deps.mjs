@@ -4,6 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import semverSatisfies from "semver/functions/satisfies.js";
+import {
+  resolveBundledRuntimeDepsNodeModulesDir,
+  resolveBundledRuntimeDepsStampPath,
+} from "./bundled-runtime-deps-paths.mjs";
 import { resolveNpmRunner } from "./npm-runner.mjs";
 
 function readJson(filePath) {
@@ -834,10 +838,6 @@ function runNpmInstall(params) {
   throw new Error(output || "npm install failed");
 }
 
-function resolveRuntimeDepsStampPath(pluginDir) {
-  return path.join(pluginDir, ".openclaw-runtime-deps-stamp.json");
-}
-
 function createRuntimeDepsFingerprint(packageJson, pruneConfig, params = {}) {
   const repoRoot = params.repoRoot;
   const lockfilePath =
@@ -882,6 +882,8 @@ function stageInstalledRootRuntimeDeps(params) {
     pluginDir,
     pruneConfig,
     repoRoot,
+    nodeModulesDir,
+    stampPath,
   } = params;
   const dependencySpecs = {
     ...packageJson.dependencies,
@@ -911,8 +913,6 @@ function stageInstalledRootRuntimeDeps(params) {
   const rootsToCopy = selectRuntimeDependencyRootsToCopy(resolution);
   const allowedRealRoots = rootsToCopy.map((record) => record.realRoot);
 
-  const nodeModulesDir = path.join(pluginDir, "node_modules");
-  const stampPath = resolveRuntimeDepsStampPath(pluginDir);
   const stagedNodeModulesDir = path.join(
     makePluginOwnedTempDir(pluginDir, "stage"),
     "node_modules",
@@ -1000,9 +1000,9 @@ function installPluginRuntimeDeps(params) {
     pluginId,
     pruneConfig,
     repoRoot,
+    nodeModulesDir,
+    stampPath,
   } = params;
-  const nodeModulesDir = path.join(pluginDir, "node_modules");
-  const stampPath = resolveRuntimeDepsStampPath(pluginDir);
   const tempInstallDir = makePluginOwnedTempDir(pluginDir, "install");
   const pinnedGroups = resolvePinnedRuntimeDependencyGroups(packageJson, {
     directDependencyPackageRoot,
@@ -1064,8 +1064,14 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
       ? sourcePluginRoot
       : null;
     const packageJson = sanitizeBundledManifestForRuntimeInstall(pluginDir);
-    const nodeModulesDir = path.join(pluginDir, "node_modules");
-    const stampPath = resolveRuntimeDepsStampPath(pluginDir);
+    const nodeModulesDir = resolveBundledRuntimeDepsNodeModulesDir({
+      pluginId,
+      stateRoot: params.stateRoot,
+    });
+    const stampPath = resolveBundledRuntimeDepsStampPath({
+      pluginId,
+      stateRoot: params.stateRoot,
+    });
     if (!hasRuntimeDeps(packageJson) || !shouldStageRuntimeDeps(packageJson)) {
       removePathIfExists(nodeModulesDir);
       removePathIfExists(stampPath);
@@ -1090,6 +1096,8 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
         fingerprint,
         packageJson,
         pluginDir,
+        nodeModulesDir,
+        stampPath,
         pruneConfig,
         repoRoot,
       })
@@ -1106,6 +1114,8 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
           packageJson,
           pluginDir,
           pluginId,
+          nodeModulesDir,
+          stampPath,
           pruneConfig,
           repoRoot,
         },

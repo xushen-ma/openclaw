@@ -10,6 +10,7 @@ type StageRuntimeDepsInstallParams = {
 type StageBundledPluginRuntimeDeps = (params?: {
   cwd?: string;
   repoRoot?: string;
+  stateRoot?: string;
   installAttempts?: number;
   installPluginRuntimeDepsImpl?: (params: StageRuntimeDepsInstallParams) => void;
 }) => void;
@@ -61,6 +62,22 @@ function writeRepoFile(repoRoot: string, relativePath: string, value: string) {
   const fullPath = path.join(repoRoot, relativePath);
   fs.mkdirSync(path.dirname(fullPath), { recursive: true });
   fs.writeFileSync(fullPath, value, "utf8");
+}
+
+function createBundledRuntimeStateRoot(repoRoot: string): string {
+  return path.join(repoRoot, "state");
+}
+
+async function stageBundledPluginRuntimeDepsWithState(params: {
+  repoRoot: string;
+  installAttempts?: number;
+  installPluginRuntimeDepsImpl?: (params: StageRuntimeDepsInstallParams) => void;
+}) {
+  const stageBundledPluginRuntimeDeps = await loadStageBundledPluginRuntimeDeps();
+  return stageBundledPluginRuntimeDeps({
+    ...params,
+    stateRoot: createBundledRuntimeStateRoot(params.repoRoot),
+  });
 }
 
 function createBaileysMessagesMediaSource(params?: {
@@ -234,12 +251,12 @@ describe("stageBundledPluginRuntimeDeps", () => {
       "export interface HugeTypeSurface {}\n",
     );
 
-    return loadStageBundledPluginRuntimeDeps().then((stageBundledPluginRuntimeDeps) => {
-      stageBundledPluginRuntimeDeps({ repoRoot });
-
+    return stageBundledPluginRuntimeDepsWithState({
+      repoRoot,
+    }).then(() => {
       const stagedRoot = path.join(
-        repoRoot,
-        "dist",
+        createBundledRuntimeStateRoot(repoRoot),
+        "bundled-runtime-deps",
         "extensions",
         "feishu",
         "node_modules",
@@ -286,9 +303,8 @@ describe("stageBundledPluginRuntimeDeps", () => {
       ),
     );
 
-    const stageBundledPluginRuntimeDeps = await loadStageBundledPluginRuntimeDeps();
     const installs: Array<Record<string, unknown>> = [];
-    stageBundledPluginRuntimeDeps({
+    await stageBundledPluginRuntimeDepsWithState({
       repoRoot,
       installAttempts: 1,
       installPluginRuntimeDepsImpl(params: { packageJson: Record<string, unknown> }) {

@@ -54,6 +54,7 @@ const errors = [
   }),
   ...collectBuiltBundledPluginStagedRuntimeDependencyErrors({
     bundledPluginsDir: builtPluginsDir,
+    stateRoot: process.env.OPENCLAW_STATE_DIR,
   }),
 ];
 
