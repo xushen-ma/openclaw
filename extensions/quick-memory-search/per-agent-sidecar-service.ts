@@ -29,7 +29,9 @@ const MAX_RESTART_DELAY_MS = 5_000;
 function parseLocalUrl(
   rawUrl: string,
 ): { ok: true; host: string; port: number; baseUrl: string } | { ok: false; reason: string } {
-  if (!rawUrl.trim()) return { ok: false, reason: "per-agent base URL is not configured" };
+  if (!rawUrl.trim()) {
+    return { ok: false, reason: "per-agent base URL is not configured" };
+  }
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -102,7 +104,9 @@ export function createQuickMemoryPerAgentSidecarService(config: QuickMemorySidec
   });
 
   const scheduleRestart = () => {
-    if (!target.ok || stopping) return;
+    if (!target.ok || stopping) {
+      return;
+    }
     clearRestartTimer();
     const delayMs = Math.min(1_000 * Math.max(1, restartCount), MAX_RESTART_DELAY_MS);
     restartTimer = setTimeout(() => {
@@ -112,7 +116,9 @@ export function createQuickMemoryPerAgentSidecarService(config: QuickMemorySidec
   };
 
   const startChild = () => {
-    if (!target.ok || stopping || child) return;
+    if (!target.ok || stopping || child) {
+      return;
+    }
 
     try {
       const env = {
@@ -127,11 +133,15 @@ export function createQuickMemoryPerAgentSidecarService(config: QuickMemorySidec
 
       child.stdout?.on("data", (chunk) => {
         const text = String(chunk).trim();
-        if (text) config.logger.info(`[quick-memory-sidecar] ${text}`);
+        if (text) {
+          config.logger.info(`[quick-memory-sidecar] ${text}`);
+        }
       });
       child.stderr?.on("data", (chunk) => {
         const text = String(chunk).trim();
-        if (text) config.logger.warn(`[quick-memory-sidecar] ${text}`);
+        if (text) {
+          config.logger.warn(`[quick-memory-sidecar] ${text}`);
+        }
       });
       child.on("error", (err) => {
         config.logger.error(`[quick-memory-sidecar] failed to start: ${String(err)}`);
@@ -140,7 +150,9 @@ export function createQuickMemoryPerAgentSidecarService(config: QuickMemorySidec
         const exitedPid = child?.pid;
         child = null;
         lastExit = { code, signal, at: new Date().toISOString() };
-        if (stopping) return;
+        if (stopping) {
+          return;
+        }
         restartCount += 1;
         config.logger.warn(
           `[quick-memory-sidecar] exited (pid=${exitedPid ?? "unknown"}, code=${String(code)}, signal=${String(signal)}); restarting`,
@@ -160,14 +172,18 @@ export function createQuickMemoryPerAgentSidecarService(config: QuickMemorySidec
   const stopChild = async () => {
     stopping = true;
     clearRestartTimer();
-    if (!child) return;
+    if (!child) {
+      return;
+    }
 
     const proc = child;
     child = null;
     await new Promise<void>((resolve) => {
       let settled = false;
       const done = () => {
-        if (settled) return;
+        if (settled) {
+          return;
+        }
         settled = true;
         resolve();
       };

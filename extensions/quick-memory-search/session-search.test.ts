@@ -33,7 +33,9 @@ describe("quick_session_search", () => {
       "charlie",
     );
     const result = await tool.execute("call-1", { query: "handoff", maxResults: 1 });
-    const payload = JSON.parse(result.content[0].text);
+    const firstContent = result.content[0];
+    const payload =
+      firstContent.type === "text" ? JSON.parse(firstContent.text) : { provider: "unexpected" };
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://127.0.0.1:8091/api/v1/search/session-find",

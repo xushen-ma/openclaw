@@ -42,7 +42,7 @@ describe("quick-memory per-agent sidecar service", () => {
       logger,
     });
 
-    await sidecar.service.start({} as never);
+    await sidecar.service.start();
 
     expect(spawnMock).toHaveBeenCalledWith(
       process.execPath,
@@ -68,7 +68,7 @@ describe("quick-memory per-agent sidecar service", () => {
       }),
     );
 
-    await sidecar.service.stop?.({} as never);
+    await sidecar.service.stop?.();
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
   });
 
@@ -85,7 +85,7 @@ describe("quick-memory per-agent sidecar service", () => {
       logger,
     });
 
-    await sidecar.service.start({} as never);
+    await sidecar.service.start();
 
     expect(spawnMock).not.toHaveBeenCalled();
     expect(sidecar.status()).toEqual(

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import register from "./index.js";
 
 afterEach(() => {
@@ -85,7 +85,9 @@ describe("quick-memory-search plugin register", () => {
       json: async () => ({
         result: {
           total: 1,
-          resources: [{ uri: "viking://resources/ben-sessions/1", score: 0.9, abstract: "session" }],
+          resources: [
+            { uri: "viking://resources/ben-sessions/1", score: 0.9, abstract: "session" },
+          ],
         },
       }),
     }));
@@ -107,7 +109,10 @@ describe("quick-memory-search plugin register", () => {
     } as never);
 
     const quickSessionTool = tools.find((tool) => tool.name === "quick_session_search");
-    const result = await quickSessionTool.execute("call-1", { query: "session context", maxResults: 3 });
+    const result = await quickSessionTool.execute("call-1", {
+      query: "session context",
+      maxResults: 3,
+    });
     const payload = JSON.parse(result.content[0].text);
 
     expect(fetchMock).toHaveBeenCalledWith(
