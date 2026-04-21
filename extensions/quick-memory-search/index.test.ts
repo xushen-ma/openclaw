@@ -36,6 +36,27 @@ describe("quick-memory-search plugin register", () => {
     expect(service.id).toBe("quick-memory-search.per-agent-sidecar");
   });
 
+  it("falls back to .js sidecar path when .mjs artifact is absent", () => {
+    const registerService = vi.fn();
+
+    register({
+      pluginConfig: {
+        perAgentOvBaseUrl: "http://127.0.0.1:8091",
+      },
+      resolvePath: (p: string) =>
+        p === "./per-agent-ov-http-server.mjs"
+          ? "/missing/per-agent-ov-http-server.mjs"
+          : "/present/per-agent-ov-http-server.js",
+      registerTool: vi.fn(),
+      registerService,
+      registerGatewayMethod: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    } as never);
+
+    const [service] = registerService.mock.calls[0];
+    expect(service.start).toBeTypeOf("function");
+  });
+
   it("passes agentId from tool context into quick_memory_search", async () => {
     const tools: any[] = [];
     const fetchMock = vi.fn(async () => ({

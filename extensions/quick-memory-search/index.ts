@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
 import { jsonResult, readStringParam, readNumberParam } from "openclaw/plugin-sdk/channel-actions";
 import { isRecord, normalizeOptionalString } from "openclaw/plugin-sdk/text-runtime";
@@ -144,7 +145,7 @@ export default function register(api: OpenClawPluginApi) {
 
   const sidecar = createQuickMemoryPerAgentSidecarService({
     perAgentBaseUrl: httpConfig.perAgentBaseUrl ?? "",
-    scriptPath: api.resolvePath("./per-agent-ov-http-server.mjs"),
+    scriptPath: resolvePerAgentSidecarScriptPath(api),
     logger: api.logger,
   });
   api.registerService(sidecar.service);
@@ -159,4 +160,20 @@ export default function register(api: OpenClawPluginApi) {
 
 function isAgentRouting(value: unknown): value is OvHttpConfig["agentRouting"] {
   return value === "header" || value === "path" || value === "query";
+}
+
+function resolvePerAgentSidecarScriptPath(api: Pick<OpenClawPluginApi, "resolvePath" | "logger">) {
+  const candidates = [
+    api.resolvePath("./per-agent-ov-http-server.mjs"),
+    api.resolvePath("./per-agent-ov-http-server.js"),
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  api.logger.warn?.(
+    "quick-memory-search: sidecar script not found via built artifact probing; defaulting to .mjs path",
+  );
+  return candidates[0];
 }
