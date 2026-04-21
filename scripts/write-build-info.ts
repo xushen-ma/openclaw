@@ -58,7 +58,7 @@ const resolveVersionFromTagContext = () => {
   }
 
   try {
-    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+    const raw = execSync("git tag --points-at HEAD --sort=-version:refname", {
       cwd: rootDir,
       stdio: ["ignore", "pipe", "ignore"],
     })
