@@ -64,9 +64,9 @@ type SeenIdEntry = {
 // This only applies when multiple candidates resolve to the same on-disk plugin.
 const PLUGIN_ORIGIN_RANK: Readonly<Record<PluginOrigin, number>> = {
   config: 0,
-  workspace: 1,
-  global: 2,
-  bundled: 3,
+  bundled: 1,
+  workspace: 2,
+  global: 3,
 };
 
 export type PluginManifestRecord = {
@@ -588,7 +588,7 @@ export function loadPluginManifestRegistry(
       })();
       if (samePlugin) {
         // Prefer higher-precedence origins even if candidates are passed in
-        // an unexpected order (config > workspace > global > bundled).
+        // an unexpected order (config > bundled > workspace > global).
         if (PLUGIN_ORIGIN_RANK[candidate.origin] < PLUGIN_ORIGIN_RANK[existing.candidate.origin]) {
           records[existing.recordIndex] = isBundleRecord
             ? buildBundleRecord({

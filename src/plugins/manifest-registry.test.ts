@@ -961,7 +961,7 @@ describe("loadPluginManifestRegistry", () => {
     expect(registry.plugins[0]).toMatchObject(expected);
   });
 
-  it("prefers higher-precedence origins for the same physical directory (config > workspace > global > bundled)", () => {
+  it("prefers higher-precedence origins for the same physical directory (config > bundled > workspace > global)", () => {
     const dir = makeTempDir();
     mkdirSafe(path.join(dir, "sub"));
     const manifest = { id: "precedence-plugin", configSchema: { type: "object" } };
@@ -987,6 +987,43 @@ describe("loadPluginManifestRegistry", () => {
     expect(countDuplicateWarnings(registry)).toBe(0);
     expect(registry.plugins.length).toBe(1);
     expect(registry.plugins[0]?.origin).toBe("config");
+  });
+
+  it.each([
+    {
+      name: "prefers bundled over workspace for same physical plugin root",
+      duplicateOrigin: "workspace" as const,
+    },
+    {
+      name: "prefers bundled over global for same physical plugin root",
+      duplicateOrigin: "global" as const,
+    },
+  ] as const)("$name", ({ duplicateOrigin }) => {
+    const dir = makeTempDir();
+    mkdirSafe(path.join(dir, "sub"));
+    const manifest = { id: "precedence-plugin", configSchema: { type: "object" } };
+    writeManifest(dir, manifest);
+
+    // Use a different-by-string path for the same physical directory.
+    const altDir = path.join(dir, "sub", "..");
+
+    const candidates: PluginCandidate[] = [
+      createPluginCandidate({
+        idHint: "precedence-plugin",
+        rootDir: altDir,
+        origin: duplicateOrigin,
+      }),
+      createPluginCandidate({
+        idHint: "precedence-plugin",
+        rootDir: dir,
+        origin: "bundled",
+      }),
+    ];
+
+    const registry = loadRegistry(candidates);
+    expect(countDuplicateWarnings(registry)).toBe(0);
+    expect(registry.plugins.length).toBe(1);
+    expect(registry.plugins[0]?.origin).toBe("bundled");
   });
 
   it("rejects manifest paths that escape plugin root via symlink", () => {
