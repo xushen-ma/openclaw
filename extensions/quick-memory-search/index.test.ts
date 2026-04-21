@@ -1,10 +1,26 @@
+import * as fs from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import register from "./index.js";
+import register, { resolvePerAgentSidecarScriptPath } from "./index.js";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   delete process.env.OV_PER_AGENT_HTTP_BASE;
   delete process.env.OV_LEGACY_HTTP_BASE;
+});
+
+it("prefers the built .js sidecar artifact", () => {
+  const tmpDir = fs.mkdtempSync("/tmp/qms-sidecar-");
+  const jsPath = `${tmpDir}/per-agent-ov-http-server.js`;
+  fs.writeFileSync(jsPath, "export default {}\n", "utf8");
+
+  const scriptPath = resolvePerAgentSidecarScriptPath({
+    resolvePath: (p: string) =>
+      p === "./per-agent-ov-http-server.js" ? jsPath : `${tmpDir}/per-agent-ov-http-server.mjs`,
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  } as never);
+
+  expect(scriptPath).toBe(jsPath);
 });
 
 describe("quick-memory-search plugin register", () => {

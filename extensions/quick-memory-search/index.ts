@@ -162,18 +162,28 @@ function isAgentRouting(value: unknown): value is OvHttpConfig["agentRouting"] {
   return value === "header" || value === "path" || value === "query";
 }
 
-function resolvePerAgentSidecarScriptPath(api: Pick<OpenClawPluginApi, "resolvePath" | "logger">) {
+function isReadableSidecarScript(path: string): boolean {
+  try {
+    return fs.statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export function resolvePerAgentSidecarScriptPath(
+  api: Pick<OpenClawPluginApi, "resolvePath" | "logger">,
+) {
   const candidates = [
-    api.resolvePath("./per-agent-ov-http-server.mjs"),
     api.resolvePath("./per-agent-ov-http-server.js"),
+    api.resolvePath("./per-agent-ov-http-server.mjs"),
   ];
   for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
+    if (isReadableSidecarScript(candidate)) {
       return candidate;
     }
   }
   api.logger.warn?.(
-    "quick-memory-search: sidecar script not found via built artifact probing; defaulting to .mjs path",
+    "quick-memory-search: sidecar script not found via built artifact probing; defaulting to .js path",
   );
   return candidates[0];
 }
