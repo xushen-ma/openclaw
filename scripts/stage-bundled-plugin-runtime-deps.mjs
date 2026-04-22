@@ -1132,7 +1132,7 @@ function stageSharedRootRuntimeDeps(params) {
   if (fs.existsSync(nodeModulesDir) && stamp?.fingerprint === fingerprint) {
     return;
   }
-  const sharedRuntimePluginDir = path.join(repoRoot, "dist");
+  const sharedRuntimePluginDir = path.join(repoRoot, ".openclaw-bundled-runtime-root");
   if (
     stageInstalledRootRuntimeDeps({
       directDependencyPackageRoot: null,
