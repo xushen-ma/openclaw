@@ -130,6 +130,40 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
   }
 }
 
+function stageSharedDistRuntimeOverlay(sourceDir, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  for (const dirent of fs.readdirSync(sourceDir, { withFileTypes: true })) {
+    if (dirent.name === "extensions") {
+      continue;
+    }
+
+    const sourcePath = path.join(sourceDir, dirent.name);
+    const targetPath = path.join(targetDir, dirent.name);
+
+    if (dirent.isDirectory()) {
+      stageSharedDistRuntimeOverlay(sourcePath, targetPath);
+      continue;
+    }
+
+    if (dirent.isSymbolicLink()) {
+      ensureSymlink(fs.readlinkSync(sourcePath), targetPath, undefined, sourcePath);
+      continue;
+    }
+
+    if (!dirent.isFile()) {
+      continue;
+    }
+
+    if (shouldCopyRuntimeJsFile(sourcePath) || shouldCopyRuntimeFile(sourcePath)) {
+      fs.copyFileSync(sourcePath, targetPath);
+      continue;
+    }
+
+    symlinkPath(sourcePath, targetPath);
+  }
+}
+
 function linkPluginNodeModules(params) {
   const runtimeNodeModulesDir = path.join(params.runtimePluginDir, "node_modules");
   removePathIfExists(runtimeNodeModulesDir);
@@ -150,7 +184,9 @@ export function stageBundledPluginRuntime(params = {}) {
   const distRoot = path.join(repoRoot, "dist");
   const runtimeRoot =
     params.runtimeRoot ??
-    (stateRoot ? path.join(stateRoot, "bundled-plugin-runtime") : path.join(repoRoot, "dist-runtime"));
+    (stateRoot
+      ? path.join(stateRoot, "bundled-plugin-runtime")
+      : path.join(repoRoot, "dist-runtime"));
   const distExtensionsRoot = path.join(distRoot, "extensions");
   const runtimeExtensionsRoot = path.join(runtimeRoot, "extensions");
 
@@ -160,6 +196,8 @@ export function stageBundledPluginRuntime(params = {}) {
   }
 
   removePathIfExists(runtimeRoot);
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  stageSharedDistRuntimeOverlay(distRoot, runtimeRoot);
   fs.mkdirSync(runtimeExtensionsRoot, { recursive: true });
 
   for (const dirent of fs.readdirSync(distExtensionsRoot, { withFileTypes: true })) {
