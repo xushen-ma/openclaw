@@ -6,6 +6,7 @@ import {
   collectRuntimeDependencyInstallSpecs,
   stageBundledPluginRuntimeDeps,
 } from "../../scripts/stage-bundled-plugin-runtime-deps.mjs";
+import { resolveBundledRuntimeDepsNodeModulesDir } from "../../scripts/bundled-runtime-deps-paths.mjs";
 import { createScriptTestHarness } from "./test-helpers.js";
 
 const { createTempDir } = createScriptTestHarness();
@@ -77,6 +78,85 @@ describe("stageBundledPluginRuntimeDeps", () => {
         { rootNodeModulesDir: "/tmp/node_modules" },
       ),
     ).toThrow(/disallowed runtime dependency spec for direct: file:\/etc\/passwd/u);
+  });
+
+  it("stages governed override plugins to state-root even without manifest opt-in", () => {
+    const { repoRoot } = createBundledPluginFixture({
+      pluginId: "matrix",
+      packageJson: {
+        name: "@openclaw/matrix",
+        version: "2026.4.15-beta.1",
+        dependencies: {
+          "@acme/matrix-runtime": "^1.0.0",
+        },
+      },
+    });
+    createBundledPluginFixture({
+      pluginId: "acpx",
+      packageJson: {
+        name: "@openclaw/acpx",
+        version: "2026.4.15-beta.1",
+        dependencies: {
+          "acpx-runtime": "^2.0.0",
+        },
+      },
+    });
+
+    const matrixRuntimeDir = path.join(repoRoot, "node_modules", "@acme", "matrix-runtime");
+    const acpxRuntimeDir = path.join(repoRoot, "node_modules", "acpx-runtime");
+    fs.mkdirSync(matrixRuntimeDir, { recursive: true });
+    fs.mkdirSync(acpxRuntimeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(matrixRuntimeDir, "package.json"),
+      '{ "name": "@acme/matrix-runtime", "version": "1.0.0" }\n',
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(matrixRuntimeDir, "index.js"),
+      'module.exports = "matrix-runtime";\n',
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(acpxRuntimeDir, "package.json"),
+      '{ "name": "acpx-runtime", "version": "2.0.0" }\n',
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(acpxRuntimeDir, "index.js"),
+      'module.exports = "acpx-runtime";\n',
+      "utf8",
+    );
+
+    const stateRoot = path.join(repoRoot, "state-root");
+    const matrixStagedNodeModules = resolveBundledRuntimeDepsNodeModulesDir({
+      pluginId: "matrix",
+      stateRoot,
+    });
+    const acpxStagedNodeModules = resolveBundledRuntimeDepsNodeModulesDir({
+      pluginId: "acpx",
+      stateRoot,
+    });
+
+    stageBundledPluginRuntimeDeps({ cwd: repoRoot, stateRoot });
+    expect(fs.existsSync(matrixStagedNodeModules)).toBe(false);
+    expect(fs.existsSync(acpxStagedNodeModules)).toBe(false);
+
+    const previousOverride = process.env.OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS;
+    process.env.OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS = "matrix,acpx";
+
+    try {
+      stageBundledPluginRuntimeDeps({ cwd: repoRoot, stateRoot });
+    } finally {
+      if (previousOverride === undefined) {
+        delete process.env.OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS;
+      } else {
+        process.env.OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS = previousOverride;
+      }
+    }
+    expect(
+      fs.existsSync(path.join(matrixStagedNodeModules, "@acme", "matrix-runtime", "index.js")),
+    ).toBe(true);
+    expect(fs.existsSync(path.join(acpxStagedNodeModules, "acpx-runtime", "index.js"))).toBe(true);
   });
 
   it("writes required and optional fallback deps into one manifest", () => {

@@ -197,6 +197,8 @@ const defaultStagedRuntimeDepPruneRules = new Map([
 ]);
 const runtimeDepsStagingVersion = 6;
 const exactVersionSpecRe = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const GOVERNED_STAGING_RUNTIME_DEPENDENCY_OVERRIDE_ENV =
+  "OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS";
 
 function resolveRuntimeDepPruneConfig(params = {}) {
   return {
@@ -645,8 +647,40 @@ function hasRuntimeDeps(packageJson) {
   );
 }
 
-function shouldStageRuntimeDeps(packageJson) {
-  return packageJson.openclaw?.bundle?.stageRuntimeDependencies === true;
+function parsePluginIdAllowlist(input) {
+  if (!input) {
+    return [];
+  }
+
+  const rawValues =
+    typeof input === "string"
+      ? input.split(",").flatMap((value) => value.split(/\s+/u))
+      : input instanceof Set
+        ? [...input]
+        : [input];
+
+  return [
+    ...new Set(
+      rawValues
+        .map((value) => String(value ?? "").trim())
+        .filter((value) => value.length > 0),
+    ),
+  ].toSorted((left, right) => left.localeCompare(right));
+}
+
+function resolveGovernedStagingPluginOverrides(params = {}) {
+  const override =
+    params.forceStageRuntimeDependenciesForPlugins ??
+    process.env[GOVERNED_STAGING_RUNTIME_DEPENDENCY_OVERRIDE_ENV];
+
+  return new Set(parsePluginIdAllowlist(override));
+}
+
+function shouldStageRuntimeDeps(packageJson, pluginId, options = {}) {
+  if (packageJson.openclaw?.bundle?.stageRuntimeDependencies === true) {
+    return true;
+  }
+  return options.forceStagePlugins?.has(pluginId) ?? false;
 }
 
 function sanitizeBundledManifestForRuntimeInstall(pluginDir) {
@@ -1057,6 +1091,7 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
     params.installPluginRuntimeDepsImpl ?? installPluginRuntimeDeps;
   const installAttempts = params.installAttempts ?? 3;
   const pruneConfig = resolveRuntimeDepPruneConfig(params);
+  const forceStagePlugins = resolveGovernedStagingPluginOverrides(params);
   for (const pluginDir of listBundledPluginRuntimeDirs(repoRoot)) {
     const pluginId = path.basename(pluginDir);
     const sourcePluginRoot = resolveInstalledWorkspacePluginRoot(repoRoot, pluginId);
@@ -1072,7 +1107,10 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
       pluginId,
       stateRoot: params.stateRoot,
     });
-    if (!hasRuntimeDeps(packageJson) || !shouldStageRuntimeDeps(packageJson)) {
+    if (
+      !hasRuntimeDeps(packageJson) ||
+      !shouldStageRuntimeDeps(packageJson, pluginId, { forceStagePlugins })
+    ) {
       removePathIfExists(nodeModulesDir);
       removePathIfExists(stampPath);
       continue;
