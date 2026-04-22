@@ -166,8 +166,11 @@ function linkPluginNodeModules(params) {
 
 export function stageBundledPluginRuntime(params = {}) {
   const repoRoot = params.cwd ?? params.repoRoot ?? process.cwd();
+  const stateRoot = params.stateRoot?.trim() || process.env.OPENCLAW_STATE_DIR?.trim() || null;
   const distRoot = path.join(repoRoot, "dist");
-  const runtimeRoot = path.join(repoRoot, "dist-runtime");
+  const runtimeRoot =
+    params.runtimeRoot ??
+    (stateRoot ? path.join(stateRoot, "bundled-plugin-runtime") : path.join(repoRoot, "dist-runtime"));
   const distExtensionsRoot = path.join(distRoot, "extensions");
   const runtimeExtensionsRoot = path.join(runtimeRoot, "extensions");
 
@@ -189,7 +192,7 @@ export function stageBundledPluginRuntime(params = {}) {
     const runtimeNodeModulesDir = resolvePluginRuntimeNodeModulesDir({
       distPluginNodeModulesDir,
       pluginId: dirent.name,
-      stateRoot: params.stateRoot,
+      stateRoot,
     });
 
     stagePluginRuntimeOverlay(distPluginDir, runtimePluginDir);
@@ -201,5 +204,5 @@ export function stageBundledPluginRuntime(params = {}) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  stageBundledPluginRuntime();
+  stageBundledPluginRuntime({ stateRoot: process.env.OPENCLAW_STATE_DIR });
 }
