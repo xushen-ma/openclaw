@@ -439,7 +439,15 @@ function appendDirectoryFingerprint(hash, rootDir, currentDir = rootDir) {
     const fullPath = path.join(currentDir, entry.name);
     const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, "/");
     if (entry.isSymbolicLink()) {
-      hash.update(`symlink:${relativePath}->${fs.readlinkSync(fullPath).replace(/\\/g, "/")}\n`);
+      try {
+        hash.update(`symlink:${relativePath}->${fs.readlinkSync(fullPath).replace(/\\/g, "/")}\n`);
+      } catch (error) {
+        if (error?.code === "EACCES" || error?.code === "EPERM") {
+          hash.update(`symlink-unreadable:${relativePath}:${error.code}\n`);
+          continue;
+        }
+        throw error;
+      }
       continue;
     }
     if (entry.isDirectory()) {
