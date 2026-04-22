@@ -52,6 +52,7 @@ function makePluginOwnedTempDir(pluginDir, label, options = {}) {
     fs.mkdirSync(tempRoot, { recursive: true });
     return makeTempDir(tempRoot, `.openclaw-runtime-deps-${label}-`);
   }
+  fs.mkdirSync(pluginDir, { recursive: true });
   return makeTempDir(pluginDir, `.openclaw-runtime-deps-${label}-`);
 }
 
