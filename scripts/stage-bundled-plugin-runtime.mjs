@@ -69,7 +69,7 @@ function symlinkPath(sourcePath, targetPath, type) {
   ensureSymlink(relativeSymlinkTarget(sourcePath, targetPath), targetPath, type, sourcePath);
 }
 
-function shouldWrapRuntimeJsFile(sourcePath) {
+function shouldCopyRuntimeJsFile(sourcePath) {
   return path.extname(sourcePath) === ".js";
 }
 
@@ -82,21 +82,6 @@ function shouldCopyRuntimeFile(sourcePath) {
     relativePath.endsWith("/.claude-plugin/plugin.json") ||
     relativePath.endsWith("/.cursor-plugin/plugin.json") ||
     relativePath.endsWith("/SKILL.md")
-  );
-}
-
-function writeRuntimeModuleWrapper(sourcePath, targetPath) {
-  const specifier = relativeSymlinkTarget(sourcePath, targetPath).replace(/\\/g, "/");
-  const normalizedSpecifier = specifier.startsWith(".") ? specifier : `./${specifier}`;
-  fs.writeFileSync(
-    targetPath,
-    [
-      `export * from ${JSON.stringify(normalizedSpecifier)};`,
-      `import * as module from ${JSON.stringify(normalizedSpecifier)};`,
-      "export default module.default;",
-      "",
-    ].join("\n"),
-    "utf8",
   );
 }
 
@@ -136,12 +121,7 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
       continue;
     }
 
-    if (shouldWrapRuntimeJsFile(sourcePath)) {
-      writeRuntimeModuleWrapper(sourcePath, targetPath);
-      continue;
-    }
-
-    if (shouldCopyRuntimeFile(sourcePath)) {
+    if (shouldCopyRuntimeJsFile(sourcePath) || shouldCopyRuntimeFile(sourcePath)) {
       fs.copyFileSync(sourcePath, targetPath);
       continue;
     }
