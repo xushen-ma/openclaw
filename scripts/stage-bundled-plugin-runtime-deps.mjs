@@ -6,6 +6,7 @@ import { pathToFileURL } from "node:url";
 import semverSatisfies from "semver/functions/satisfies.js";
 import {
   resolveBundledRuntimeDepsNodeModulesDir,
+  resolveBundledRuntimeDepsSharedNodeModulesDir,
   resolveBundledRuntimeDepsStampPath,
 } from "./bundled-runtime-deps-paths.mjs";
 import { resolveNpmRunner } from "./npm-runner.mjs";
@@ -207,7 +208,7 @@ const defaultStagedRuntimeDepPruneRules = new Map([
   ["@jimp/plugin-quantize", { paths: ["src/__image_snapshots__"] }],
   ["@jimp/plugin-threshold", { paths: ["src/__image_snapshots__"] }],
 ]);
-const runtimeDepsStagingVersion = 6;
+const runtimeDepsStagingVersion = 7;
 const exactVersionSpecRe = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const GOVERNED_STAGING_RUNTIME_DEPENDENCY_OVERRIDE_ENV =
   "OPENCLAW_FORCE_STAGE_BUNDLED_RUNTIME_DEPS_FOR_PLUGINS";
@@ -1105,6 +1106,70 @@ function installPluginRuntimeDeps(params) {
   }
 }
 
+function stageSharedRootRuntimeDeps(params) {
+  const repoRoot = params.repoRoot;
+  const rootPackageJson = readJson(path.join(repoRoot, "package.json"));
+  const packageJson = {
+    dependencies: rootPackageJson.dependencies ?? {},
+    optionalDependencies: rootPackageJson.optionalDependencies ?? {},
+  };
+  const nodeModulesDir = resolveBundledRuntimeDepsSharedNodeModulesDir({
+    stateRoot: params.stateRoot,
+  });
+  const stampPath = path.join(
+    path.dirname(nodeModulesDir),
+    ".openclaw-runtime-deps-root-stamp.json",
+  );
+  const rootInstalledRuntimeFingerprint = resolveInstalledRuntimeClosureFingerprint({
+    packageJson,
+    rootNodeModulesDir: path.join(repoRoot, "node_modules"),
+  });
+  const fingerprint = createRuntimeDepsFingerprint(packageJson, params.pruneConfig, {
+    repoRoot,
+    rootInstalledRuntimeFingerprint,
+  });
+  const stamp = readRuntimeDepsStamp(stampPath);
+  if (fs.existsSync(nodeModulesDir) && stamp?.fingerprint === fingerprint) {
+    return;
+  }
+  const sharedRuntimePluginDir = path.join(repoRoot, "dist");
+  if (
+    stageInstalledRootRuntimeDeps({
+      directDependencyPackageRoot: null,
+      fingerprint,
+      packageJson,
+      pluginDir: sharedRuntimePluginDir,
+      nodeModulesDir,
+      stampPath,
+      pruneConfig: params.pruneConfig,
+      repoRoot,
+      stateRoot: params.stateRoot,
+    })
+  ) {
+    return;
+  }
+  try {
+    installPluginRuntimeDepsWithRetries({
+      attempts: params.installAttempts,
+      install: params.installPluginRuntimeDepsImpl,
+      installParams: {
+        directDependencyPackageRoot: null,
+        fingerprint,
+        packageJson,
+        pluginDir: sharedRuntimePluginDir,
+        pluginId: "root",
+        nodeModulesDir,
+        stampPath,
+        pruneConfig: params.pruneConfig,
+        repoRoot,
+        stateRoot: params.stateRoot,
+      },
+    });
+  } catch (error) {
+    throw createRootRuntimeStagingError({ packageJson, pluginId: "root", cause: error });
+  }
+}
+
 export function stageBundledPluginRuntimeDeps(params = {}) {
   const repoRoot = params.cwd ?? params.repoRoot ?? process.cwd();
   const installPluginRuntimeDepsImpl =
@@ -1112,6 +1177,15 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
   const installAttempts = params.installAttempts ?? 3;
   const pruneConfig = resolveRuntimeDepPruneConfig(params);
   const forceStagePlugins = resolveGovernedStagingPluginOverrides(params);
+
+  stageSharedRootRuntimeDeps({
+    installAttempts,
+    installPluginRuntimeDepsImpl,
+    pruneConfig,
+    repoRoot,
+    stateRoot: params.stateRoot,
+  });
+
   for (const pluginDir of listBundledPluginRuntimeDirs(repoRoot)) {
     const pluginId = path.basename(pluginDir);
     const sourcePluginRoot = resolveInstalledWorkspacePluginRoot(repoRoot, pluginId);

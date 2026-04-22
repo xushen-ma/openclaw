@@ -65,9 +65,17 @@ export function resolveBundledRuntimeDepsStateDir(params = {}) {
   return resolveStateDirFromEnv(params);
 }
 
-export function resolveBundledRuntimeDepsExtensionDir(params = {}) {
+export function resolveBundledRuntimeDepsRootDir(params = {}) {
   const stateDir = resolveBundledRuntimeDepsStateDir(params);
-  return path.join(stateDir, "bundled-runtime-deps", "extensions");
+  return path.join(stateDir, "bundled-runtime-deps");
+}
+
+export function resolveBundledRuntimeDepsExtensionDir(params = {}) {
+  return path.join(resolveBundledRuntimeDepsRootDir(params), "extensions");
+}
+
+export function resolveBundledRuntimeDepsSharedNodeModulesDir(params = {}) {
+  return path.join(resolveBundledRuntimeDepsRootDir(params), "node_modules");
 }
 
 export function resolveBundledRuntimeDepsNodeModulesDir(params = {}) {

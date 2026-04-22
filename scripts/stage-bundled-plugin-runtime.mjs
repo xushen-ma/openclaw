@@ -1,7 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { resolveBundledRuntimeDepsNodeModulesDir } from "./bundled-runtime-deps-paths.mjs";
+import {
+  resolveBundledRuntimeDepsNodeModulesDir,
+  resolveBundledRuntimeDepsSharedNodeModulesDir,
+} from "./bundled-runtime-deps-paths.mjs";
 import { removePathIfExists } from "./runtime-postbuild-shared.mjs";
 
 function symlinkType() {
@@ -97,24 +100,12 @@ function resolvePluginRuntimeNodeModulesDir(params) {
 }
 
 function resolveSharedRuntimeNodeModulesDir(params) {
-  const bundledRuntimeDepsRoot = params.stateRoot
-    ? path.join(params.stateRoot, "bundled-runtime-deps")
-    : null;
-  if (bundledRuntimeDepsRoot) {
-    const directNodeModulesDir = path.join(bundledRuntimeDepsRoot, "node_modules");
-    if (fs.existsSync(directNodeModulesDir)) {
-      return directNodeModulesDir;
-    }
-    const bundledRuntimeDepsExtensionsRoot = path.join(bundledRuntimeDepsRoot, "extensions");
-    if (fs.existsSync(bundledRuntimeDepsExtensionsRoot)) {
-      const candidateNodeModulesDirs = fs
-        .readdirSync(bundledRuntimeDepsExtensionsRoot, { withFileTypes: true })
-        .filter((dirent) => dirent.isDirectory())
-        .map((dirent) => path.join(bundledRuntimeDepsExtensionsRoot, dirent.name, "node_modules"))
-        .filter((nodeModulesDir) => fs.existsSync(nodeModulesDir));
-      if (candidateNodeModulesDirs.length > 0) {
-        return candidateNodeModulesDirs[0];
-      }
+  if (params.stateRoot) {
+    const sharedNodeModulesDir = resolveBundledRuntimeDepsSharedNodeModulesDir({
+      stateRoot: params.stateRoot,
+    });
+    if (fs.existsSync(sharedNodeModulesDir)) {
+      return sharedNodeModulesDir;
     }
   }
   return path.join(params.repoRoot, "node_modules");
