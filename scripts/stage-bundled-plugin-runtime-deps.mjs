@@ -38,7 +38,19 @@ function sanitizeTempPrefixSegment(value) {
   return normalized.length > 0 ? normalized : "plugin";
 }
 
-function makePluginOwnedTempDir(pluginDir, label) {
+function makePluginOwnedTempDir(pluginDir, label, options = {}) {
+  const stateRoot = options.stateRoot?.trim();
+  if (stateRoot) {
+    const pluginId = path.basename(pluginDir);
+    const tempRoot = path.join(
+      stateRoot,
+      "bundled-runtime-deps",
+      ".tmp",
+      sanitizeTempPrefixSegment(pluginId),
+    );
+    fs.mkdirSync(tempRoot, { recursive: true });
+    return makeTempDir(tempRoot, `.openclaw-runtime-deps-${label}-`);
+  }
   return makeTempDir(pluginDir, `.openclaw-runtime-deps-${label}-`);
 }
 
@@ -661,9 +673,7 @@ function parsePluginIdAllowlist(input) {
 
   return [
     ...new Set(
-      rawValues
-        .map((value) => String(value ?? "").trim())
-        .filter((value) => value.length > 0),
+      rawValues.map((value) => String(value ?? "").trim()).filter((value) => value.length > 0),
     ),
   ].toSorted((left, right) => left.localeCompare(right));
 }
@@ -948,7 +958,7 @@ function stageInstalledRootRuntimeDeps(params) {
   const allowedRealRoots = rootsToCopy.map((record) => record.realRoot);
 
   const stagedNodeModulesDir = path.join(
-    makePluginOwnedTempDir(pluginDir, "stage"),
+    makePluginOwnedTempDir(pluginDir, "stage", { stateRoot: params.stateRoot }),
     "node_modules",
   );
 
@@ -1037,7 +1047,9 @@ function installPluginRuntimeDeps(params) {
     nodeModulesDir,
     stampPath,
   } = params;
-  const tempInstallDir = makePluginOwnedTempDir(pluginDir, "install");
+  const tempInstallDir = makePluginOwnedTempDir(pluginDir, "install", {
+    stateRoot: params.stateRoot,
+  });
   const pinnedGroups = resolvePinnedRuntimeDependencyGroups(packageJson, {
     directDependencyPackageRoot,
     rootNodeModulesDir: path.join(repoRoot, "node_modules"),
