@@ -1150,6 +1150,7 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
         stampPath,
         pruneConfig,
         repoRoot,
+        stateRoot: params.stateRoot,
       })
     ) {
       continue;
@@ -1168,6 +1169,7 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
           stampPath,
           pruneConfig,
           repoRoot,
+          stateRoot: params.stateRoot,
         },
       });
     } catch (error) {
@@ -1177,5 +1179,7 @@ export function stageBundledPluginRuntimeDeps(params = {}) {
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  stageBundledPluginRuntimeDeps();
+  stageBundledPluginRuntimeDeps({
+    stateRoot: process.env.OPENCLAW_STATE_DIR,
+  });
 }
