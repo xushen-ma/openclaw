@@ -12,7 +12,7 @@ import { resolveOpenAITextVerbosity } from "../agents/pi-embedded-runner/openai-
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
 import { describeToolForVerbose } from "../agents/tool-description-summary.js";
 import { normalizeToolName } from "../agents/tool-policy-shared.js";
-import type { EffectiveToolInventoryResult } from "../agents/tools-effective-inventory.js";
+import type { EffectiveToolInventoryResult } from "../agents/tools-effective-inventory.types.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
@@ -466,7 +466,7 @@ export function buildStatusMessage(args: StatusArgs): string {
       initialFallbackState.active &&
       normalizeLowercaseStringOrEmpty(runtimeModelRaw) ===
         normalizeLowercaseStringOrEmpty(
-          normalizeOptionalString(String(entry?.fallbackNoticeActiveModel ?? "")) ?? "",
+          normalizeOptionalString(entry?.fallbackNoticeActiveModel ?? "") ?? "",
         );
     const runtimeMatchesSelectedModel =
       normalizeLowercaseStringOrEmpty(runtimeModelRaw) ===
@@ -863,21 +863,23 @@ export function buildToolsMessage(
   options?: { verbose?: boolean },
 ): string {
   const groups = result.groups
-    .map((group) => ({
+    .map((group: EffectiveToolInventoryResult["groups"][number]) => ({
       label: group.label,
       tools: sortToolsMessageItems(
-        group.tools.map((tool) => ({
-          id: normalizeToolName(tool.id),
-          name: tool.label,
-          description: tool.description || "Tool",
-          rawDescription: tool.rawDescription || tool.description || "Tool",
-          source: tool.source,
-          pluginId: tool.pluginId,
-          channelId: tool.channelId,
-        })),
+        group.tools.map(
+          (tool: EffectiveToolInventoryResult["groups"][number]["tools"][number]) => ({
+            id: normalizeToolName(tool.id),
+            name: tool.label,
+            description: tool.description || "Tool",
+            rawDescription: tool.rawDescription || tool.description || "Tool",
+            source: tool.source,
+            pluginId: tool.pluginId,
+            channelId: tool.channelId,
+          }),
+        ),
       ),
     }))
-    .filter((group) => group.tools.length > 0);
+    .filter((group: { tools: ToolsMessageItem[] }) => group.tools.length > 0);
 
   if (groups.length === 0) {
     const lines = [
@@ -901,7 +903,9 @@ export function buildToolsMessage(
       }
       continue;
     }
-    lines.push(`  ${group.tools.map((tool) => formatCompactToolEntry(tool)).join(", ")}`);
+    lines.push(
+      `  ${group.tools.map((tool: ToolsMessageItem) => formatCompactToolEntry(tool)).join(", ")}`,
+    );
   }
 
   if (verbose) {
