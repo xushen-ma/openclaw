@@ -34,6 +34,15 @@ const resolveCommit = () => {
   }
 };
 
+const isReleaseVersionCandidate = (value: string | null | undefined): value is string => {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return false;
+  }
+  const prefixed = trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+  return STABLE_TAG_PATTERN.test(prefixed) || FORK_TAG_PATTERN.test(prefixed);
+};
+
 export const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
 export const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
 
@@ -61,17 +70,17 @@ const resolveVersionFromTagContext = () => {
   ];
   for (const candidate of envCandidates) {
     const normalized = normalizeCandidate(candidate);
-    if (normalized) {
+    if (isReleaseVersionCandidate(normalized)) {
       return normalized;
     }
   }
 
   try {
-    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+    const raw = execSync("git tag --points-at HEAD --sort=-version:refname", {
       cwd: rootDir,
       stdio: ["ignore", "pipe", "ignore"],
     })
-    .toString()
+      .toString()
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean);
