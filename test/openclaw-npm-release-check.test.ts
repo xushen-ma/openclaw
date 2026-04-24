@@ -63,9 +63,24 @@ describe("parseReleaseVersion", () => {
     });
   });
 
-  it("rejects legacy and malformed release formats", () => {
+  it("accepts fork release suffixes and rejects malformed release formats", () => {
+    expect(parseReleaseVersion("2026.3.10-x.1")).toMatchObject({
+      version: "2026.3.10",
+      baseVersion: "2026.3.10",
+      channel: "stable",
+      year: 2026,
+      month: 3,
+      day: 10,
+    });
     expect(parseReleaseVersion("2026.03.09")).toBeNull();
-    expect(parseReleaseVersion("v2026.3.10")).toBeNull();
+    expect(parseReleaseVersion("v2026.3.10")).toMatchObject({
+      version: "2026.3.10",
+      baseVersion: "2026.3.10",
+      channel: "stable",
+      year: 2026,
+      month: 3,
+      day: 10,
+    });
     expect(parseReleaseVersion("2026.2.30")).toBeNull();
     expect(parseReleaseVersion("2026.3.10-0")).toBeNull();
     expect(parseReleaseVersion("2.0.0-beta2")).toBeNull();

@@ -113,6 +113,14 @@ const PACKED_TEST_CARGO_DIRECTORY_SEGMENTS = new Set([
 const PACKED_TEST_CARGO_FILE_RE = /(?:^|\/)[^/]+\.(?:test|spec)\.(?:[cm]?[jt]sx?)$/u;
 const NPM_PACK_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 const skipPackValidationEnv = "OPENCLAW_NPM_RELEASE_SKIP_PACK_CHECK";
+const FORK_TAG_SUFFIX = /-x\.\d+$/u;
+
+const normalizeReleaseVersionForValidation = (version: string): string => {
+  return version
+    .trim()
+    .replace(/^v(?=\d)/, "")
+    .replace(FORK_TAG_SUFFIX, "");
+};
 
 function normalizePackedPath(packedPath: string): string {
   return packedPath.replace(/\\/g, "/");
@@ -152,11 +160,15 @@ function normalizeRepoUrl(value: unknown): string {
 }
 
 export function parseReleaseVersion(version: string): ParsedReleaseVersion | null {
-  return parseReleaseVersionBase(version) as ParsedReleaseVersion | null;
+  const normalized = normalizeReleaseVersionForValidation(version);
+  return parseReleaseVersionBase(normalized) as ParsedReleaseVersion | null;
 }
 
 export function compareReleaseVersions(left: string, right: string): number | null {
-  return compareReleaseVersionsBase(left, right);
+  return compareReleaseVersionsBase(
+    normalizeReleaseVersionForValidation(left),
+    normalizeReleaseVersionForValidation(right),
+  );
 }
 
 export function resolveNpmPublishPlan(
@@ -290,9 +302,10 @@ export function collectReleaseTagErrors(params: {
   const errors: string[] = [];
   const releaseTag = params.releaseTag.trim();
   const packageVersion = params.packageVersion.trim();
+  const normalizedPackageVersion = normalizeReleaseVersionForValidation(packageVersion);
   const now = params.now ?? new Date();
 
-  const parsedVersion = parseReleaseVersion(packageVersion);
+  const parsedVersion = parseReleaseVersion(normalizedPackageVersion);
   if (parsedVersion === null) {
     errors.push(
       `package.json version must match YYYY.M.D, YYYY.M.D-N, or YYYY.M.D-beta.N; found "${packageVersion || "<missing>"}".`,
@@ -311,7 +324,7 @@ export function collectReleaseTagErrors(params: {
     );
   }
 
-  const expectedTag = packageVersion ? `v${packageVersion}` : "<missing>";
+  const expectedTag = normalizedPackageVersion ? `v${normalizedPackageVersion}` : "<missing>";
   const matchesExpectedTag =
     parsedTag !== null &&
     parsedVersion !== null &&
