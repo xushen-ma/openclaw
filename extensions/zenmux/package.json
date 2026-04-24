@@ -4,6 +4,9 @@
   "private": true,
   "description": "OpenClaw ZenMux image-generation provider plugin",
   "type": "module",
+  "dependencies": {
+    "@google/genai": "^1.50.1"
+  },
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"
   },
