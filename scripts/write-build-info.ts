@@ -43,6 +43,11 @@ const isReleaseVersionCandidate = (value: string | null | undefined): value is s
   return STABLE_TAG_PATTERN.test(prefixed) || FORK_TAG_PATTERN.test(prefixed);
 };
 
+const stripVersionTagPrefix = (value: string): string => {
+  const trimmed = value.trim();
+  return trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+};
+
 export const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
 export const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
 
@@ -71,7 +76,7 @@ const resolveVersionFromTagContext = () => {
   for (const candidate of envCandidates) {
     const normalized = normalizeCandidate(candidate);
     if (isReleaseVersionCandidate(normalized)) {
-      return normalized;
+      return stripVersionTagPrefix(normalized);
     }
   }
 
@@ -85,18 +90,20 @@ const resolveVersionFromTagContext = () => {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    return resolveVersionTagFromTagList(raw);
+    const resolved = resolveVersionTagFromTagList(raw);
+    return resolved === null ? null : stripVersionTagPrefix(resolved);
   } catch {
     return null;
   }
 };
 
-const version = resolveVersionFromTagContext() ?? readPackageVersion();
+const packageVersion = readPackageVersion();
+const version = resolveVersionFromTagContext() ?? packageVersion;
 const commit = resolveCommit();
 
 const buildInfo = {
   version,
-  packageVersion: readPackageVersion(),
+  packageVersion: version,
   commit,
   builtAt: new Date().toISOString(),
 };

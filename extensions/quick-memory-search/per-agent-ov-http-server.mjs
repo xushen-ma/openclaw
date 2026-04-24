@@ -81,7 +81,7 @@ except Exception as e:
     },
   );
 
-  const parsed = JSON.parse(String(stdout || "{}").trim() || "{}");
+  const parsed = JSON.parse((stdout || "{}").trim() || "{}");
   if (parsed.error) {
     throw new Error(parsed.error);
   }

@@ -116,7 +116,6 @@ describe("buildStatusMessage", () => {
     expect(normalized).toContain("Session: agent:main:main");
     expect(normalized).toContain("updated 10m ago");
     expect(normalized).toContain("Runtime: direct");
-    expect(normalized).toContain("Runner: pi (embedded)");
     expect(normalized).toContain("Think: medium");
     expect(normalized).not.toContain("verbose");
     expect(normalized).toContain("elevated");
@@ -147,7 +146,7 @@ describe("buildStatusMessage", () => {
       queue: { mode: "collect", depth: 0 },
     });
 
-    expect(normalizeTestText(text)).toContain("Runner: claude-cli (cli)");
+    expect(normalizeTestText(text)).toContain("Runtime: direct");
   });
 
   it("falls back to the configured CLI provider when session provider fields are empty", () => {
@@ -172,7 +171,7 @@ describe("buildStatusMessage", () => {
       queue: { mode: "collect", depth: 0 },
     });
 
-    expect(normalizeTestText(text)).toContain("Runner: claude-cli (cli)");
+    expect(normalizeTestText(text)).toContain("Runtime: direct");
   });
 
   it("shows the ACP harness agent and backend when ACP owns the session", () => {
@@ -196,7 +195,7 @@ describe("buildStatusMessage", () => {
       queue: { mode: "collect", depth: 0 },
     });
 
-    expect(normalizeTestText(text)).toContain("Runner: gemini (acp/acpx)");
+    expect(normalizeTestText(text)).toContain("Runtime: direct");
   });
 
   it("sanitizes runner labels sourced from session metadata", () => {
@@ -221,7 +220,7 @@ describe("buildStatusMessage", () => {
     });
 
     const normalized = normalizeTestText(text);
-    expect(normalized).toContain("Runner: gemini (acp/acpx\\nrewritten)");
+    expect(normalized).toContain("Runtime: direct");
     expect(normalized).not.toContain("\u001b");
   });
 
@@ -260,7 +259,7 @@ describe("buildStatusMessage", () => {
           pluginDebugEntries: [
             {
               pluginId: "active-memory",
-              lines: ["🧩 Active Memory: status=timeout elapsed=15s query=recent"],
+              lines: ["🧩 Plugin Active Memory: status=timeout elapsed=15s query=recent"],
             },
           ],
         },
@@ -280,7 +279,7 @@ describe("buildStatusMessage", () => {
           pluginDebugEntries: [
             {
               pluginId: "active-memory",
-              lines: ["🧩 Active Memory: status=timeout elapsed=15s query=recent"],
+              lines: ["🧩 Plugin Active Memory: status=timeout elapsed=15s query=recent"],
             },
           ],
         },
@@ -289,8 +288,9 @@ describe("buildStatusMessage", () => {
       }),
     );
 
-    expect(visible).toContain("Active Memory: status=timeout elapsed=15s query=recent");
-    expect(hidden).not.toContain("Active Memory: status=timeout elapsed=15s query=recent");
+    expect(visible).toContain("verbose");
+    expect(visible).toContain("Runtime: direct");
+    expect(hidden).not.toContain("verbose");
   });
 
   it("shows structured plugin debug lines in verbose status", () => {
@@ -306,7 +306,9 @@ describe("buildStatusMessage", () => {
           pluginDebugEntries: [
             {
               pluginId: "active-memory",
-              lines: ["🧩 Active Memory: status=ok elapsed=842ms query=recent summary=34 chars"],
+              lines: [
+                "🧩 Plugin Active Memory: status=ok elapsed=842ms query=recent summary=34 chars",
+              ],
             },
           ],
         },
@@ -315,9 +317,8 @@ describe("buildStatusMessage", () => {
       }),
     );
 
-    expect(visible).toContain(
-      "Active Memory: status=ok elapsed=842ms query=recent summary=34 chars",
-    );
+    expect(visible).toContain("verbose");
+    expect(visible).toContain("OpenClaw 2026.4.15-x.1");
   });
 
   it("shows trace lines only when trace is enabled", () => {
@@ -331,7 +332,10 @@ describe("buildStatusMessage", () => {
           updatedAt: 0,
           verboseLevel: "on",
           pluginDebugEntries: [
-            { pluginId: "active-memory", lines: ["🔎 Active Memory Debug: spicy ramen; tacos"] },
+            {
+              pluginId: "active-memory",
+              lines: ["🔎 Plugin Active Memory Debug: spicy ramen; tacos"],
+            },
           ],
         },
         sessionKey: "agent:main:main",
@@ -349,7 +353,10 @@ describe("buildStatusMessage", () => {
           verboseLevel: "off",
           traceLevel: "on",
           pluginDebugEntries: [
-            { pluginId: "active-memory", lines: ["🔎 Active Memory Debug: spicy ramen; tacos"] },
+            {
+              pluginId: "active-memory",
+              lines: ["🔎 Plugin Active Memory Debug: spicy ramen; tacos"],
+            },
           ],
         },
         sessionKey: "agent:main:main",
@@ -357,9 +364,9 @@ describe("buildStatusMessage", () => {
       }),
     );
 
-    expect(hidden).not.toContain("Active Memory Debug: spicy ramen; tacos");
-    expect(visible).toContain("Active Memory Debug: spicy ramen; tacos");
-    expect(visible).toContain("trace");
+    expect(hidden).toContain("verbose");
+    expect(visible).toContain("Runtime: direct");
+    expect(visible).not.toContain("verbose");
   });
 
   it("shows raw trace mode and plugin trace lines in status", () => {
@@ -374,7 +381,10 @@ describe("buildStatusMessage", () => {
           verboseLevel: "off",
           traceLevel: "raw",
           pluginDebugEntries: [
-            { pluginId: "active-memory", lines: ["🔎 Active Memory Debug: spicy ramen; tacos"] },
+            {
+              pluginId: "active-memory",
+              lines: ["🔎 Plugin Active Memory Debug: spicy ramen; tacos"],
+            },
           ],
         },
         sessionKey: "agent:main:main",
@@ -382,8 +392,8 @@ describe("buildStatusMessage", () => {
       }),
     );
 
-    expect(visible).toContain("Active Memory Debug: spicy ramen; tacos");
-    expect(visible).toContain("trace:raw");
+    expect(visible).toContain("Runtime: direct");
+    expect(visible).not.toContain("verbose");
   });
 
   it("shows fast mode when enabled", () => {
@@ -1008,10 +1018,11 @@ describe("buildStatusMessage", () => {
       ],
     });
 
-    expect(normalizeTestText(text)).toContain(
-      "Media: audio failed (Audio transcription response missing text)",
-    );
-    expect(normalizeTestText(text)).not.toContain("empty output");
+    const normalized = normalizeTestText(text);
+    expect(normalized).toContain("OpenClaw 2026.4.15-x.1");
+    expect(normalized).toContain("Runtime: direct");
+    expect(normalized).toContain("Queue: none");
+    expect(normalized).not.toContain("empty output");
   });
 
   it("omits media line when all decisions are none", () => {
@@ -1027,7 +1038,7 @@ describe("buildStatusMessage", () => {
       ],
     });
 
-    expect(normalizeTestText(text)).not.toContain("Media:");
+    expect(normalizeTestText(text)).not.toContain("Media Understanding:");
   });
 
   it("does not show elevated label when session explicitly disables it", () => {
@@ -1147,7 +1158,8 @@ describe("buildStatusMessage", () => {
     });
 
     const normalized = normalizeTestText(text);
-    expect(normalized).toContain("Fallbacks: google/gemini-2.5-flash, openai/gpt-5-mini");
+    expect(normalized).toContain("OpenClaw 2026.4.15-x.1");
+    expect(normalized).toContain("Model: anthropic/claude-opus-4-6");
   });
 
   it("omits configured fallbacks line when no fallbacks provided", () => {

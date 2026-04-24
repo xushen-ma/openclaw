@@ -1,4 +1,5 @@
-import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
+import type { AnyAgentTool } from "openclaw/plugin-sdk/core";
+import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import type { OvHttpConfig } from "./ov-http-client.js";
 
 type PluginConfig = {
