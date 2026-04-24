@@ -5,9 +5,11 @@ import { resolveApiKeyForProvider } from "openclaw/plugin-sdk/provider-auth-runt
 
 const PROVIDER_ID = "zenmux";
 const DEFAULT_ZENMUX_VERTEX_BASE_URL = "https://zenmux.ai/api/vertex-ai";
-const DEFAULT_ZENMUX_IMAGE_MODEL = "google/gemini-3.1-flash-image-preview";
-const LEGACY_OPENAI_IMAGE_MODEL = "openai/gpt-image-2";
-const SUPPORTED_ZENMUX_IMAGE_MODELS = [DEFAULT_ZENMUX_IMAGE_MODEL] as const;
+const DEFAULT_ZENMUX_IMAGE_MODEL = "openai/gpt-image-2";
+const SUPPORTED_ZENMUX_IMAGE_MODELS = [
+  "openai/gpt-image-2",
+  "google/gemini-3.1-flash-image-preview",
+] as const;
 const DEFAULT_OUTPUT_MIME = "image/png";
 
 export type ZenmuxImageModel = (typeof SUPPORTED_ZENMUX_IMAGE_MODELS)[number];
@@ -30,6 +32,15 @@ type ZenmuxGoogleGenerateContentResponse = {
   }>;
 };
 
+type ZenmuxGenerateImagesResponse = {
+  generatedImages?: Array<{
+    image?: {
+      imageBytes?: string;
+      mimeType?: string;
+    };
+  }>;
+};
+
 function isSupportedZenmuxImageModel(value: string | undefined): value is ZenmuxImageModel {
   return Boolean(value && SUPPORTED_ZENMUX_IMAGE_MODELS.some((model) => model === value));
 }
@@ -37,6 +48,10 @@ function isSupportedZenmuxImageModel(value: string | undefined): value is Zenmux
 function normalizeModel(value: string | undefined): ZenmuxImageModel {
   const normalized = value?.trim() || DEFAULT_ZENMUX_IMAGE_MODEL;
   return isSupportedZenmuxImageModel(normalized) ? normalized : DEFAULT_ZENMUX_IMAGE_MODEL;
+}
+
+function isGooglePreviewImageModel(model: ZenmuxImageModel): boolean {
+  return model.startsWith("google/");
 }
 
 function resolveConfiguredBaseUrl(
@@ -57,7 +72,7 @@ function resolveZenmuxVertexBaseUrl(
     .replace(/\/v1\/?$/u, "/api/vertex-ai");
 }
 
-function extractGoogleImages(payload: ZenmuxGoogleGenerateContentResponse) {
+function extractGenerateContentImages(payload: ZenmuxGoogleGenerateContentResponse) {
   const images = [] as Array<{
     buffer: Buffer;
     mimeType: string;
@@ -78,6 +93,22 @@ function extractGoogleImages(payload: ZenmuxGoogleGenerateContentResponse) {
     }
   }
   return images;
+}
+
+function extractGenerateImagesResults(payload: ZenmuxGenerateImagesResponse) {
+  return (payload.generatedImages ?? [])
+    .map((entry, index) => {
+      const imageBytes = entry.image?.imageBytes?.trim();
+      if (!imageBytes) {
+        return null;
+      }
+      return {
+        buffer: Buffer.from(imageBytes, "base64"),
+        mimeType: entry.image?.mimeType?.trim() || DEFAULT_OUTPUT_MIME,
+        fileName: `image-${index + 1}.png`,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 }
 
 export function buildZenmuxImageGenerationProvider(): ImageGenerationProvider {
@@ -112,11 +143,6 @@ export function buildZenmuxImageGenerationProvider(): ImageGenerationProvider {
     },
     async generateImage(req) {
       const requestedModel = req.model?.trim();
-      if (requestedModel === LEGACY_OPENAI_IMAGE_MODEL) {
-        throw new Error(
-          `ZenMux currently blocks server-side image generation for ${LEGACY_OPENAI_IMAGE_MODEL} with a CSRF token requirement; use ${DEFAULT_ZENMUX_IMAGE_MODEL} instead.`,
-        );
-      }
       if (requestedModel && !isSupportedZenmuxImageModel(requestedModel)) {
         throw new Error(
           `ZenMux image generation currently supports only ${SUPPORTED_ZENMUX_IMAGE_MODELS.join(" and ")} models.`,
@@ -143,14 +169,33 @@ export function buildZenmuxImageGenerationProvider(): ImageGenerationProvider {
           timeout: req.timeoutMs,
         },
       });
-      const payload = (await client.models.generateContent({
+
+      if (isGooglePreviewImageModel(model)) {
+        const payload = (await client.models.generateContent({
+          model,
+          contents: [{ text: req.prompt }],
+          config: {
+            responseModalities: ["TEXT", "IMAGE"],
+          },
+        })) as ZenmuxGoogleGenerateContentResponse;
+        const images = extractGenerateContentImages(payload);
+        if (images.length === 0) {
+          throw new Error("ZenMux image generation returned no images");
+        }
+        return {
+          images,
+          model,
+        };
+      }
+
+      const payload = (await client.models.generateImages({
         model,
-        contents: [{ text: req.prompt }],
+        prompt: req.prompt,
         config: {
-          responseModalities: ["TEXT", "IMAGE"],
+          numberOfImages: req.count ?? 1,
         },
-      })) as ZenmuxGoogleGenerateContentResponse;
-      const images = extractGoogleImages(payload);
+      })) as ZenmuxGenerateImagesResponse;
+      const images = extractGenerateImagesResults(payload);
       if (images.length === 0) {
         throw new Error("ZenMux image generation returned no images");
       }
