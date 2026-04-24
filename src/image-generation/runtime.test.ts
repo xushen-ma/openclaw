@@ -288,6 +288,45 @@ describe("image-generation runtime", () => {
     });
   });
 
+  it("forwards nested provider model refs such as zenmux/openai/gpt-image-2", async () => {
+    let forwardedModel: string | undefined;
+    mocks.parseImageGenerationModelRef.mockReturnValue({
+      provider: "zenmux",
+      model: "openai/gpt-image-2",
+    });
+
+    mocks.getImageGenerationProvider.mockImplementation((providerId) => {
+      if (providerId !== "zenmux") {
+        return undefined;
+      }
+      return {
+        id: "zenmux",
+        defaultModel: "openai/gpt-image-2",
+        capabilities: {
+          generate: {},
+          edit: { enabled: false },
+        },
+        async generateImage(req) {
+          forwardedModel = req.model;
+          return {
+            images: [{ buffer: Buffer.from("png-bytes"), mimeType: "image/png" }],
+            model: req.model,
+          };
+        },
+      };
+    });
+
+    const result = await generateImage({
+      cfg: {} as OpenClawConfig,
+      prompt: "draw a robot",
+      modelOverride: "zenmux/openai/gpt-image-2",
+    });
+
+    expect(forwardedModel).toBe("openai/gpt-image-2");
+    expect(result.provider).toBe("zenmux");
+    expect(result.model).toBe("openai/gpt-image-2");
+  });
+
   it("lists runtime image-generation providers through the provider registry", () => {
     const providers: ImageGenerationProvider[] = [
       {
@@ -320,6 +359,22 @@ describe("image-generation runtime", () => {
   });
 
   it("builds a generic config hint without hardcoded provider ids", async () => {
+    mocks.resolveAgentModelPrimaryValue.mockReturnValue(undefined);
+    mocks.resolveAgentModelFallbackValues.mockReturnValue([]);
+    mocks.parseImageGenerationModelRef.mockImplementation((raw) => {
+      const trimmed = raw?.trim();
+      if (!trimmed) {
+        return undefined;
+      }
+      const slash = trimmed.indexOf("/");
+      if (slash <= 0 || slash === trimmed.length - 1) {
+        return undefined;
+      }
+      return {
+        provider: trimmed.slice(0, slash),
+        model: trimmed.slice(slash + 1),
+      };
+    });
     mocks.listImageGenerationProviders.mockReturnValue([
       {
         id: "vision-one",
