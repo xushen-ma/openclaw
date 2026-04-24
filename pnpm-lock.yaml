@@ -1864,6 +1864,12 @@ importers:
 
   packages/media-understanding-common: {}
 
+  extensions/zenmux:
+    dependencies:
+      '@google/genai':
+        specifier: 2.7.0
+        version: 2.7.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
+
   packages/memory-host-sdk: {}
 
   packages/model-catalog-core: {}
