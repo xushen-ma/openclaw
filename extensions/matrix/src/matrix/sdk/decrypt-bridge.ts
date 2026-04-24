@@ -124,6 +124,12 @@ export class MatrixDecryptBridge<TRawEvent extends DecryptBridgeRawEvent> {
     crypto.on(CryptoEvent.KeyBackupDecryptionKeyCached, () => {
       trigger("crypto.keyBackupDecryptionKeyCached");
     });
+    crypto.on(CryptoEvent.DehydrationKeyCached, () => {
+      trigger("dehydration.DehydrationKeyCached");
+    });
+    crypto.on(CryptoEvent.RehydrationProgress, () => {
+      trigger("dehydration.RehydrationProgress");
+    });
     crypto.on(CryptoEvent.RehydrationCompleted, () => {
       trigger("dehydration.RehydrationCompleted");
     });
