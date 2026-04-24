@@ -835,9 +835,13 @@ describe("MatrixClient event bridge", () => {
     expect(failed).toEqual(["missing room key"]);
     expect(delivered).toHaveLength(0);
 
-    const trigger = cryptoListeners.get("crypto.keyBackupDecryptionKeyCached");
-    expect(trigger).toBeTypeOf("function");
-    trigger?.();
+    const keyBackupTrigger = cryptoListeners.get("crypto.keyBackupDecryptionKeyCached");
+    const rehydrationProgressTrigger = cryptoListeners.get("dehydration.RehydrationProgress");
+    const dehydrationKeyCachedTrigger = cryptoListeners.get("dehydration.DehydrationKeyCached");
+    expect(keyBackupTrigger).toBeTypeOf("function");
+    expect(rehydrationProgressTrigger).toBeTypeOf("function");
+    expect(dehydrationKeyCachedTrigger).toBeTypeOf("function");
+    rehydrationProgressTrigger?.();
     await Promise.resolve();
 
     expect(matrixJsClient.decryptEventIfNeeded).toHaveBeenCalledTimes(1);
@@ -937,10 +941,13 @@ describe("MatrixClient event bridge", () => {
     matrixJsClient.emit("event", encrypted);
     encrypted.emit("decrypted", encrypted, new Error("missing room key"));
 
-    const trigger = cryptoListeners.get("crypto.keyBackupDecryptionKeyCached");
-    expect(trigger).toBeTypeOf("function");
-    trigger?.();
-    trigger?.();
+    const keyBackupTrigger = cryptoListeners.get("crypto.keyBackupDecryptionKeyCached");
+    const rehydrationProgressTrigger = cryptoListeners.get("dehydration.RehydrationProgress");
+    expect(keyBackupTrigger).toBeTypeOf("function");
+    expect(rehydrationProgressTrigger).toBeTypeOf("function");
+    keyBackupTrigger?.();
+    rehydrationProgressTrigger?.();
+    keyBackupTrigger?.();
     await Promise.resolve();
 
     expect(matrixJsClient.decryptEventIfNeeded).toHaveBeenCalledTimes(1);
