@@ -1414,6 +1414,12 @@ importers:
         specifier: workspace:*
         version: link:../..
 
+  extensions/zenmux:
+    devDependencies:
+      '@openclaw/plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/plugin-sdk
+
   packages/memory-host-sdk: {}
 
   packages/plugin-package-contract: {}
