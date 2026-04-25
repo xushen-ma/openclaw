@@ -46,6 +46,40 @@ const isReleaseVersionCandidate = (value: string | null | undefined): value is s
 export const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
 export const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
 
+function normalizeReleaseCandidate(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const prefixed = trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+  return STABLE_TAG_PATTERN.test(prefixed) || FORK_TAG_PATTERN.test(prefixed) ? prefixed : null;
+}
+
+function releaseCandidateRank(value: string): number[] {
+  const stable = value.match(/^v(\d{4})\.(\d+)\.(\d+)(?:\.(\d+))?$/);
+  if (stable) {
+    return [2, ...stable.slice(1).map((part) => Number(part ?? 0))];
+  }
+  const fork = value.match(/^v(\d{4})\.(\d+)\.(\d+)(?:-(\d+))?-x\.(\d+)$/);
+  if (fork) {
+    return [1, ...fork.slice(1).map((part) => Number(part ?? 0))];
+  }
+  return [0, 0, 0, 0, 0, 0];
+}
+
+export function compareReleaseCandidates(a: string, b: string): number {
+  const aRank = releaseCandidateRank(a);
+  const bRank = releaseCandidateRank(b);
+  const length = Math.max(aRank.length, bRank.length);
+  for (let index = 0; index < length; index += 1) {
+    const delta = (aRank[index] ?? 0) - (bRank[index] ?? 0);
+    if (delta !== 0) {
+      return delta;
+    }
+  }
+  return 0;
+}
+
 const normalizeCandidate = (value: string | null | undefined): string | null => {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -95,7 +129,24 @@ const resolveVersionFromTagContext = () => {
   return resolveVersionTagFromMergedHeadTags();
 };
 
-const version = resolveVersionFromTagContext() ?? readPackageVersion();
+export function resolvePreferredBuildInfoVersion(
+  tagVersion: string | null,
+  packageVersion: string | null,
+): string | null {
+  const normalizedPackageVersion = normalizeReleaseCandidate(packageVersion);
+  if (tagVersion && normalizedPackageVersion) {
+    return compareReleaseCandidates(normalizedPackageVersion, tagVersion) > 0
+      ? normalizedPackageVersion
+      : tagVersion;
+  }
+  return tagVersion ?? normalizedPackageVersion ?? packageVersion;
+}
+
+function resolveBuildInfoVersion(): string | null {
+  return resolvePreferredBuildInfoVersion(resolveVersionFromTagContext(), readPackageVersion());
+}
+
+const version = resolveBuildInfoVersion();
 const commit = resolveCommit();
 
 const buildInfo = {

@@ -1,6 +1,8 @@
 import * as childProcess from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
+  compareReleaseCandidates,
+  resolvePreferredBuildInfoVersion,
   resolveVersionTagFromMergedHeadTags,
   resolveVersionTagFromTagList,
   STABLE_TAG_PATTERN,
@@ -35,6 +37,21 @@ describe("resolveVersionTagFromMergedHeadTags", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("resolvePreferredBuildInfoVersion", () => {
+  it("prefers the package release line when merged tags are stale", () => {
+    expect(resolvePreferredBuildInfoVersion("v2026.3.2", "2026.4.22")).toBe("v2026.4.22");
+    expect(resolvePreferredBuildInfoVersion("v2026.4.15-x.4", "2026.4.22")).toBe("v2026.4.22");
+  });
+
+  it("keeps a newer stable tag when package version is older", () => {
+    expect(resolvePreferredBuildInfoVersion("v2026.4.23", "2026.4.22")).toBe("v2026.4.23");
+  });
+
+  it("ranks stable releases ahead of fork lineage tags", () => {
+    expect(compareReleaseCandidates("v2026.4.22", "v2026.4.15-x.4")).toBeGreaterThan(0);
   });
 });
 
