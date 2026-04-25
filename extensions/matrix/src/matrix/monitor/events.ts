@@ -163,6 +163,19 @@ export function registerMatrixMonitorEvents(params: {
       logVerboseMessage(
         `matrix: member event room=${roomId} stateKey=${stateKey} membership=${membership ?? "unknown"}`,
       );
+      return;
+    }
+
+    if (
+      eventType === EventType.RoomMessage ||
+      eventType === EventType.Location ||
+      eventType.startsWith("m.call.") ||
+      eventType === "org.matrix.msc3381.poll.start" ||
+      eventType === "m.poll.start"
+    ) {
+      logVerboseMessage(
+        `matrix: raw room event room=${roomId} type=${eventType} id=${event?.event_id ?? "unknown"}`,
+      );
     }
   });
 }

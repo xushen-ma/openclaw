@@ -139,6 +139,47 @@ describe("registerMatrixMonitorEvents", () => {
     expect(sendReadReceiptMatrixMock).not.toHaveBeenCalled();
   });
 
+  it("logs raw room events for RTC/message-like traffic", () => {
+    const { logVerboseMessage } = createHarness();
+    const handlers = (logVerboseMessage.mock.calls.length, undefined);
+    const roomEventHandler = ((): ((roomId: string, event: MatrixRawEvent) => void) => {
+      const map = new Map<string, (...args: unknown[]) => void>();
+      const client = {
+        on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+          map.set(event, handler);
+        }),
+        getUserId: vi.fn().mockResolvedValue("@bot:example.org"),
+        crypto: undefined,
+      } as unknown as MatrixClient;
+      registerMatrixMonitorEvents({
+        client,
+        auth: { encryption: false } as MatrixAuth,
+        logVerboseMessage,
+        warnedEncryptedRooms: new Set<string>(),
+        warnedCryptoMissingRooms: new Set<string>(),
+        logger: { warn: vi.fn() } as unknown as RuntimeLogger,
+        formatNativeDependencyHint: (() =>
+          "") as PluginRuntime["system"]["formatNativeDependencyHint"],
+        onRoomMessage: vi.fn(),
+      });
+      const handler = map.get("room.event");
+      if (!handler) throw new Error("missing room.event handler");
+      return handler as (roomId: string, event: MatrixRawEvent) => void;
+    })();
+
+    roomEventHandler("!room:example.org", {
+      event_id: "$rtc1",
+      sender: "@alice:example.org",
+      type: "m.call.member",
+      origin_server_ts: Date.now(),
+      content: {},
+    });
+
+    expect(logVerboseMessage).toHaveBeenCalledWith(
+      "matrix: raw room event room=!room:example.org type=m.call.member id=$rtc1",
+    );
+  });
+
   it("skips duplicate listener registration for the same client", () => {
     const handlers = new Map<string, (...args: unknown[]) => void>();
     const onMock = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
