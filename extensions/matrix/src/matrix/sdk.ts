@@ -934,7 +934,7 @@ export class MatrixClient {
     } finally {
       event.off(MatrixEventEvent.Decrypted, onDecrypted);
     }
-    return matrixEventToRaw((decryptedEvent as MatrixEvent) || event);
+    return matrixEventToRaw(decryptedEvent || event);
   }
 
   async getRelations(
