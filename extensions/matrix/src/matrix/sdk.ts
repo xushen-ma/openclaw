@@ -16,6 +16,7 @@ import { normalizeNullableString } from "openclaw/plugin-sdk/string-coerce-runti
 import type { SsrFPolicy } from "../runtime-api.js";
 import { resolveMatrixRoomKeyBackupReadinessError } from "./backup-health.js";
 import { FileBackedMatrixSyncStore } from "./client/file-sync-store.js";
+import { logMatrixFleetMgmtProbe } from "./client/fleet-mgmt-probe.js";
 import { createMatrixJsSdkClientLogger } from "./client/logging.js";
 import {
   formatMatrixErrorMessage,
@@ -923,7 +924,7 @@ export class MatrixClient {
 
     const mapper = this.client.getEventMapper();
     const event = mapper(rawEvent);
-    let decryptedEvent: MatrixEvent | undefined;
+    let decryptedEvent: unknown;
     const onDecrypted = (candidate: MatrixEvent) => {
       decryptedEvent = candidate;
     };
@@ -933,7 +934,7 @@ export class MatrixClient {
     } finally {
       event.off(MatrixEventEvent.Decrypted, onDecrypted);
     }
-    return matrixEventToRaw(decryptedEvent ?? event);
+    return matrixEventToRaw((decryptedEvent as MatrixEvent) || event);
   }
 
   async getRelations(
@@ -1711,6 +1712,15 @@ export class MatrixClient {
 
       const raw = matrixEventToRaw(event, { contentMode: "original" });
       const isEncryptedEvent = raw.type === "m.room.encrypted";
+      logMatrixFleetMgmtProbe((message) => LogService.info("MatrixClientLite", message), {
+        stage: "sdk.bridge.event",
+        roomId,
+        userId: this.client.getUserId() ?? this.selfUserId,
+        eventName: ClientEvent.Event,
+        eventType: raw.type,
+        eventId: raw.event_id,
+        detail: isEncryptedEvent ? "encrypted" : "unencrypted",
+      });
       this.emitter.emit("room.event", roomId, raw);
       if (isEncryptedEvent) {
         this.emitter.emit("room.encrypted_event", roomId, raw);

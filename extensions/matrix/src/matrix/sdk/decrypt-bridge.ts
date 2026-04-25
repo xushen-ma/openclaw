@@ -1,5 +1,6 @@
 import { CryptoEvent } from "matrix-js-sdk/lib/crypto-api/CryptoEvent.js";
 import { MatrixEventEvent, type MatrixEvent } from "matrix-js-sdk/lib/matrix.js";
+import { logMatrixFleetMgmtProbe } from "../client/fleet-mgmt-probe.js";
 import { LogService, noop } from "./logger.js";
 
 type MatrixDecryptIfNeededClient = {
@@ -83,6 +84,12 @@ export class MatrixDecryptBridge<TRawEvent extends DecryptBridgeRawEvent> {
       return;
     }
     this.trackedEncryptedEvents.add(event);
+    logMatrixFleetMgmtProbe((message) => LogService.info("MatrixClientLite", message), {
+      stage: "decrypt.attach",
+      roomId,
+      eventType: event.getType(),
+      eventId: event.getId(),
+    });
     event.on(MatrixEventEvent.Decrypted, (decryptedEvent: MatrixEvent, err?: Error) => {
       this.handleEncryptedEventDecrypted({
         roomId,
@@ -175,6 +182,13 @@ export class MatrixDecryptBridge<TRawEvent extends DecryptBridgeRawEvent> {
     const retryKey = resolveDecryptRetryKey(decryptedRoomId, retryEventId);
 
     if (params.err) {
+      logMatrixFleetMgmtProbe((message) => LogService.info("MatrixClientLite", message), {
+        stage: "decrypt.callback",
+        roomId: decryptedRoomId,
+        eventType: params.decryptedEvent.getType(),
+        eventId: retryEventId,
+        detail: `error=${params.err.message}`,
+      });
       this.emitFailedDecryptionOnce(retryKey, decryptedRoomId, decryptedRaw, params.err);
       this.scheduleDecryptRetry({
         event: params.encryptedEvent,
@@ -185,6 +199,13 @@ export class MatrixDecryptBridge<TRawEvent extends DecryptBridgeRawEvent> {
     }
 
     if (isDecryptionFailure(params.decryptedEvent)) {
+      logMatrixFleetMgmtProbe((message) => LogService.info("MatrixClientLite", message), {
+        stage: "decrypt.callback",
+        roomId: decryptedRoomId,
+        eventType: params.decryptedEvent.getType(),
+        eventId: retryEventId,
+        detail: "decryptionFailure=true",
+      });
       this.emitFailedDecryptionOnce(
         retryKey,
         decryptedRoomId,
@@ -203,6 +224,13 @@ export class MatrixDecryptBridge<TRawEvent extends DecryptBridgeRawEvent> {
       this.clearDecryptRetry(retryKey);
     }
     this.rememberDecryptedMessage(decryptedRoomId, decryptedRaw.event_id);
+    logMatrixFleetMgmtProbe((message) => LogService.info("MatrixClientLite", message), {
+      stage: "decrypt.callback",
+      roomId: decryptedRoomId,
+      eventType: decryptedRaw.event_id ? params.decryptedEvent.getType() : undefined,
+      eventId: decryptedRaw.event_id,
+      detail: "success",
+    });
     this.deps.emitDecryptedEvent(decryptedRoomId, decryptedRaw);
     this.deps.emitMessage(decryptedRoomId, decryptedRaw);
   }
