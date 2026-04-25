@@ -18,6 +18,15 @@ type MatrixCreateClientRuntimeDeps = {
   ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
 };
 
+const MATRIX_FLEET_MGMT_PROBE_ROOM_ID = "!bSZooEPKekiUuHRikF:home.jxs.com.au";
+const MATRIX_CLIENT_EMIT_PROBE_PATCHED = Symbol("matrixClientEmitProbePatched");
+
+type MatrixEmitterLike = {
+  emit?: (eventName: string, ...args: unknown[]) => boolean;
+  listenerCount?: (eventName: string) => number;
+  [MATRIX_CLIENT_EMIT_PROBE_PATCHED]?: boolean;
+};
+
 let matrixCreateClientRuntimeDepsPromise: Promise<MatrixCreateClientRuntimeDeps> | undefined;
 
 async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRuntimeDeps> {
@@ -29,6 +38,60 @@ async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRu
     ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
   }));
   return await matrixCreateClientRuntimeDepsPromise;
+}
+
+function extractProbeEvent(args: unknown[]): {
+  roomId: string | null;
+  event: Record<string, unknown> | null;
+} {
+  const roomId = typeof args[0] === "string" ? args[0] : null;
+  const event =
+    args.find(
+      (value): value is Record<string, unknown> =>
+        Boolean(value) &&
+        typeof value === "object" &&
+        ("event_id" in value || "type" in value || "room_id" in value),
+    ) ?? null;
+  return { roomId, event };
+}
+
+export function attachMatrixFleetMgmtEmitProbe(params: {
+  client: MatrixEmitterLike;
+  accountId?: string | null;
+  userId: string;
+  log: (message: string) => void;
+}): void {
+  const { client } = params;
+  if (typeof client.emit !== "function") {
+    return;
+  }
+  if (client[MATRIX_CLIENT_EMIT_PROBE_PATCHED]) {
+    return;
+  }
+
+  const originalEmit = client.emit.bind(client);
+  client.emit = ((eventName: string, ...args: unknown[]) => {
+    try {
+      const { roomId, event } = extractProbeEvent(args);
+      const eventRoomId = typeof event?.room_id === "string" ? event.room_id : null;
+      const resolvedRoomId = roomId ?? eventRoomId;
+      if (resolvedRoomId === MATRIX_FLEET_MGMT_PROBE_ROOM_ID) {
+        const eventType = typeof event?.type === "string" ? event.type : "unknown";
+        const eventId = typeof event?.event_id === "string" ? event.event_id : "unknown";
+        const listeners =
+          typeof client.listenerCount === "function"
+            ? String(client.listenerCount(eventName))
+            : "unknown";
+        params.log(
+          `matrix-probe: emit account=${params.accountId ?? "default"} user=${params.userId} event=${eventName} room=${resolvedRoomId} type=${eventType} id=${eventId} listeners=${listeners}`,
+        );
+      }
+    } catch {
+      // Never let probe logging interfere with Matrix event delivery.
+    }
+    return originalEmit(eventName, ...args);
+  }) as typeof client.emit;
+  client[MATRIX_CLIENT_EMIT_PROBE_PATCHED] = true;
 }
 
 export async function createMatrixClient(params: {
@@ -86,7 +149,7 @@ export async function createMatrixClient(params: {
     ? `openclaw-matrix-${storagePaths.accountKey}-${storagePaths.tokenHash}`
     : undefined;
 
-  return new MatrixClient(homeserver, params.accessToken, {
+  const client = new MatrixClient(homeserver, params.accessToken, {
     userId: matrixClientUserId,
     password: params.password,
     deviceId: params.deviceId,
@@ -102,4 +165,13 @@ export async function createMatrixClient(params: {
       params.ssrfPolicy ?? ssrfPolicyFromDangerouslyAllowPrivateNetwork(params.allowPrivateNetwork),
     dispatcherPolicy: params.dispatcherPolicy,
   });
+
+  attachMatrixFleetMgmtEmitProbe({
+    client: client as MatrixEmitterLike,
+    accountId: params.accountId,
+    userId,
+    log: (message) => console.info(message),
+  });
+
+  return client;
 }
