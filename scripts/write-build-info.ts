@@ -60,6 +60,23 @@ export function resolveVersionTagFromTagList(tags: readonly string[]): string | 
   );
 }
 
+export function resolveVersionTagFromMergedHeadTags(): string | null {
+  try {
+    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    return resolveVersionTagFromTagList(raw);
+  } catch {
+    return null;
+  }
+}
+
 const resolveVersionFromTagContext = () => {
   const envCandidates = [
     process.env.OPENCLAW_BUILD_VERSION,
@@ -75,20 +92,7 @@ const resolveVersionFromTagContext = () => {
     }
   }
 
-  try {
-    const raw = execSync("git tag --points-at HEAD --sort=-version:refname", {
-      cwd: rootDir,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return resolveVersionTagFromTagList(raw);
-  } catch {
-    return null;
-  }
+  return resolveVersionTagFromMergedHeadTags();
 };
 
 const version = resolveVersionFromTagContext() ?? readPackageVersion();

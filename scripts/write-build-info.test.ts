@@ -1,5 +1,11 @@
-import { describe, expect, it } from "vitest";
-import { resolveVersionTagFromTagList, STABLE_TAG_PATTERN, FORK_TAG_PATTERN } from "./write-build-info.js";
+import * as childProcess from "node:child_process";
+import { describe, expect, it, vi } from "vitest";
+import {
+  resolveVersionTagFromMergedHeadTags,
+  resolveVersionTagFromTagList,
+  STABLE_TAG_PATTERN,
+  FORK_TAG_PATTERN,
+} from "./write-build-info.js";
 
 describe("resolveVersionTagFromTagList", () => {
   it("prefers stable tags over fork tags", () => {
@@ -16,6 +22,19 @@ describe("resolveVersionTagFromTagList", () => {
   it("ignores non-matching tags", () => {
     const tags = ["v2026.4.9", "release-candidate", "v2026.4.7-beta.1", "random-tag"];
     expect(resolveVersionTagFromTagList(tags)).toBe("v2026.4.9");
+  });
+});
+
+describe("resolveVersionTagFromMergedHeadTags", () => {
+  it("prefers stable merged tags over fork lineage tags", () => {
+    const spy = vi
+      .spyOn(childProcess, "execSync")
+      .mockReturnValue(Buffer.from("v2026.4.15-x.4\nv2026.4.23\nv2026.4.15-x.3\n"));
+    try {
+      expect(resolveVersionTagFromMergedHeadTags()).toBe("v2026.4.23");
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
