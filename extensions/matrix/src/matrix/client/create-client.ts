@@ -41,7 +41,11 @@ async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRu
 }
 
 function isMatrixEmitterLike(value: unknown): value is MatrixEmitterLike {
-  return typeof value === "object" && value !== null && typeof value.emit === "function";
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const maybeEmitter = value as { emit?: unknown };
+  return typeof maybeEmitter.emit === "function";
 }
 
 function extractProbeEvent(args: unknown[]): {
