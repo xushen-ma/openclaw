@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const ensureMatrixSdkLoggingConfiguredMock = vi.hoisted(() => vi.fn());
@@ -26,6 +27,7 @@ vi.mock("../sdk.js", () => ({
 }));
 
 let createMatrixClient: typeof import("./create-client.js").createMatrixClient;
+let attachMatrixFleetMgmtEmitProbe: typeof import("./create-client.js").attachMatrixFleetMgmtEmitProbe;
 
 describe("createMatrixClient", () => {
   const storagePaths = {
@@ -39,7 +41,7 @@ describe("createMatrixClient", () => {
   };
 
   beforeAll(async () => {
-    ({ createMatrixClient } = await import("./create-client.js"));
+    ({ createMatrixClient, attachMatrixFleetMgmtEmitProbe } = await import("./create-client.js"));
   });
 
   beforeEach(() => {
@@ -112,7 +114,7 @@ describe("createMatrixClient", () => {
       accessToken: "tok",
       persistStorage: false,
       allowPrivateNetwork: false,
-      ssrfPolicy: explicitPolicy as never,
+      ssrfPolicy: explicitPolicy,
     });
 
     expect(MatrixClientMock).toHaveBeenCalledWith(
@@ -166,5 +168,77 @@ describe("createMatrixClient", () => {
       ssrfPolicy: undefined,
       dispatcherPolicy: undefined,
     });
+  });
+
+  it("logs targeted room emits with listener count", () => {
+    class ProbeClient extends EventEmitter {}
+    const client = new ProbeClient();
+    const log = vi.fn();
+    const handler = vi.fn();
+    client.on("room.message", handler);
+
+    attachMatrixFleetMgmtEmitProbe({
+      client,
+      accountId: "mini",
+      userId: "@mini:home.jxs.com.au",
+      log,
+    });
+
+    const event = {
+      type: "m.room.message",
+      event_id: "$event1",
+    };
+    client.emit("room.message", "!bSZooEPKekiUuHRikF:home.jxs.com.au", event);
+
+    expect(handler).toHaveBeenCalledWith("!bSZooEPKekiUuHRikF:home.jxs.com.au", event);
+    expect(log).toHaveBeenCalledWith(
+      "matrix-probe: emit account=mini user=@mini:home.jxs.com.au event=room.message room=!bSZooEPKekiUuHRikF:home.jxs.com.au type=m.room.message id=$event1 listeners=1",
+    );
+  });
+
+  it("ignores other rooms", () => {
+    class ProbeClient extends EventEmitter {}
+    const client = new ProbeClient();
+    const log = vi.fn();
+    attachMatrixFleetMgmtEmitProbe({
+      client,
+      accountId: "mini",
+      userId: "@mini:home.jxs.com.au",
+      log,
+    });
+
+    client.emit("room.message", "!other:example.org", {
+      type: "m.room.message",
+      event_id: "$event2",
+    });
+
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("patches a client only once", () => {
+    class ProbeClient extends EventEmitter {}
+    const client = new ProbeClient();
+    const firstLog = vi.fn();
+    const secondLog = vi.fn();
+    attachMatrixFleetMgmtEmitProbe({
+      client,
+      accountId: "mini",
+      userId: "@mini:home.jxs.com.au",
+      log: firstLog,
+    });
+    attachMatrixFleetMgmtEmitProbe({
+      client,
+      accountId: "mini",
+      userId: "@mini:home.jxs.com.au",
+      log: secondLog,
+    });
+
+    client.emit("room.event", "!bSZooEPKekiUuHRikF:home.jxs.com.au", {
+      type: "m.room.encrypted",
+      event_id: "$event3",
+    });
+
+    expect(firstLog).toHaveBeenCalledTimes(1);
+    expect(secondLog).not.toHaveBeenCalled();
   });
 });
