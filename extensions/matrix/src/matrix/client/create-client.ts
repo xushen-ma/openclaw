@@ -48,7 +48,7 @@ function extractProbeEvent(args: unknown[]): {
   const event =
     args.find(
       (value): value is Record<string, unknown> =>
-        Boolean(value) &&
+        value != null &&
         typeof value === "object" &&
         ("event_id" in value || "type" in value || "room_id" in value),
     ) ?? null;
@@ -70,7 +70,7 @@ export function attachMatrixFleetMgmtEmitProbe(params: {
   }
 
   const originalEmit = client.emit.bind(client);
-  client.emit = ((eventName: string, ...args: unknown[]) => {
+  client.emit = (eventName: string, ...args: unknown[]) => {
     try {
       const { roomId, event } = extractProbeEvent(args);
       const eventRoomId = typeof event?.room_id === "string" ? event.room_id : null;
@@ -90,7 +90,7 @@ export function attachMatrixFleetMgmtEmitProbe(params: {
       // Never let probe logging interfere with Matrix event delivery.
     }
     return originalEmit(eventName, ...args);
-  }) as typeof client.emit;
+  };
   client[MATRIX_CLIENT_EMIT_PROBE_PATCHED] = true;
 }
 
@@ -167,7 +167,7 @@ export async function createMatrixClient(params: {
   });
 
   attachMatrixFleetMgmtEmitProbe({
-    client: client as MatrixEmitterLike,
+    client,
     accountId: params.accountId,
     userId,
     log: (message) => console.info(message),
