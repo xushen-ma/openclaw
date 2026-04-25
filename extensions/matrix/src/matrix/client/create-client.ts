@@ -22,7 +22,7 @@ const MATRIX_FLEET_MGMT_PROBE_ROOM_ID = "!bSZooEPKekiUuHRikF:home.jxs.com.au";
 const MATRIX_CLIENT_EMIT_PROBE_PATCHED = Symbol("matrixClientEmitProbePatched");
 
 type MatrixEmitterLike = {
-  emit?: (eventName: string, ...args: unknown[]) => boolean;
+  emit: (eventName: string, ...args: unknown[]) => boolean;
   listenerCount?: (eventName: string) => number;
   [MATRIX_CLIENT_EMIT_PROBE_PATCHED]?: boolean;
 };
@@ -38,6 +38,10 @@ async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRu
     ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
   }));
   return await matrixCreateClientRuntimeDepsPromise;
+}
+
+function isMatrixEmitterLike(value: unknown): value is MatrixEmitterLike {
+  return typeof value === "object" && value !== null && typeof value.emit === "function";
 }
 
 function extractProbeEvent(args: unknown[]): {
@@ -56,15 +60,15 @@ function extractProbeEvent(args: unknown[]): {
 }
 
 export function attachMatrixFleetMgmtEmitProbe(params: {
-  client: MatrixEmitterLike;
+  client: unknown;
   accountId?: string | null;
   userId: string;
   log: (message: string) => void;
 }): void {
-  const { client } = params;
-  if (typeof client.emit !== "function") {
+  if (!isMatrixEmitterLike(params.client)) {
     return;
   }
+  const { client } = params;
   if (client[MATRIX_CLIENT_EMIT_PROBE_PATCHED]) {
     return;
   }

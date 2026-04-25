@@ -114,7 +114,7 @@ describe("createMatrixClient", () => {
       accessToken: "tok",
       persistStorage: false,
       allowPrivateNetwork: false,
-      ssrfPolicy: explicitPolicy as never,
+      ssrfPolicy: explicitPolicy,
     });
 
     expect(MatrixClientMock).toHaveBeenCalledWith(
