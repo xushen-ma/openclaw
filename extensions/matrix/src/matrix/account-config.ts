@@ -123,20 +123,34 @@ export function resolveMatrixAccountConfig(params: {
     normalizeAccountId,
     nestedObjectKeys: ["dm", "actions", "execApprovals"],
   });
+  const defaultAccountConfig =
+    accountId === DEFAULT_ACCOUNT_ID
+      ? undefined
+      : findMatrixAccountConfig(params.cfg, DEFAULT_ACCOUNT_ID);
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
-  const groups = mergeMatrixRoomEntries(
+  const inheritedGroups = mergeMatrixRoomEntries(
     selectInheritedMatrixRoomEntries({
       entries: base.groups,
       accountId,
     }),
+    defaultAccountConfig?.groups,
+    Boolean(defaultAccountConfig && Object.hasOwn(defaultAccountConfig, "groups")),
+  );
+  const groups = mergeMatrixRoomEntries(
+    inheritedGroups,
     accountConfig?.groups,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "groups")),
   );
-  const rooms = mergeMatrixRoomEntries(
+  const inheritedRooms = mergeMatrixRoomEntries(
     selectInheritedMatrixRoomEntries({
       entries: base.rooms,
       accountId,
     }),
+    defaultAccountConfig?.rooms,
+    Boolean(defaultAccountConfig && Object.hasOwn(defaultAccountConfig, "rooms")),
+  );
+  const rooms = mergeMatrixRoomEntries(
+    inheritedRooms,
     accountConfig?.rooms,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "rooms")),
   );
@@ -158,15 +172,26 @@ export function resolveMatrixAccountAllowlistConfig(params: {
 } {
   const accountId = normalizeAccountId(params.accountId);
   const base = resolveMatrixBaseConfig(params.cfg);
+  const defaultAccountConfig =
+    accountId === DEFAULT_ACCOUNT_ID
+      ? undefined
+      : findMatrixAccountConfig(params.cfg, DEFAULT_ACCOUNT_ID);
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
+  const defaultDm = defaultAccountConfig?.dm;
   const accountDm = accountConfig?.dm;
 
   let dmAllowFrom = base.dm?.allowFrom;
+  if (defaultDm && Object.hasOwn(defaultDm, "allowFrom")) {
+    dmAllowFrom = defaultDm.allowFrom;
+  }
   if (accountDm && Object.hasOwn(accountDm, "allowFrom")) {
     dmAllowFrom = accountDm.allowFrom;
   }
 
   let groupAllowFrom = base.groupAllowFrom;
+  if (defaultAccountConfig && Object.hasOwn(defaultAccountConfig, "groupAllowFrom")) {
+    groupAllowFrom = defaultAccountConfig.groupAllowFrom;
+  }
   if (accountConfig && Object.hasOwn(accountConfig, "groupAllowFrom")) {
     groupAllowFrom = accountConfig.groupAllowFrom;
   }
