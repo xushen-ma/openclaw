@@ -1325,14 +1325,15 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         storePath,
         sessionKey: ctxPayload.SessionKey ?? _route.sessionKey,
         ctx: ctxPayload,
-        updateLastRoute: isDirectMessage
-          ? {
-              sessionKey: _route.mainSessionKey,
-              channel: "matrix",
-              to: `room:${roomId}`,
-              accountId: _route.accountId,
-            }
-          : undefined,
+        updateLastRoute:
+          isDirectMessage && _route.mainSessionKey === _route.sessionKey
+            ? {
+                sessionKey: _route.mainSessionKey,
+                channel: "matrix",
+                to: `room:${roomId}`,
+                accountId: _route.accountId,
+              }
+            : undefined,
         onRecordError: (err) => {
           logger.warn("failed updating session meta", {
             error: String(err),
