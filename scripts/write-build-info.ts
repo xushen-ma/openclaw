@@ -85,33 +85,7 @@ const normalizeCandidate = (value: string | null | undefined): string | null => 
   return trimmed ? trimmed : null;
 };
 
-export function resolveVersionTagFromTagList(tags: readonly string[]): string | null {
-  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
-  return (
-    candidates.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
-    candidates.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
-    null
-  );
-}
-
-export function resolveVersionTagFromMergedHeadTags(): string | null {
-  try {
-    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
-      cwd: rootDir,
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .toString()
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    return resolveVersionTagFromTagList(raw);
-  } catch {
-    return null;
-  }
-}
-
-const resolveVersionFromTagContext = () => {
+export function resolveVersionTagFromEnv(): string | null {
   const envCandidates = [
     process.env.OPENCLAW_BUILD_VERSION,
     process.env.OPENCLAW_VERSION,
@@ -125,9 +99,39 @@ const resolveVersionFromTagContext = () => {
       return normalized;
     }
   }
+  return null;
+}
 
-  return resolveVersionTagFromMergedHeadTags();
-};
+export function resolveVersionTagFromTagList(tags: readonly string[]): string | null {
+  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
+  return (
+    candidates.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
+    candidates.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
+    null
+  );
+}
+
+export function resolveVersionTagFromMergedHeadTagOutput(raw: string): string | null {
+  return resolveVersionTagFromTagList(
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+export function resolveVersionTagFromMergedHeadTags(): string | null {
+  try {
+    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+
+    return resolveVersionTagFromMergedHeadTagOutput(raw);
+  } catch {
+    return null;
+  }
+}
 
 export function resolvePreferredBuildInfoVersion(
   tagVersion: string | null,
@@ -143,7 +147,14 @@ export function resolvePreferredBuildInfoVersion(
 }
 
 function resolveBuildInfoVersion(): string | null {
-  return resolvePreferredBuildInfoVersion(resolveVersionFromTagContext(), readPackageVersion());
+  const explicitTagVersion = resolveVersionTagFromEnv();
+  if (explicitTagVersion) {
+    return explicitTagVersion;
+  }
+  return resolvePreferredBuildInfoVersion(
+    resolveVersionTagFromMergedHeadTags(),
+    readPackageVersion(),
+  );
 }
 
 const version = resolveBuildInfoVersion();

@@ -1,9 +1,9 @@
-import * as childProcess from "node:child_process";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   compareReleaseCandidates,
   resolvePreferredBuildInfoVersion,
-  resolveVersionTagFromMergedHeadTags,
+  resolveVersionTagFromEnv,
+  resolveVersionTagFromMergedHeadTagOutput,
   resolveVersionTagFromTagList,
   STABLE_TAG_PATTERN,
   FORK_TAG_PATTERN,
@@ -27,16 +27,28 @@ describe("resolveVersionTagFromTagList", () => {
   });
 });
 
-describe("resolveVersionTagFromMergedHeadTags", () => {
-  it("prefers stable merged tags over fork lineage tags", () => {
-    const spy = vi
-      .spyOn(childProcess, "execSync")
-      .mockReturnValue(Buffer.from("v2026.4.15-x.4\nv2026.4.23\nv2026.4.15-x.3\n"));
+describe("resolveVersionTagFromEnv", () => {
+  it("prefers explicit governed build tags from the environment", () => {
+    const previous = {
+      OPENCLAW_BUILD_VERSION: process.env.OPENCLAW_BUILD_VERSION,
+      OPENCLAW_VERSION: process.env.OPENCLAW_VERSION,
+    };
+    process.env.OPENCLAW_BUILD_VERSION = "v2026.4.22-x.1";
+    process.env.OPENCLAW_VERSION = "v2026.4.22";
     try {
-      expect(resolveVersionTagFromMergedHeadTags()).toBe("v2026.4.23");
+      expect(resolveVersionTagFromEnv()).toBe("v2026.4.22-x.1");
     } finally {
-      spy.mockRestore();
+      process.env.OPENCLAW_BUILD_VERSION = previous.OPENCLAW_BUILD_VERSION;
+      process.env.OPENCLAW_VERSION = previous.OPENCLAW_VERSION;
     }
+  });
+});
+
+describe("resolveVersionTagFromMergedHeadTagOutput", () => {
+  it("prefers stable merged tags over fork lineage tags", () => {
+    expect(
+      resolveVersionTagFromMergedHeadTagOutput("v2026.4.15-x.4\nv2026.4.23\nv2026.4.15-x.3\n"),
+    ).toBe("v2026.4.23");
   });
 });
 
