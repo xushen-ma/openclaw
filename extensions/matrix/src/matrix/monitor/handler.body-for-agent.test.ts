@@ -71,6 +71,37 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
     });
   });
 
+  it("does not overwrite lastRoute to main for room-scoped DM sessions", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      accountId: "uri",
+      isDirectMessage: true,
+      resolveAgentRoute: () => ({
+        agentId: "uri",
+        channel: "matrix",
+        accountId: "uri",
+        sessionKey: "agent:uri:matrix:channel:!dmroom:example.org",
+        mainSessionKey: "agent:uri:main",
+        matchedBy: "binding.account",
+      }),
+    });
+
+    await handler(
+      "!dmroom:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$event-dm-parent-peer",
+        sender: "@xushen:matrix.example.org",
+        body: "hello",
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionKey: "agent:uri:matrix:channel:!dmroom:example.org",
+        updateLastRoute: undefined,
+      }),
+    );
+  });
+
   it("records thread metadata for group thread messages", async () => {
     const { handler, finalizeInboundContext, recordInboundSession } =
       createMatrixHandlerTestHarness({
