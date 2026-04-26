@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixScopedEnvVarNames } from "../env-vars.js";
 import type { CoreConfig } from "../types.js";
+import { resolveMatrixAccountAllowlistConfig } from "./account-config.js";
 import {
   listMatrixAccountIds,
   resolveConfiguredMatrixBotUserIds,
@@ -599,6 +600,30 @@ describe("resolveMatrixAccount", () => {
     );
   });
 
+  it("inherits groups from accounts.default for named accounts", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          accounts: {
+            default: {
+              ...createMatrixAccountConfig("default-token"),
+              groups: {
+                "*": { requireMention: false },
+                "!protected:example.org": { requireMention: true },
+              },
+            },
+            mini: createMatrixAccountConfig("mini-token"),
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    expect(resolveMatrixAccount({ cfg, accountId: "mini" }).config.groups).toEqual({
+      "*": { requireMention: false },
+      "!protected:example.org": { requireMention: true },
+    });
+  });
+
   it("filters legacy channel-level rooms by room account in multi-account setups", () => {
     expectMultiAccountMatrixScopedEntries(createMatrixScopedEntriesConfig("rooms"), "rooms");
   });
@@ -608,6 +633,34 @@ describe("resolveMatrixAccount", () => {
       createMatrixTopLevelDefaultScopedEntriesConfig("rooms"),
       "rooms",
     );
+  });
+
+  it("inherits allowlists from accounts.default for named accounts", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          dm: {
+            allowFrom: ["@top:example.org"],
+          },
+          groupAllowFrom: ["@top-group:example.org"],
+          accounts: {
+            default: {
+              ...createMatrixAccountConfig("default-token"),
+              dm: {
+                allowFrom: ["@default:example.org"],
+              },
+              groupAllowFrom: ["@default-group:example.org"],
+            },
+            mini: createMatrixAccountConfig("mini-token"),
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "mini" })).toEqual({
+      dmAllowFrom: ["@default:example.org"],
+      groupAllowFrom: ["@default-group:example.org"],
+    });
   });
 
   it("honors injected env when scoping room entries in multi-account setups", () => {
