@@ -7,8 +7,6 @@ read_when:
 title: "Moonshot AI"
 ---
 
-# Moonshot AI (Kimi)
-
 Moonshot provides the Kimi API with OpenAI-compatible endpoints. Configure the
 provider and set the default model to `moonshot/kimi-k2.6`, or use
 Kimi Coding with `kimi/kimi-code`.
@@ -286,7 +284,7 @@ Config lives under `plugins.entries.moonshot.config.webSearch`:
 }
 ```
 
-## Advanced
+## Advanced configuration
 
 <AccordionGroup>
   <Accordion title="Native thinking mode">
@@ -349,9 +347,9 @@ Config lives under `plugins.entries.moonshot.config.webSearch`:
   </Accordion>
 
   <Accordion title="Tool call id sanitization">
-    Moonshot Kimi serves native tool_call ids shaped like `functions.<name>:<index>` on the OpenAI-compatible transport. OpenClaw no longer strict-sanitizes these ids for Moonshot, so multi-turn agentic flows through Kimi K2.6 keep working past 2-3 tool-calling rounds when the serving layer matches mangled ids against the original tool definitions.
+    Moonshot Kimi serves tool_call ids shaped like `functions.<name>:<index>`. OpenClaw preserves them unchanged so multi-turn tool calls keep working.
 
-    If a custom OpenAI-compatible provider needs the previous behavior, set `sanitizeToolCallIds: true` on the provider entry. The flag lives on the shared `openai-compatible` replay family; Moonshot is wired to the opt-out by default.
+    To force strict sanitization on a custom OpenAI-compatible provider, set `sanitizeToolCallIds: true`:
 
     ```json5
     {

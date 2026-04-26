@@ -8,15 +8,15 @@ import {
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
-  DEFAULT_MEMORY_ALT_FILENAME,
   DEFAULT_MEMORY_FILENAME,
-  DEFAULT_TEAM_FILENAME,
+  DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
   filterBootstrapFilesForSession,
   isWorkspaceBootstrapPending,
   loadWorkspaceBootstrapFiles,
+  reconcileWorkspaceBootstrapCompletion,
   resolveWorkspaceBootstrapStatus,
   resolveDefaultAgentWorkspaceDir,
   type WorkspaceBootstrapFile,
@@ -70,7 +70,6 @@ function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   expect(names).toContain("SOUL.md");
   expect(names).toContain("IDENTITY.md");
   expect(names).toContain("USER.md");
-  expect(names).toContain("TEAM.md");
   expect(names).not.toContain("HEARTBEAT.md");
   expect(names).not.toContain("BOOTSTRAP.md");
   expect(names).not.toContain("MEMORY.md");
@@ -187,6 +186,80 @@ describe("ensureAgentWorkspace", () => {
     await expect(isWorkspaceBootstrapPending(tempDir)).resolves.toBe(true);
   });
 
+  it("keeps bootstrap status read-only when stale completion evidence exists", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
+    await writeWorkspaceFile({
+      dir: tempDir,
+      name: DEFAULT_IDENTITY_FILENAME,
+      content: "# IDENTITY.md\n\n- **Name:** Example\n",
+    });
+
+    await expect(resolveWorkspaceBootstrapStatus(tempDir)).resolves.toBe("pending");
+    await expect(
+      fs.access(path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME)),
+    ).resolves.toBeUndefined();
+    expect((await readWorkspaceState(tempDir)).setupCompletedAt).toBeUndefined();
+  });
+
+  it("repairs stale BOOTSTRAP.md when profile files show onboarding completed", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
+    await writeWorkspaceFile({
+      dir: tempDir,
+      name: DEFAULT_IDENTITY_FILENAME,
+      content: "# IDENTITY.md\n\n- **Name:** Example\n",
+    });
+
+    await expect(reconcileWorkspaceBootstrapCompletion(tempDir)).resolves.toMatchObject({
+      repaired: true,
+      bootstrapExists: false,
+    });
+    await expect(fs.access(path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const state = await readWorkspaceState(tempDir);
+    expect(state.bootstrapSeededAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(state.setupCompletedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    await expect(resolveWorkspaceBootstrapStatus(tempDir)).resolves.toBe("complete");
+    await expect(isWorkspaceBootstrapPending(tempDir)).resolves.toBe(false);
+  });
+
+  it("uses SOUL.md customization as stale bootstrap completion evidence", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
+    await writeWorkspaceFile({
+      dir: tempDir,
+      name: DEFAULT_SOUL_FILENAME,
+      content: "# SOUL.md\n\nUse a concise, practical voice.\n",
+    });
+
+    await expect(reconcileWorkspaceBootstrapCompletion(tempDir)).resolves.toMatchObject({
+      repaired: true,
+      bootstrapExists: false,
+    });
+    await expect(fs.access(path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("does not treat git alone as stale bootstrap completion evidence", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await ensureAgentWorkspace({ dir: tempDir, ensureBootstrapFiles: true });
+    await fs.mkdir(path.join(tempDir, ".git"), { recursive: true });
+    await fs.writeFile(path.join(tempDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+
+    await expect(reconcileWorkspaceBootstrapCompletion(tempDir)).resolves.toMatchObject({
+      repaired: false,
+      bootstrapExists: true,
+    });
+    await expect(resolveWorkspaceBootstrapStatus(tempDir)).resolves.toBe("pending");
+    await expect(
+      fs.access(path.join(tempDir, DEFAULT_BOOTSTRAP_FILENAME)),
+    ).resolves.toBeUndefined();
+    expect((await readWorkspaceState(tempDir)).setupCompletedAt).toBeUndefined();
+  });
+
   it("reports bootstrap complete once BOOTSTRAP.md is deleted and completion is recorded", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
 
@@ -216,9 +289,7 @@ describe("ensureAgentWorkspace", () => {
 
 describe("loadWorkspaceBootstrapFiles", () => {
   const getMemoryEntries = (files: Awaited<ReturnType<typeof loadWorkspaceBootstrapFiles>>) =>
-    files.filter((file) =>
-      [DEFAULT_MEMORY_FILENAME, DEFAULT_MEMORY_ALT_FILENAME].includes(file.name),
-    );
+    files.filter((file) => file.name === DEFAULT_MEMORY_FILENAME);
 
   const expectSingleMemoryEntry = (
     files: Awaited<ReturnType<typeof loadWorkspaceBootstrapFiles>>,
@@ -238,21 +309,12 @@ describe("loadWorkspaceBootstrapFiles", () => {
     expectSingleMemoryEntry(files, "memory");
   });
 
-  it("includes TEAM.md when present", async () => {
-    const tempDir = await makeTempWorkspace("openclaw-workspace-");
-    await writeWorkspaceFile({ dir: tempDir, name: DEFAULT_TEAM_FILENAME, content: "team" });
-
-    const files = await loadWorkspaceBootstrapFiles(tempDir);
-    const team = files.find((file) => file.name === DEFAULT_TEAM_FILENAME);
-    expect(team).toMatchObject({ missing: false, content: "team" });
-  });
-
-  it("includes memory.md when MEMORY.md is absent", async () => {
+  it("ignores lowercase memory.md when MEMORY.md is absent", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await writeWorkspaceFile({ dir: tempDir, name: "memory.md", content: "alt" });
 
     const files = await loadWorkspaceBootstrapFiles(tempDir);
-    expectSingleMemoryEntry(files, "alt");
+    expect(getMemoryEntries(files)).toHaveLength(0);
   });
 
   it("omits memory entries when no memory files exist", async () => {
@@ -301,7 +363,6 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "TOOLS.md", path: "/w/TOOLS.md", content: "", missing: false },
     { name: "IDENTITY.md", path: "/w/IDENTITY.md", content: "", missing: false },
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
-    { name: "TEAM.md", path: "/w/TEAM.md", content: "", missing: false },
     { name: "HEARTBEAT.md", path: "/w/HEARTBEAT.md", content: "", missing: false },
     { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
     { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },

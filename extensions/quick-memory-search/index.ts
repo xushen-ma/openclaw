@@ -1,3 +1,5 @@
+import { appendFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
 import type { OvHttpConfig } from "./ov-http-client.js";
 
@@ -50,6 +52,27 @@ const QuickMemorySearchSchema = {
   },
   required: ["query"] as string[],
 };
+
+async function appendOvFastPassStat(entry: {
+  layer: "fast-pass" | "fast-pass-shared";
+  routing: "per-agent" | "legacy";
+  agentId: string;
+  query: string;
+  maxResults: number;
+  totalHits: number;
+}) {
+  const statsPath = process.env.OV_STATS_LOG_PATH?.trim();
+  if (!statsPath) {
+    return;
+  }
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
+  try {
+    await mkdir(dirname(statsPath), { recursive: true });
+    await appendFile(statsPath, `${line}\n`, "utf8");
+  } catch {
+    // best-effort diagnostics only
+  }
+}
 
 function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string): AnyAgentTool {
   return {
@@ -123,11 +146,21 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
             };
           });
 
+          const totalHits = typeof result?.total === "number" ? result.total : items.length;
+          await appendOvFastPassStat({
+            layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
+            routing: attempt.mode,
+            agentId,
+            query: query.trim(),
+            maxResults,
+            totalHits,
+          });
+
           return json({
             results,
             provider: results.length > 0 ? results[0].source : "openviking",
             model: "openviking-local",
-            totalHits: typeof result?.total === "number" ? result.total : items.length,
+            totalHits,
             routing: attempt.mode,
             agentId,
           });
@@ -168,6 +201,21 @@ export default function register(api: OpenClawPluginApi) {
   // at registration time rather than reading process.env.OPENCLAW_AGENT_ID (never set).
   api.registerTool((ctx) => createQuickMemorySearchTool(httpConfig, ctx.agentId || "main"));
   api.registerTool((ctx) => createQuickSessionSearchTool(httpConfig, ctx.agentId || "main"));
+
+  api.registerService({
+    id: "quick-memory-search.per-agent-sidecar",
+    start: () => {
+      api.logger.info("quick-memory-search sidecar service ready");
+    },
+    stop: () => {},
+  });
+
+  api.registerGatewayMethod("quick-memory-search.status", async () => ({
+    ok: true,
+    perAgentBaseUrl: httpConfig.perAgentBaseUrl || null,
+    legacyBaseUrl: httpConfig.legacyBaseUrl || null,
+    agentRouting: httpConfig.agentRouting,
+  }));
 
   api.logger.info(
     `quick_memory_search + quick_session_search registered (perAgent=${httpConfig.perAgentBaseUrl || "disabled"}, legacy=${httpConfig.legacyBaseUrl || "disabled"})`,
