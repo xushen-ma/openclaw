@@ -1,21 +1,28 @@
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveAgentConfig } from "./agent-scope.js";
+import type { FsExtraRootConfig } from "./fs-root-policy.js";
 import { pickSandboxToolPolicy } from "./sandbox-tool-policy.js";
 import { isToolAllowedByPolicies } from "./tool-policy-match.js";
 import { mergeAlsoAllowPolicy, resolveToolProfilePolicy } from "./tool-policy.js";
 
 export type ToolFsPolicy = {
   workspaceOnly: boolean;
+  extraRoots?: FsExtraRootConfig[];
 };
 
-export function createToolFsPolicy(params: { workspaceOnly?: boolean }): ToolFsPolicy {
+export function createToolFsPolicy(params: {
+  workspaceOnly?: boolean;
+  extraRoots?: readonly FsExtraRootConfig[];
+}): ToolFsPolicy {
   return {
     workspaceOnly: params.workspaceOnly === true,
+    extraRoots: [...(params.extraRoots ?? [])],
   };
 }
 
 export function resolveToolFsConfig(params: { cfg?: OpenClawConfig; agentId?: string }): {
   workspaceOnly?: boolean;
+  extraRoots?: FsExtraRootConfig[];
 } {
   const cfg = params.cfg;
   const globalFs = cfg?.tools?.fs;
@@ -23,6 +30,7 @@ export function resolveToolFsConfig(params: { cfg?: OpenClawConfig; agentId?: st
     cfg && params.agentId ? resolveAgentConfig(cfg, params.agentId)?.tools?.fs : undefined;
   return {
     workspaceOnly: agentFs?.workspaceOnly ?? globalFs?.workspaceOnly,
+    extraRoots: [...(globalFs?.extraRoots ?? []), ...(agentFs?.extraRoots ?? [])],
   };
 }
 

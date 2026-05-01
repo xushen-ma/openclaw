@@ -11,7 +11,14 @@ import {
 } from "../infra/fs-safe.js";
 import { PATH_ALIAS_POLICIES, type PathAliasPolicy } from "../infra/path-alias-guards.js";
 import { applyUpdateHunk } from "./apply-patch-update.js";
-import { toRelativeSandboxPath, resolvePathFromInput } from "./path-policy.js";
+import {
+  assertPathWithinFsRoots,
+  getAllowedFsRoots,
+  relativePathWithinResolvedRoot,
+  resolveDisplayPath,
+  type ResolvedFsRoot,
+} from "./fs-root-policy.js";
+import { resolvePathFromInput } from "./path-policy.js";
 import { assertSandboxPath } from "./sandbox-paths.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 
@@ -77,6 +84,8 @@ type ApplyPatchOptions = {
   sandbox?: SandboxApplyPatchConfig;
   /** Restrict patch paths to the workspace root (cwd). Default: true. Set false to opt out. */
   workspaceOnly?: boolean;
+  /** Explicit rw extra roots allowed while workspaceOnly is enabled. */
+  extraRoots?: readonly ResolvedFsRoot[];
   signal?: AbortSignal;
 };
 
@@ -87,7 +96,12 @@ const applyPatchSchema = Type.Object({
 });
 
 export function createApplyPatchTool(
-  options: { cwd?: string; sandbox?: SandboxApplyPatchConfig; workspaceOnly?: boolean } = {},
+  options: {
+    cwd?: string;
+    sandbox?: SandboxApplyPatchConfig;
+    workspaceOnly?: boolean;
+    extraRoots?: readonly ResolvedFsRoot[];
+  } = {},
 ): AgentTool<typeof applyPatchSchema, ApplyPatchToolDetails> {
   const cwd = options.cwd ?? process.cwd();
   const sandbox = options.sandbox;
@@ -115,6 +129,7 @@ export function createApplyPatchTool(
         cwd,
         sandbox,
         workspaceOnly,
+        extraRoots: options.extraRoots,
         signal,
       });
 
@@ -244,15 +259,48 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
     };
   }
   const workspaceOnly = options.workspaceOnly !== false;
+  const writableRoots = () =>
+    getAllowedFsRoots({
+      workspaceRoot: options.cwd,
+      extraRoots: options.extraRoots,
+      access: "write",
+    });
+  const resolveWritableTarget = (filePath: string, allowRoot = false) => {
+    const roots = writableRoots();
+    const root = roots.find((candidate) => {
+      try {
+        relativePathWithinResolvedRoot({ root: candidate.path, absolutePath: filePath, allowRoot });
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (!root) {
+      const label =
+        roots.length === 1 && roots[0]?.path === options.cwd
+          ? "sandbox root"
+          : "allowed filesystem roots";
+      throw new Error(`Path escapes ${label}: ${filePath}`);
+    }
+    return {
+      rootDir: root.path,
+      relative: relativePathWithinResolvedRoot({
+        root: root.path,
+        absolutePath: filePath,
+        allowRoot,
+      }),
+    };
+  };
   return {
     readFile: async (filePath) => {
       if (!workspaceOnly) {
         return await fs.readFile(filePath, "utf8");
       }
+      const target = resolveWritableTarget(filePath);
       const opened = await openBoundaryFile({
         absolutePath: filePath,
-        rootPath: options.cwd,
-        boundaryLabel: "workspace root",
+        rootPath: target.rootDir,
+        boundaryLabel: "allowed filesystem roots",
       });
       assertBoundaryRead(opened, filePath);
       try {
@@ -266,10 +314,10 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
         await fs.writeFile(filePath, content, "utf8");
         return;
       }
-      const relative = toRelativeSandboxPath(options.cwd, filePath);
+      const target = resolveWritableTarget(filePath);
       await writeFileWithinRoot({
-        rootDir: options.cwd,
-        relativePath: relative,
+        rootDir: target.rootDir,
+        relativePath: target.relative,
         data: content,
         encoding: "utf8",
       });
@@ -279,10 +327,10 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
         await fs.rm(filePath);
         return;
       }
-      const relative = toRelativeSandboxPath(options.cwd, filePath);
+      const target = resolveWritableTarget(filePath);
       await removePathWithinRoot({
-        rootDir: options.cwd,
-        relativePath: relative,
+        rootDir: target.rootDir,
+        relativePath: target.relative,
       });
     },
     mkdirp: async (dir) => {
@@ -290,10 +338,10 @@ function resolvePatchFileOps(options: ApplyPatchOptions): PatchFileOps {
         await fs.mkdir(dir, { recursive: true });
         return;
       }
-      const relative = toRelativeSandboxPath(options.cwd, dir, { allowRoot: true });
+      const target = resolveWritableTarget(dir, true);
       await mkdirPathWithinRoot({
-        rootDir: options.cwd,
-        relativePath: relative,
+        rootDir: target.rootDir,
+        relativePath: target.relative,
         allowRoot: true,
       });
     },
@@ -336,10 +384,15 @@ async function resolvePatchPath(
   const workspaceOnly = options.workspaceOnly !== false;
   const resolved = workspaceOnly
     ? (
-        await assertSandboxPath({
+        await assertPathWithinFsRoots({
           filePath,
           cwd: options.cwd,
-          root: options.cwd,
+          workspaceRoot: options.cwd,
+          allowedRoots: getAllowedFsRoots({
+            workspaceRoot: options.cwd,
+            extraRoots: options.extraRoots,
+            access: "write",
+          }),
           allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
           allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
         })
@@ -347,7 +400,7 @@ async function resolvePatchPath(
     : resolvePathFromInput(filePath, options.cwd);
   return {
     resolved,
-    display: toDisplayPath(resolved, options.cwd),
+    display: resolveDisplayPath(resolved, options.cwd),
   };
 }
 
@@ -360,17 +413,6 @@ function assertBoundaryRead(
   }
   const reason = opened.reason === "validation" ? "unsafe path" : "path not found";
   throw new Error(`Failed boundary read for ${targetPath} (${reason})`);
-}
-
-function toDisplayPath(resolved: string, cwd: string): string {
-  const relative = path.relative(cwd, resolved);
-  if (!relative || relative === "") {
-    return path.basename(resolved);
-  }
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    return resolved;
-  }
-  return relative;
 }
 
 function parsePatchText(input: string): { hunks: Hunk[]; patch: string } {

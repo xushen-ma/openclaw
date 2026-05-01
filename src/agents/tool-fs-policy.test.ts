@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import {
   resolveEffectiveToolFsRootExpansionAllowed,
   resolveEffectiveToolFsWorkspaceOnly,
+  resolveToolFsConfig,
 } from "./tool-fs-policy.js";
 
 describe("resolveEffectiveToolFsWorkspaceOnly", () => {
@@ -49,6 +50,29 @@ describe("resolveEffectiveToolFsWorkspaceOnly", () => {
       },
     };
     expect(resolveEffectiveToolFsWorkspaceOnly({ cfg, agentId: "main" })).toBe(true);
+  });
+});
+
+describe("resolveToolFsConfig", () => {
+  it("merges global and agent extra fs roots while preserving agent workspaceOnly override", () => {
+    const cfg: OpenClawConfig = {
+      tools: { fs: { workspaceOnly: true, extraRoots: ["/global"] } },
+      agents: {
+        list: [
+          {
+            id: "main",
+            tools: {
+              fs: { workspaceOnly: false, extraRoots: [{ path: "/agent", mode: "rw" }] },
+            },
+          },
+        ],
+      },
+    };
+
+    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toEqual({
+      workspaceOnly: false,
+      extraRoots: ["/global", { path: "/agent", mode: "rw" }],
+    });
   });
 });
 

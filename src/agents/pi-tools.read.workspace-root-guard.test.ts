@@ -1,5 +1,5 @@
 import path from "node:path";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AnyAgentTool } from "./pi-tools.types.js";
 
 type AssertSandboxPath = typeof import("./sandbox-paths.js").assertSandboxPath;
@@ -9,10 +9,6 @@ const mocks = vi.hoisted(() => ({
     resolved: "/tmp/root",
     relative: "",
   })),
-}));
-
-vi.mock("./sandbox-paths.js", () => ({
-  assertSandboxPath: mocks.assertSandboxPath,
 }));
 
 function createToolHarness() {
@@ -29,6 +25,14 @@ function createToolHarness() {
 }
 
 async function loadModule() {
+  vi.resetModules();
+  vi.doMock("./sandbox-paths.js", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("./sandbox-paths.js")>();
+    return {
+      ...actual,
+      assertSandboxPath: mocks.assertSandboxPath,
+    };
+  });
   ({ wrapToolWorkspaceRootGuardWithOptions } = await import("./pi-tools.read.js"));
 }
 
@@ -36,15 +40,20 @@ let wrapToolWorkspaceRootGuardWithOptions: typeof import("./pi-tools.read.js").w
 
 describe("wrapToolWorkspaceRootGuardWithOptions", () => {
   const root = "/tmp/root";
-  const assertSandboxPathImpl: AssertSandboxPath = async ({ filePath }) => ({
-    resolved:
+  const assertSandboxPathImpl: AssertSandboxPath = async ({ filePath }) => {
+    const resolved =
       filePath.startsWith("file://") || path.isAbsolute(filePath)
         ? filePath
-        : path.resolve(root, filePath),
-    relative: "",
-  });
+        : path.resolve(root, filePath);
+    return { resolved, relative: path.relative(root, resolved) };
+  };
 
   beforeAll(loadModule);
+
+  afterAll(() => {
+    vi.doUnmock("./sandbox-paths.js");
+    vi.resetModules();
+  });
 
   beforeEach(() => {
     mocks.assertSandboxPath.mockReset();
