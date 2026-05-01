@@ -24,6 +24,9 @@ export function applyEmbeddingBatchOutputLine(params: {
   if (!customId) {
     return;
   }
+  if (!params.remaining.has(customId)) {
+    return;
+  }
   params.remaining.delete(customId);
 
   const errorMessage = params.line.error?.message;

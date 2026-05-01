@@ -59,6 +59,9 @@ vi.mock("./embeddings.js", () => {
           embedQuery: async (text: string) => embedText(text),
           embedBatch: async (texts: string[]) => {
             embedBatchCalls += 1;
+            if (texts.some((text) => text.includes("OVERSIZE_EMBEDDING_INPUT"))) {
+              throw new Error("input too large");
+            }
             return texts.map(embedText);
           },
           ...(providerId === "gemini"
@@ -416,6 +419,30 @@ describe("memory index", () => {
 
     const noResults = await manager.search("nonexistent_xyz_keyword");
     expect(noResults.length).toBe(0);
+  });
+
+  it("keeps text ingestion searchable when an embedding input is rejected as too large", async () => {
+    const cfg = createCfg({
+      storePath: path.join(workspaceDir, "index-oversize-text.sqlite"),
+      minScore: 0,
+      hybrid: { enabled: true, vectorWeight: 0, textWeight: 1 },
+    });
+    const manager = await getPersistentManager(cfg);
+    if (!manager.status().fts?.available) {
+      return;
+    }
+
+    await fs.writeFile(
+      path.join(memoryDir, "2026-01-12.md"),
+      "# Log\nAlpha OVERSIZE_EMBEDDING_INPUT survives text-only indexing.",
+    );
+
+    await expect(manager.sync({ reason: "test" })).resolves.toBeUndefined();
+
+    const results = await manager.search("Alpha");
+    expect(results.some((result) => result.snippet.includes("OVERSIZE_EMBEDDING_INPUT"))).toBe(
+      true,
+    );
   });
 
   it("prefers exact session transcript hits in FTS-only mode", async () => {

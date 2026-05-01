@@ -1,7 +1,14 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { OpenClawPluginApi, AnyAgentTool } from "openclaw/plugin-sdk";
-import type { OvHttpConfig } from "./ov-http-client.js";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  fetchOvRequest,
+  normalizeOvSearchResult,
+  resolveOvRequest,
+  truncateEmbeddingInput,
+  type OvHttpConfig,
+} from "./ov-http-client.js";
+import { createQuickSessionSearchTool } from "./session-search.js";
 
 type PluginConfig = {
   perAgentOvBaseUrl?: unknown;
@@ -19,6 +26,8 @@ type SearchResultItem = {
   score?: unknown;
   abstract?: unknown;
   overview?: unknown;
+  text?: unknown;
+  content?: unknown;
 };
 
 function json(payload: unknown) {
@@ -41,8 +50,6 @@ function num(params: unknown, key: string): number | undefined {
   const v = (params as Record<string, unknown>)[key];
   return typeof v === "number" ? v : undefined;
 }
-import { resolveOvRequest } from "./ov-http-client.js";
-import { createQuickSessionSearchTool } from "./session-search.js";
 
 const QuickMemorySearchSchema = {
   type: "object" as const,
@@ -60,6 +67,10 @@ async function appendOvFastPassStat(entry: {
   query: string;
   maxResults: number;
   totalHits: number;
+  resultCount: number;
+  status: "ok" | "error";
+  error?: string;
+  queryTruncated?: boolean;
 }) {
   const statsPath = process.env.OV_STATS_LOG_PATH?.trim();
   if (!statsPath) {
@@ -90,7 +101,8 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
         return json({ results: [], error: "query is required" });
       }
 
-      const requestBody = { query: query.trim(), limit: maxResults };
+      const safeQuery = truncateEmbeddingInput(query);
+      const requestBody = { query: safeQuery.text, limit: maxResults };
       const attempts = resolveOvRequest({
         config: httpConfig,
         scope: "memory",
@@ -109,21 +121,28 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
       const errors: string[] = [];
       for (const attempt of attempts) {
         try {
-          const response = await fetch(attempt.url, attempt.init);
+          const response = await fetchOvRequest(attempt);
           if (!response.ok) {
             const text = await response.text().catch(() => "");
-            errors.push(`${attempt.mode}:${response.status} ${text.slice(0, 120)}`);
+            const error = `${response.status} ${text.slice(0, 120)}`;
+            errors.push(`${attempt.mode}:${error}`);
+            await appendOvFastPassStat({
+              layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
+              routing: attempt.mode,
+              agentId,
+              query: safeQuery.text,
+              maxResults,
+              totalHits: 0,
+              resultCount: 0,
+              status: "error",
+              error,
+              queryTruncated: safeQuery.truncated,
+            });
             continue;
           }
 
           const data = await response.json();
-          const result = data?.result ?? data;
-          const items: unknown[] = [];
-          for (const key of ["resources", "memories", "skills", "instructions"]) {
-            if (Array.isArray(result?.[key])) {
-              items.push(...(result?.[key] || []));
-            }
-          }
+          const { items, totalHits } = normalizeOvSearchResult(data);
 
           const results = items.slice(0, maxResults).map((item: unknown, idx: number) => {
             const searchItem =
@@ -133,6 +152,10 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
                 ? searchItem.abstract
                 : typeof searchItem.overview === "string"
                   ? searchItem.overview
+                  : typeof searchItem.text === "string"
+                    ? searchItem.text
+                    : typeof searchItem.content === "string"
+                      ? searchItem.content
                   : "(no abstract)";
             const score =
               typeof searchItem.score === "number" ? Math.round(searchItem.score * 1000) / 1000 : 0;
@@ -146,14 +169,16 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
             };
           });
 
-          const totalHits = typeof result?.total === "number" ? result.total : items.length;
           await appendOvFastPassStat({
             layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
             routing: attempt.mode,
             agentId,
-            query: query.trim(),
+            query: safeQuery.text,
             maxResults,
             totalHits,
+            resultCount: results.length,
+            status: "ok",
+            queryTruncated: safeQuery.truncated,
           });
 
           return json({
@@ -163,10 +188,23 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
             totalHits,
             routing: attempt.mode,
             agentId,
+            queryTruncated: safeQuery.truncated,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           errors.push(`${attempt.mode}:${message}`);
+          await appendOvFastPassStat({
+            layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
+            routing: attempt.mode,
+            agentId,
+            query: safeQuery.text,
+            maxResults,
+            totalHits: 0,
+            resultCount: 0,
+            status: "error",
+            error: message,
+            queryTruncated: safeQuery.truncated,
+          });
         }
       }
 
@@ -210,12 +248,14 @@ export default function register(api: OpenClawPluginApi) {
     stop: () => {},
   });
 
-  api.registerGatewayMethod("quick-memory-search.status", async () => ({
-    ok: true,
-    perAgentBaseUrl: httpConfig.perAgentBaseUrl || null,
-    legacyBaseUrl: httpConfig.legacyBaseUrl || null,
-    agentRouting: httpConfig.agentRouting,
-  }));
+  api.registerGatewayMethod("quick-memory-search.status", async ({ respond }) => {
+    respond(true, {
+      ok: true,
+      perAgentBaseUrl: httpConfig.perAgentBaseUrl || null,
+      legacyBaseUrl: httpConfig.legacyBaseUrl || null,
+      agentRouting: httpConfig.agentRouting,
+    });
+  });
 
   api.logger.info(
     `quick_memory_search + quick_session_search registered (perAgent=${httpConfig.perAgentBaseUrl || "disabled"}, legacy=${httpConfig.legacyBaseUrl || "disabled"})`,

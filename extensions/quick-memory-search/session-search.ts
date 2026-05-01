@@ -1,6 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AnyAgentTool } from "openclaw/plugin-sdk";
+import type { AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  fetchOvRequest,
+  normalizeOvSearchResult,
+  resolveOvRequest,
+  truncateEmbeddingInput,
+  type OvHttpConfig,
+} from "./ov-http-client.js";
 
 type SearchResponse = {
   total?: unknown;
@@ -12,6 +19,9 @@ type SearchItem = {
   uri?: unknown;
   score?: unknown;
   abstract?: unknown;
+  overview?: unknown;
+  text?: unknown;
+  content?: unknown;
 };
 
 function json(payload: unknown) {
@@ -34,7 +44,22 @@ function num(params: unknown, key: string): number | undefined {
   const v = (params as Record<string, unknown>)[key];
   return typeof v === "number" ? v : undefined;
 }
-import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+
+function snippetFromSearchItem(searchItem: SearchItem): string {
+  if (typeof searchItem.abstract === "string") {
+    return searchItem.abstract;
+  }
+  if (typeof searchItem.overview === "string") {
+    return searchItem.overview;
+  }
+  if (typeof searchItem.text === "string") {
+    return searchItem.text;
+  }
+  if (typeof searchItem.content === "string") {
+    return searchItem.content;
+  }
+  return "(no abstract)";
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -131,29 +156,24 @@ export function createQuickSessionSearchTool(
       if (!query || !query.trim()) {
         return json({ results: [], error: "query is required" });
       }
+      const safeQuery = truncateEmbeddingInput(query);
 
       // HTTP first (per-agent). If unavailable/failing, fallback to local store.
       const httpAttempts = resolveOvRequest({
         config: httpConfig,
         scope: "sessions",
         agentId,
-        body: { query: query.trim(), limit: maxResults },
+        body: { query: safeQuery.text, limit: maxResults },
       }).filter((x) => x.mode === "per-agent");
 
       for (const attempt of httpAttempts) {
         try {
-          const response = await fetch(attempt.url, attempt.init);
+          const response = await fetchOvRequest(attempt);
           if (!response.ok) {
             continue;
           }
           const data = await response.json();
-          const result = data?.result ?? data;
-          const items: unknown[] = [];
-          for (const key of ["resources", "memories", "skills", "instructions"]) {
-            if (Array.isArray(result?.[key])) {
-              items.push(...(result?.[key] || []));
-            }
-          }
+          const { items, totalHits } = normalizeOvSearchResult(data);
 
           const results = items.slice(0, maxResults).map((item: unknown, idx: number) => {
             const searchItem =
@@ -164,8 +184,7 @@ export function createQuickSessionSearchTool(
                 typeof searchItem.score === "number"
                   ? Math.round(searchItem.score * 1000) / 1000
                   : 0,
-              snippet:
-                typeof searchItem.abstract === "string" ? searchItem.abstract : "(no abstract)",
+              snippet: snippetFromSearchItem(searchItem),
               source: "openviking-sessions-agent-http",
               citation: searchItem.uri ?? "",
             };
@@ -175,7 +194,8 @@ export function createQuickSessionSearchTool(
             results,
             provider: "openviking-sessions-agent-http",
             agentId,
-            totalHits: typeof result?.total === "number" ? result.total : results.length,
+            totalHits,
+            queryTruncated: safeQuery.truncated,
           });
         } catch {
           // continue to local fallback
@@ -184,7 +204,7 @@ export function createQuickSessionSearchTool(
 
       const sessionStorePath = `${OV_LOCAL_ROOT}/${agentId}-sessions`;
       try {
-        const data = await searchLocalStore(sessionStorePath, query.trim(), maxResults);
+        const data = await searchLocalStore(sessionStorePath, safeQuery.text, maxResults);
 
         if (data.error) {
           return json({
@@ -200,8 +220,7 @@ export function createQuickSessionSearchTool(
             path: searchItem.uri ?? `session-${idx}`,
             score:
               typeof searchItem.score === "number" ? Math.round(searchItem.score * 1000) / 1000 : 0,
-            snippet:
-              typeof searchItem.abstract === "string" ? searchItem.abstract : "(no abstract)",
+            snippet: snippetFromSearchItem(searchItem),
             source: "openviking-sessions-local",
             citation: searchItem.uri ?? "",
           };
@@ -212,6 +231,7 @@ export function createQuickSessionSearchTool(
           provider: "openviking-sessions-local",
           agentId,
           totalHits: data.total ?? results.length,
+          queryTruncated: safeQuery.truncated,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

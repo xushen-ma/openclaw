@@ -4,9 +4,11 @@ import http from "node:http";
 import { promisify } from "node:util";
 import {
   DEFAULT_MEMORY_ROOT,
+  createOpenVikingSearchScript,
   resolveAgentAndScope,
   resolveStorePath,
   toOpenVikingResult,
+  truncateEmbeddingInput,
 } from "./per-agent-ov-http-common.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -39,38 +41,7 @@ async function searchStore({ storePath, query, limit }) {
     };
   }
 
-  const script = `
-import json, sys, requests
-
-store, query, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
-agent_scope = store.rstrip('/').split('/')[-1]
-base_url = 'http://127.0.0.1:8087'
-
-try:
-    payload = {
-        "query": query,
-        "limit": limit,
-        "filter": {"path_contains": agent_scope},
-    }
-    resp = requests.post(f"{base_url}/api/v1/search/find", json=payload, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    result = data.get("result", {})
-    items = []
-    for key in ("resources", "memories", "skills", "instructions"):
-        for item in result.get(key, []) or []:
-            uri = item.get("uri", "") if isinstance(item, dict) else getattr(item, "uri", "")
-            if agent_scope not in uri:
-                continue
-            items.append({
-                "uri": uri,
-                "score": float(item.get("score", 0.0) if isinstance(item, dict) else getattr(item, "score", 0.0)),
-                "abstract": item.get("abstract", "") if isinstance(item, dict) else getattr(item, "abstract", ""),
-            })
-    print(json.dumps({"total": int(result.get("total", len(items))), "items": items[:limit]}))
-except Exception as e:
-    print(json.dumps({"error": str(e)}))
-`;
+  const script = createOpenVikingSearchScript();
 
   const { stdout } = await execFileAsync(
     PYTHON_BIN,
@@ -81,7 +52,7 @@ except Exception as e:
     },
   );
 
-  const parsed = JSON.parse(String(stdout || "{}").trim() || "{}");
+  const parsed = JSON.parse(stdout.trim() || "{}");
   if (parsed.error) {
     throw new Error(parsed.error);
   }
@@ -118,17 +89,17 @@ const server = http.createServer(async (req, res) => {
     }
 
     const body = await readJsonBody(req);
-    const query = String(body?.query || "").trim();
+    const safeQuery = truncateEmbeddingInput(body?.query);
     const limit = Math.max(1, Math.min(Number(body?.limit || 5), 25));
-    if (!query) {
+    if (!safeQuery.text) {
       return writeJson(res, 400, { error: "query is required" });
     }
 
     const storePath = resolveStorePath({ memoryRoot: MEMORY_ROOT, agentId, scope });
-    const searchResult = await searchStore({ storePath, query, limit });
+    const searchResult = await searchStore({ storePath, query: safeQuery.text, limit });
     const response = {
       ...toOpenVikingResult(searchResult, limit),
-      meta: { agentId, scope, storePath },
+      meta: { agentId, scope, storePath, queryTruncated: safeQuery.truncated },
     };
     return writeJson(res, 200, response);
   } catch (error) {

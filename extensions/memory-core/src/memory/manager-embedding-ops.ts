@@ -54,6 +54,12 @@ const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
 
 const log = createSubsystemLogger("memory");
 
+function isEmbeddingOversizeError(message: string): boolean {
+  return /(413|payload too large|request too large|input too large|too many tokens|input limit|request size|maximum context|context length)/i.test(
+    message,
+  );
+}
+
 export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
   protected abstract batchFailureCount: number;
   protected abstract batchFailureLastError?: string;
@@ -641,22 +647,20 @@ export abstract class MemoryManagerEmbeddingOps extends MemoryManagerSyncOps {
         : await this.embedChunksInBatches(chunks);
     } catch (err) {
       const message = formatErrorMessage(err);
-      if (
-        "kind" in entry &&
-        entry.kind === "multimodal" &&
-        /(413|payload too large|request too large|input too large|too many tokens|input limit|request size)/i.test(
-          message,
-        )
-      ) {
-        log.warn("memory embeddings: skipping multimodal file rejected as too large", {
+      if (isEmbeddingOversizeError(message)) {
+        log.warn("memory embeddings: input rejected as too large; indexing without vectors", {
           path: entry.path,
           bytes: structuredInputBytes,
           provider: this.provider.id,
           model: this.provider.model,
           error: message,
         });
-        this.clearIndexedFileData(entry.path, options.source);
-        this.upsertFileRecord(entry, options.source);
+        if ("kind" in entry && entry.kind === "multimodal") {
+          this.clearIndexedFileData(entry.path, options.source);
+          this.upsertFileRecord(entry, options.source);
+        } else {
+          this.writeChunks(entry, options.source, this.provider.model, chunks, [], false);
+        }
         return;
       }
       throw err;

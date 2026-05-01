@@ -11,5 +11,8 @@
     "extensions": [
       "./index.ts"
     ]
+  },
+  "devDependencies": {
+    "@openclaw/plugin-sdk": "workspace:*"
   }
 }
