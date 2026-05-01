@@ -680,6 +680,90 @@ describe("memory-core dreaming phases", () => {
     );
   });
 
+  it("logs session ingestion record failures as valid JSONL and leaves state replayable", async () => {
+    const workspaceDir = await createDreamingWorkspace();
+    vi.stubEnv("OPENCLAW_TEST_FAST", "1");
+    vi.stubEnv("OPENCLAW_STATE_DIR", path.join(workspaceDir, ".state"));
+    const sessionsDir = resolveSessionTranscriptsDirForAgent("main");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const transcriptPath = path.join(sessionsDir, "dreaming-main.jsonl");
+    await fs.writeFile(
+      transcriptPath,
+      [
+        JSON.stringify({
+          type: "message",
+          message: {
+            role: "user",
+            timestamp: "2026-04-05T18:01:00.000Z",
+            content: [{ type: "text", text: "Replayable failure line." }],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf-8",
+    );
+
+    const { beforeAgentReply } = createHarness(
+      {
+        agents: {
+          defaults: { workspace: workspaceDir },
+          list: [{ id: "main", workspace: workspaceDir }],
+        },
+        plugins: {
+          entries: {
+            "memory-core": {
+              config: {
+                dreaming: {
+                  enabled: true,
+                  phases: { light: { enabled: true, limit: 20, lookbackDays: 7 } },
+                },
+              },
+            },
+          },
+        },
+      },
+      workspaceDir,
+    );
+
+    const actualWriteFile = fs.writeFile.bind(fs);
+    const writeSpy = vi.spyOn(fs, "writeFile").mockImplementation(async (
+      file: Parameters<typeof fs.writeFile>[0],
+      data: Parameters<typeof fs.writeFile>[1],
+      options?: Parameters<typeof fs.writeFile>[2],
+    ) => {
+      if (typeof file === "string" && file.includes("short-term-recall.json.")) {
+        throw new Error('bad "quote"\nsecond line');
+      }
+      return await actualWriteFile(file, data, options);
+    });
+
+    try {
+      await withDreamingTestClock(async () => {
+        await triggerLightDreaming(beforeAgentReply, workspaceDir, 5);
+      });
+    } finally {
+      writeSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
+
+    const raw = await fs.readFile(
+      path.join(workspaceDir, "memory", ".dreams", "session-ingestion-errors.jsonl"),
+      "utf-8",
+    );
+    const lines = raw.trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const parsed = JSON.parse(lines[0]);
+    expect(parsed).toMatchObject({
+      type: "memory.session-ingestion.error",
+      stage: "record",
+      day: "2026-04-05",
+    });
+    expect(parsed.error).toContain('bad "quote"');
+    expect(parsed.error).toContain("second line");
+    await expect(
+      fs.access(path.join(workspaceDir, "memory", ".dreams", "session-ingestion.json")),
+    ).rejects.toThrow();
+  });
+
   it("redacts sensitive session content before writing session corpus", async () => {
     const workspaceDir = await createDreamingWorkspace();
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");

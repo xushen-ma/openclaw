@@ -81,6 +81,11 @@ const SESSION_INGESTION_STATE_RELATIVE_PATH = path.join(
   ".dreams",
   "session-ingestion.json",
 );
+const SESSION_INGESTION_ERROR_LOG_RELATIVE_PATH = path.join(
+  "memory",
+  ".dreams",
+  "session-ingestion-errors.jsonl",
+);
 const SESSION_CORPUS_RELATIVE_DIR = path.join("memory", ".dreams", "session-corpus");
 const SESSION_INGESTION_SCORE = 0.58;
 const SESSION_INGESTION_MAX_SNIPPET_CHARS = 280;
@@ -454,6 +459,16 @@ type SessionIngestionMessage = {
   rendered: string;
 };
 
+type SessionIngestionErrorLogEntry = {
+  type: "memory.session-ingestion.error";
+  timestamp: string;
+  workspaceDir: string;
+  stage: "collect" | "record";
+  day?: string;
+  query?: string;
+  error: string;
+};
+
 type SessionIngestionCollectionResult = {
   batches: DailyIngestionBatch[];
   nextState: SessionIngestionState;
@@ -467,6 +482,20 @@ function normalizeWorkspaceKey(workspaceDir: string): string {
 
 function resolveSessionIngestionStatePath(workspaceDir: string): string {
   return path.join(workspaceDir, SESSION_INGESTION_STATE_RELATIVE_PATH);
+}
+
+function resolveSessionIngestionErrorLogPath(workspaceDir: string): string {
+  return path.join(workspaceDir, SESSION_INGESTION_ERROR_LOG_RELATIVE_PATH);
+}
+
+async function appendSessionIngestionError(entry: SessionIngestionErrorLogEntry): Promise<void> {
+  const logPath = resolveSessionIngestionErrorLogPath(entry.workspaceDir);
+  try {
+    await fs.mkdir(path.dirname(logPath), { recursive: true });
+    await fs.appendFile(logPath, `${JSON.stringify(entry)}\n`, "utf-8");
+  } catch {
+    // Best-effort diagnostics; ingestion should not fail because the error log is unavailable.
+  }
 }
 
 function normalizeSessionIngestionState(raw: unknown): SessionIngestionState {
@@ -986,28 +1015,55 @@ async function ingestSessionTranscriptSignals(params: {
   timezone?: string;
 }): Promise<void> {
   const state = await readSessionIngestionState(params.workspaceDir);
-  const collected = await collectSessionIngestionBatches({
-    workspaceDir: params.workspaceDir,
-    cfg: params.cfg,
-    lookbackDays: params.lookbackDays,
-    nowMs: params.nowMs,
-    timezone: params.timezone,
-    state,
-  });
-  const ingestionDayBucket = formatMemoryDreamingDay(params.nowMs, params.timezone);
-  for (const batch of collected.batches) {
-    await recordShortTermRecalls({
+  let collected: SessionIngestionCollectionResult;
+  try {
+    collected = await collectSessionIngestionBatches({
       workspaceDir: params.workspaceDir,
-      query: `__dreaming_sessions__:${batch.day}`,
-      results: batch.results,
-      signalType: "daily",
-      dedupeByQueryPerDay: true,
-      dayBucket: ingestionDayBucket,
+      cfg: params.cfg,
+      lookbackDays: params.lookbackDays,
       nowMs: params.nowMs,
       timezone: params.timezone,
+      state,
     });
+  } catch (err) {
+    await appendSessionIngestionError({
+      type: "memory.session-ingestion.error",
+      timestamp: new Date(params.nowMs).toISOString(),
+      workspaceDir: params.workspaceDir,
+      stage: "collect",
+      error: formatErrorMessage(err),
+    });
+    return;
   }
-  if (collected.changed) {
+  const ingestionDayBucket = formatMemoryDreamingDay(params.nowMs, params.timezone);
+  let recordFailed = false;
+  for (const batch of collected.batches) {
+    const query = `__dreaming_sessions__:${batch.day}`;
+    try {
+      await recordShortTermRecalls({
+        workspaceDir: params.workspaceDir,
+        query,
+        results: batch.results,
+        signalType: "daily",
+        dedupeByQueryPerDay: true,
+        dayBucket: ingestionDayBucket,
+        nowMs: params.nowMs,
+        timezone: params.timezone,
+      });
+    } catch (err) {
+      recordFailed = true;
+      await appendSessionIngestionError({
+        type: "memory.session-ingestion.error",
+        timestamp: new Date(params.nowMs).toISOString(),
+        workspaceDir: params.workspaceDir,
+        stage: "record",
+        day: batch.day,
+        query,
+        error: formatErrorMessage(err),
+      });
+    }
+  }
+  if (collected.changed && !recordFailed) {
     await writeSessionIngestionState(params.workspaceDir, collected.nextState);
   }
 }

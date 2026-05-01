@@ -79,4 +79,35 @@ describe("applyEmbeddingBatchOutputLine", () => {
     expect(errors).toEqual(["req-3: internal", "req-4: empty embedding"]);
     expect(byCustomId.size).toBe(0);
   });
+
+  it("ignores duplicate output lines after a custom id has finalized", () => {
+    const remaining = new Set(["req-5"]);
+    const errors: string[] = [];
+    const byCustomId = new Map<string, number[]>();
+
+    applyEmbeddingBatchOutputLine({
+      line: {
+        custom_id: "req-5",
+        response: {
+          status_code: 200,
+          body: { data: [{ embedding: [0.3, 0.4] }] },
+        },
+      },
+      remaining,
+      errors,
+      byCustomId,
+    });
+    applyEmbeddingBatchOutputLine({
+      line: {
+        custom_id: "req-5",
+        error: { message: "duplicate finalize" },
+      },
+      remaining,
+      errors,
+      byCustomId,
+    });
+
+    expect(errors).toEqual([]);
+    expect(byCustomId.get("req-5")).toEqual([0.3, 0.4]);
+  });
 });

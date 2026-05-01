@@ -59,6 +59,7 @@ Env knobs:
 - `OV_PYTHON_BIN` (OpenViking venv python)
 - `OV_PER_AGENT_TIMEOUT_MS` (default `15000`)
 - `OV_PER_AGENT_HTTP_MOCK=1` (mock mode for dry validation)
+- `OV_HTTP_TIMEOUT_MS` (client fetch timeout, default `10000`)
 
 Health:
 
@@ -122,3 +123,16 @@ Then:
 - This implementation is intentionally minimal: a thin HTTP -> OpenViking search proxy with strict scope mapping.
 - `quick_memory_search` remains the first-choice cheap/fast recall path; no policy changes.
 - Legacy shared OV HTTP remains optional fallback only.
+- The per-agent server now searches the active per-agent OpenViking store directly. The old shared `127.0.0.1:8087` compare/proxy path is intentionally not used because it can report misleading zero-hit shadow data for agent-scoped stores.
+- OV HTTP query text is capped before embedding/search calls to avoid oversized embedding inputs.
+
+## Replay Apr 28-30 session ingests
+
+Use the replay helper to safely recover bad session ingests from existing session text cache files and malformed `ov-stats.jsonl` rows:
+
+```bash
+node scripts/replay-ov-session-ingests.mjs --dry-run
+node scripts/replay-ov-session-ingests.mjs --apply --agent main --max 25
+```
+
+The command defaults to dry-run. It reads `~/.openclaw/memory/openviking/.session-text-cache`, skips sessions already present in the `.ingested` state file, and treats duplicate finalize "already exists" errors as idempotent completion so retries do not loop forever.
