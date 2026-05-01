@@ -481,9 +481,20 @@ const AgentToolExecSchema = z
 
 const ToolExecSchema = z.object(ToolExecBaseShape).strict().optional();
 
+const ToolFsExtraRootSchema = z.union([
+  z.string(),
+  z
+    .object({
+      path: z.string(),
+      mode: z.enum(["ro", "rw"]).optional(),
+    })
+    .strict(),
+]);
+
 const ToolFsSchema = z
   .object({
     workspaceOnly: z.boolean().optional(),
+    extraRoots: z.array(ToolFsExtraRootSchema).optional(),
   })
   .strict()
   .optional();

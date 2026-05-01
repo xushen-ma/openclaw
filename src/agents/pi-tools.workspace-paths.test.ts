@@ -179,6 +179,125 @@ describe("workspace path resolution", () => {
     });
   });
 
+  it("allows read-only extra fs roots while workspaceOnly remains enabled", async () => {
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      await withTempDir("openclaw-extra-", async (extraDir) => {
+        await fs.writeFile(path.join(extraDir, "allowed.txt"), "extra read ok", "utf8");
+        const cfg: OpenClawConfig = {
+          tools: { fs: { workspaceOnly: true, extraRoots: [extraDir] } },
+        };
+        const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+        const { readTool } = expectReadWriteEditTools(tools);
+
+        const result = await readTool.execute("extra-read", {
+          path: path.join(extraDir, "allowed.txt"),
+        });
+        expect(getTextContent(result)).toContain("extra read ok");
+      });
+    });
+  });
+
+  it("denies write edit and apply_patch into read-only extra fs roots", async () => {
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      await withTempDir("openclaw-extra-", async (extraDir) => {
+        const target = path.join(extraDir, "ro.txt");
+        await fs.writeFile(target, "do not change", "utf8");
+        const cfg: OpenClawConfig = {
+          tools: { fs: { workspaceOnly: true, extraRoots: [extraDir] } },
+        };
+        const tools = createOpenClawCodingTools({
+          workspaceDir,
+          config: cfg,
+          modelProvider: "openai",
+        });
+        const { writeTool, editTool } = expectReadWriteEditTools(tools);
+        const applyPatchTool = tools.find((tool) => tool.name === "apply_patch");
+        expect(applyPatchTool).toBeDefined();
+
+        await expect(
+          writeTool.execute("extra-write-ro", { path: target, content: "changed" }),
+        ).rejects.toThrow(/Path escapes|allowed filesystem roots|sandbox root/i);
+        await expect(
+          editTool.execute("extra-edit-ro", {
+            path: target,
+            edits: [{ oldText: "change", newText: "mutate" }],
+          }),
+        ).rejects.toThrow(/Path escapes|allowed filesystem roots|sandbox root/i);
+        await expect(
+          applyPatchTool?.execute("extra-patch-ro", {
+            input: `*** Begin Patch\n*** Update File: ${target}\n@@\n-do not change\n+changed\n*** End Patch`,
+          }),
+        ).rejects.toThrow(/Path escapes|allowed filesystem roots|sandbox root/i);
+        expect(await fs.readFile(target, "utf8")).toBe("do not change");
+      });
+    });
+  });
+
+  it("allows writes into extra fs roots only when configured rw", async () => {
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      await withTempDir("openclaw-extra-", async (extraDir) => {
+        const target = path.join(extraDir, "rw.txt");
+        const cfg: OpenClawConfig = {
+          tools: { fs: { workspaceOnly: true, extraRoots: [{ path: extraDir, mode: "rw" }] } },
+        };
+        const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+        const { writeTool, editTool } = expectReadWriteEditTools(tools);
+
+        await writeTool.execute("extra-write-rw", { path: target, content: "rw write" });
+        await editTool.execute("extra-edit-rw", {
+          path: target,
+          edits: [{ oldText: "write", newText: "edit" }],
+        });
+        expect(await fs.readFile(target, "utf8")).toBe("rw edit");
+      });
+    });
+  });
+
+  it("denies symlink aliases escaping extra fs roots", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      await withTempDir("openclaw-extra-", async (extraDir) => {
+        const outside = path.join(
+          path.dirname(extraDir),
+          `outside-extra-${process.pid}-${Date.now()}.txt`,
+        );
+        const linked = path.join(extraDir, "linked.txt");
+        await fs.writeFile(outside, "secret", "utf8");
+        await fs.symlink(outside, linked);
+        try {
+          const cfg: OpenClawConfig = {
+            tools: { fs: { workspaceOnly: true, extraRoots: [extraDir] } },
+          };
+          const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+          const { readTool } = expectReadWriteEditTools(tools);
+          await expect(readTool.execute("extra-read-symlink", { path: linked })).rejects.toThrow(
+            /symlink|alias|sandbox|regular file/i,
+          );
+        } finally {
+          await fs.rm(linked, { force: true });
+          await fs.rm(outside, { force: true });
+        }
+      });
+    });
+  });
+
+  it("keeps default workspaceOnly behavior unchanged without extra fs roots", async () => {
+    await withTempDir("openclaw-ws-", async (workspaceDir) => {
+      await withTempDir("openclaw-extra-", async (extraDir) => {
+        const outside = path.join(extraDir, "outside.txt");
+        await fs.writeFile(outside, "blocked", "utf8");
+        const cfg: OpenClawConfig = { tools: { fs: { workspaceOnly: true } } };
+        const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+        const { readTool } = expectReadWriteEditTools(tools);
+        await expect(readTool.execute("default-no-extra", { path: outside })).rejects.toThrow(
+          /Path escapes/i,
+        );
+      });
+    });
+  });
+
   it("rejects hardlinked file aliases when workspaceOnly is enabled", async () => {
     if (process.platform === "win32") {
       return;

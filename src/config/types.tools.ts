@@ -293,12 +293,26 @@ export type ExecToolConfig = {
   };
 };
 
+export type FsExtraRootConfig =
+  | string
+  | {
+      /** Absolute or ~-expanded local directory path to expose in addition to the workspace. */
+      path: string;
+      /** Access mode for this extra root. Default: ro. */
+      mode?: "ro" | "rw";
+    };
+
 export type FsToolsConfig = {
   /**
    * Restrict filesystem tools (read/write/edit/apply_patch) to the agent workspace directory.
    * Default: false (unrestricted, matches legacy behavior).
    */
   workspaceOnly?: boolean;
+  /**
+   * Explicit local directories that remain available when workspaceOnly is enabled.
+   * String entries are read-only; object entries may set mode: "ro" or "rw".
+   */
+  extraRoots?: FsExtraRootConfig[];
 };
 
 export type AgentToolsConfig = {
