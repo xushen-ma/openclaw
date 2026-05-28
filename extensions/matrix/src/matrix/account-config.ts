@@ -121,7 +121,7 @@ export function resolveMatrixAccountConfig(params: {
       | undefined,
     accountId,
     normalizeAccountId,
-    nestedObjectKeys: ["dm", "actions", "execApprovals"],
+    nestedObjectKeys: ["dm", "actions", "execApprovals", "botLoopProtection"],
   });
   const defaultAccountConfig =
     accountId === DEFAULT_ACCOUNT_ID

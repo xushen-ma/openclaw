@@ -1,11 +1,22 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { format } from "node:util";
 import type { Command } from "commander";
-import type { GoogleMeetConfig, GoogleMeetMode, GoogleMeetTransport } from "./config.js";
+import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
+import { callGatewayFromCli } from "openclaw/plugin-sdk/gateway-runtime";
+import {
+  buildGoogleMeetCalendarDayWindow,
+  findGoogleMeetCalendarEvent,
+  listGoogleMeetCalendarEvents,
+  type GoogleMeetCalendarLookupResult,
+} from "./calendar.js";
+import type { GoogleMeetConfig, GoogleMeetModeInput, GoogleMeetTransport } from "./config.js";
+import { hasCreateSpaceConfigInput, resolveCreateSpaceConfig } from "./create.js";
 import {
   buildGoogleMeetPreflightReport,
   createGoogleMeetSpace,
+  endGoogleMeetActiveConference,
   fetchGoogleMeetArtifacts,
   fetchGoogleMeetAttendance,
   fetchLatestGoogleMeetConferenceRecord,
@@ -26,8 +37,9 @@ import type { GoogleMeetRuntime } from "./runtime.js";
 
 type JoinOptions = {
   transport?: GoogleMeetTransport;
-  mode?: GoogleMeetMode;
+  mode?: GoogleMeetModeInput;
   message?: string;
+  timeoutMs?: string;
   dialInNumber?: string;
   pin?: string;
   dtmfSequence?: string;
@@ -43,6 +55,9 @@ type OAuthLoginOptions = {
 
 type ResolveSpaceOptions = {
   meeting?: string;
+  today?: boolean;
+  event?: string;
+  calendar?: string;
   accessToken?: string;
   refreshToken?: string;
   clientId?: string;
@@ -56,13 +71,85 @@ type MeetArtifactOptions = ResolveSpaceOptions & {
   pageSize?: string;
   transcriptEntries?: boolean;
   allConferenceRecords?: boolean;
-  format?: "summary" | "markdown";
+  includeDocBodies?: boolean;
+  mergeDuplicates?: boolean;
+  lateAfterMinutes?: string;
+  earlyBeforeMinutes?: string;
+  zip?: boolean;
+  dryRun?: boolean;
+  format?: "summary" | "markdown" | "csv";
   output?: string;
+};
+
+export type GoogleMeetExportRequest = {
+  meeting?: string;
+  conferenceRecord?: string;
+  calendarEventId?: string;
+  calendarEventSummary?: string;
+  calendarId?: string;
+  pageSize?: number;
+  includeTranscriptEntries?: boolean;
+  includeDocumentBodies?: boolean;
+  allConferenceRecords?: boolean;
+  mergeDuplicateParticipants?: boolean;
+  lateAfterMinutes?: number;
+  earlyBeforeMinutes?: number;
+};
+
+export type GoogleMeetExportWarning = {
+  type:
+    | "smart_notes"
+    | "transcript_entries"
+    | "transcript_document_body"
+    | "smart_note_document_body";
+  conferenceRecord: string;
+  resource?: string;
+  message: string;
+};
+
+export type GoogleMeetExportManifest = {
+  generatedAt: string;
+  request?: GoogleMeetExportRequest;
+  tokenSource?: "cached-access-token" | "refresh-token";
+  calendarEvent?: GoogleMeetCalendarLookupResult;
+  inputs: {
+    artifacts?: string;
+    attendance?: string;
+  };
+  counts: {
+    conferenceRecords: number;
+    artifacts: number;
+    attendanceRows: number;
+    recordings: number;
+    transcripts: number;
+    transcriptEntries: number;
+    smartNotes: number;
+    warnings: number;
+  };
+  conferenceRecords: string[];
+  files: string[];
+  zipFile?: string;
+  warnings: GoogleMeetExportWarning[];
 };
 
 type SetupOptions = {
   json?: boolean;
+  mode?: GoogleMeetModeInput;
+  transport?: GoogleMeetTransport;
 };
+
+type GoogleMeetGatewayMethod =
+  | "googlemeet.create"
+  | "googlemeet.join"
+  | "googlemeet.leave"
+  | "googlemeet.speak"
+  | "googlemeet.status"
+  | "googlemeet.testListen"
+  | "googlemeet.testSpeech";
+
+type GoogleMeetGatewayCallResult = { ok: true; payload: unknown } | { ok: false; error: unknown };
+
+const GOOGLE_MEET_GATEWAY_DEFAULT_TIMEOUT_MS = 5000;
 
 type DoctorOptions = {
   json?: boolean;
@@ -80,15 +167,21 @@ type JsonOptions = {
   json?: boolean;
 };
 
+type RecoverTabOptions = JsonOptions & {
+  transport?: GoogleMeetTransport;
+};
+
 type CreateOptions = {
   accessToken?: string;
   refreshToken?: string;
   clientId?: string;
   clientSecret?: string;
   expiresAt?: string;
+  accessType?: string;
+  entryPointAccess?: string;
   join?: boolean;
   transport?: GoogleMeetTransport;
-  mode?: GoogleMeetMode;
+  mode?: GoogleMeetModeInput;
   message?: string;
   dialInNumber?: string;
   pin?: string;
@@ -98,6 +191,21 @@ type CreateOptions = {
 
 function writeStdoutJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function isGatewayUnavailableForLocalFallback(
+  err: unknown,
+  method: GoogleMeetGatewayMethod,
+): boolean {
+  const message = formatErrorMessage(err);
+  return (
+    message.includes("ECONNREFUSED") ||
+    message.includes("ECONNRESET") ||
+    message.includes("EHOSTUNREACH") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("gateway not connected") ||
+    message.includes(`unknown method: ${method}`)
+  );
 }
 
 function writeStdoutLine(...values: unknown[]): void {
@@ -151,7 +259,67 @@ function formatOptional(value: unknown): string {
   return typeof value === "string" && value.trim() ? value : "n/a";
 }
 
-function writeDoctorStatus(status: ReturnType<GoogleMeetRuntime["status"]>): void {
+function parsePositiveNumber(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${label} must be a positive number`);
+  }
+  return parsed;
+}
+
+async function callGoogleMeetGateway(params: {
+  callGateway: typeof callGatewayFromCli;
+  method: GoogleMeetGatewayMethod;
+  payload?: Record<string, unknown>;
+  timeoutMs?: number;
+}): Promise<GoogleMeetGatewayCallResult> {
+  try {
+    const timeoutMs =
+      typeof params.timeoutMs === "number" && Number.isFinite(params.timeoutMs)
+        ? Math.max(1, Math.ceil(params.timeoutMs))
+        : GOOGLE_MEET_GATEWAY_DEFAULT_TIMEOUT_MS;
+    return {
+      ok: true,
+      payload: await params.callGateway(
+        params.method,
+        { json: true, timeout: String(timeoutMs) },
+        params.payload,
+        { progress: false },
+      ),
+    };
+  } catch (err) {
+    if (isGatewayUnavailableForLocalFallback(err, params.method)) {
+      return { ok: false, error: err };
+    }
+    throw err;
+  }
+}
+
+function resolveGoogleMeetGatewayOperationTimeoutMs(config: GoogleMeetConfig): number {
+  return Math.max(
+    60_000,
+    config.chrome.joinTimeoutMs + 30_000,
+    config.voiceCall.requestTimeoutMs + 10_000,
+  );
+}
+
+function formatDuration(value: number | undefined): string {
+  if (value === undefined) {
+    return "n/a";
+  }
+  const totalSeconds = Math.round(value / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours > 0
+    ? `${hours}h ${minutes.toString().padStart(2, "0")}m`
+    : `${minutes}m ${seconds.toString().padStart(2, "0")}s`;
+}
+
+function writeDoctorStatus(status: Awaited<ReturnType<GoogleMeetRuntime["status"]>>): void {
   if (!status.found) {
     writeStdoutLine("Google Meet session: not found");
     return;
@@ -170,22 +338,53 @@ function writeDoctorStatus(status: ReturnType<GoogleMeetRuntime["status"]>): voi
     writeStdoutLine("state: %s", session.state);
     writeStdoutLine("transport: %s", session.transport);
     writeStdoutLine("mode: %s", session.mode);
+    if (session.twilio) {
+      writeStdoutLine("twilio dial-in: %s", session.twilio.dialInNumber);
+      writeStdoutLine("voice call id: %s", formatOptional(session.twilio.voiceCallId));
+      writeStdoutLine("dtmf sent: %s", formatBoolean(session.twilio.dtmfSent));
+      writeStdoutLine("intro sent: %s", formatBoolean(session.twilio.introSent));
+    }
+    if (!session.chrome) {
+      continue;
+    }
     writeStdoutLine("node: %s", session.chrome?.nodeId ?? "local/none");
     writeStdoutLine("audio bridge: %s", session.chrome?.audioBridge?.type ?? "none");
+    const bridgeProvider =
+      session.chrome?.audioBridge?.provider ??
+      session.realtime.transcriptionProvider ??
+      session.realtime.provider ??
+      "n/a";
     writeStdoutLine(
-      "provider: %s",
-      session.chrome?.audioBridge?.provider ?? session.realtime.provider ?? "n/a",
+      session.mode === "agent" ? "transcription provider: %s" : "provider: %s",
+      bridgeProvider,
     );
+    if (session.realtime.enabled) {
+      writeStdoutLine("talk-back mode: %s", session.realtime.strategy ?? session.mode);
+    }
     writeStdoutLine("in call: %s", formatBoolean(health?.inCall));
+    writeStdoutLine("lobby waiting: %s", formatBoolean(health?.lobbyWaiting));
+    writeStdoutLine("captioning: %s", formatBoolean(health?.captioning));
+    writeStdoutLine("transcript lines: %s", health?.transcriptLines ?? 0);
+    writeStdoutLine("last caption: %s", formatOptional(health?.lastCaptionAt));
     writeStdoutLine("manual action: %s", formatBoolean(health?.manualActionRequired));
     if (health?.manualActionRequired) {
       writeStdoutLine("manual reason: %s", formatOptional(health.manualActionReason));
       writeStdoutLine("manual message: %s", formatOptional(health.manualActionMessage));
     }
+    writeStdoutLine("speech ready: %s", formatBoolean(health?.speechReady));
+    if (health?.speechReady === false) {
+      writeStdoutLine("speech blocked reason: %s", formatOptional(health.speechBlockedReason));
+      writeStdoutLine("speech blocked message: %s", formatOptional(health.speechBlockedMessage));
+    }
     writeStdoutLine("provider connected: %s", formatBoolean(health?.providerConnected));
     writeStdoutLine("realtime ready: %s", formatBoolean(health?.realtimeReady));
     writeStdoutLine("audio input active: %s", formatBoolean(health?.audioInputActive));
     writeStdoutLine("audio output active: %s", formatBoolean(health?.audioOutputActive));
+    writeStdoutLine("meet output routed: %s", formatBoolean(health?.audioOutputRouted));
+    if (health?.audioOutputDeviceLabel || health?.audioOutputRouteError) {
+      writeStdoutLine("meet output device: %s", formatOptional(health.audioOutputDeviceLabel));
+      writeStdoutLine("meet output route error: %s", formatOptional(health.audioOutputRouteError));
+    }
     writeStdoutLine(
       "last input: %s (%s bytes)",
       formatOptional(health?.lastInputAt),
@@ -198,6 +397,21 @@ function writeDoctorStatus(status: ReturnType<GoogleMeetRuntime["status"]>): voi
     );
     writeStdoutLine("bridge closed: %s", formatBoolean(health?.bridgeClosed));
     writeStdoutLine("browser url: %s", formatOptional(health?.browserUrl));
+    if (health?.lastCaptionText) {
+      const speaker = health.lastCaptionSpeaker ? `${health.lastCaptionSpeaker}: ` : "";
+      writeStdoutLine("last caption text: %s%s", speaker, health.lastCaptionText);
+    }
+    writeStdoutLine("realtime transcript lines: %s", health?.realtimeTranscriptLines ?? 0);
+    if (health?.lastRealtimeTranscriptText) {
+      const role = health.lastRealtimeTranscriptRole
+        ? `${health.lastRealtimeTranscriptRole}: `
+        : "";
+      writeStdoutLine("last realtime transcript: %s%s", role, health.lastRealtimeTranscriptText);
+    }
+    if (health?.lastRealtimeEventType) {
+      const detail = health.lastRealtimeEventDetail ? ` ${health.lastRealtimeEventDetail}` : "";
+      writeStdoutLine("last realtime event: %s%s", health.lastRealtimeEventType, detail);
+    }
   }
 }
 
@@ -350,7 +564,8 @@ function writeRecoverCurrentTabResult(
   result: Awaited<ReturnType<GoogleMeetRuntime["recoverCurrentTab"]>>,
 ): void {
   writeStdoutLine("Google Meet current tab: %s", result.found ? "found" : "not found");
-  writeStdoutLine("node: %s", result.nodeId);
+  writeStdoutLine("transport: %s", result.transport);
+  writeStdoutLine("node: %s", result.nodeId ?? "local/none");
   if (result.targetId) {
     writeStdoutLine("target: %s", result.targetId);
   }
@@ -364,12 +579,15 @@ function writeRecoverCurrentTabResult(
       session: {
         id: "current-tab",
         url: result.browser.browserUrl ?? result.tab?.url ?? "unknown",
-        transport: "chrome-node",
+        transport: result.transport,
         mode: "transcribe",
         state: "active",
         createdAt: "",
         updatedAt: "",
-        participantIdentity: "signed-in Google Chrome profile on a paired node",
+        participantIdentity:
+          result.transport === "chrome-node"
+            ? "signed-in Google Chrome profile on a paired node"
+            : "signed-in Google Chrome profile",
         realtime: { enabled: false, toolPolicy: "safe-read-only" },
         chrome: {
           audioBackend: "blackhole-2ch",
@@ -393,6 +611,25 @@ function resolveMeetingInput(config: GoogleMeetConfig, value?: string): string {
   return meeting;
 }
 
+function resolveOAuthTokenOptions(
+  config: GoogleMeetConfig,
+  options: ResolveSpaceOptions,
+): {
+  clientId?: string;
+  clientSecret?: string;
+  refreshToken?: string;
+  accessToken?: string;
+  expiresAt?: number;
+} {
+  return {
+    clientId: options.clientId?.trim() || config.oauth.clientId,
+    clientSecret: options.clientSecret?.trim() || config.oauth.clientSecret,
+    refreshToken: options.refreshToken?.trim() || config.oauth.refreshToken,
+    accessToken: options.accessToken?.trim() || config.oauth.accessToken,
+    expiresAt: parseOptionalNumber(options.expiresAt) ?? config.oauth.expiresAt,
+  };
+}
+
 function resolveTokenOptions(
   config: GoogleMeetConfig,
   options: ResolveSpaceOptions,
@@ -406,12 +643,51 @@ function resolveTokenOptions(
 } {
   return {
     meeting: resolveMeetingInput(config, options.meeting),
-    clientId: options.clientId?.trim() || config.oauth.clientId,
-    clientSecret: options.clientSecret?.trim() || config.oauth.clientSecret,
-    refreshToken: options.refreshToken?.trim() || config.oauth.refreshToken,
-    accessToken: options.accessToken?.trim() || config.oauth.accessToken,
-    expiresAt: parseOptionalNumber(options.expiresAt) ?? config.oauth.expiresAt,
+    ...resolveOAuthTokenOptions(config, options),
   };
+}
+
+function hasCalendarLookupOptions(options: ResolveSpaceOptions): boolean {
+  return Boolean(options.today || options.event?.trim());
+}
+
+async function resolveCalendarMeetingInput(params: {
+  accessToken: string;
+  options: ResolveSpaceOptions;
+}): Promise<{ meeting?: string; calendarEvent?: GoogleMeetCalendarLookupResult }> {
+  if (!hasCalendarLookupOptions(params.options)) {
+    return {};
+  }
+  const window = params.options.today ? buildGoogleMeetCalendarDayWindow() : {};
+  const calendarEvent = await findGoogleMeetCalendarEvent({
+    accessToken: params.accessToken,
+    calendarId: params.options.calendar,
+    eventQuery: params.options.event,
+    ...window,
+  });
+  return { meeting: calendarEvent.meetingUri, calendarEvent };
+}
+
+async function resolveMeetingForToken(params: {
+  config: GoogleMeetConfig;
+  options: ResolveSpaceOptions;
+  accessToken: string;
+  configuredMeeting?: string;
+}): Promise<{ meeting: string; calendarEvent?: GoogleMeetCalendarLookupResult }> {
+  const calendarMeeting = await resolveCalendarMeetingInput({
+    accessToken: params.accessToken,
+    options: params.options,
+  });
+  const meeting =
+    calendarMeeting.meeting ?? params.configuredMeeting ?? params.config.defaults.meeting;
+  if (!meeting) {
+    throw new Error(
+      "Meeting input is required. Pass --meeting, --today, --event, or configure defaults.meeting.",
+    );
+  }
+  return calendarMeeting.calendarEvent
+    ? { meeting, calendarEvent: calendarMeeting.calendarEvent }
+    : { meeting };
 }
 
 function resolveCreateTokenOptions(
@@ -447,12 +723,16 @@ function resolveArtifactTokenOptions(
   pageSize?: number;
   includeTranscriptEntries?: boolean;
   allConferenceRecords?: boolean;
+  includeDocumentBodies?: boolean;
+  mergeDuplicateParticipants?: boolean;
+  lateAfterMinutes?: number;
+  earlyBeforeMinutes?: number;
 } {
   const meeting = options.meeting?.trim() || config.defaults.meeting;
   const conferenceRecord = options.conferenceRecord?.trim();
-  if (!meeting && !conferenceRecord) {
+  if (!meeting && !conferenceRecord && !hasCalendarLookupOptions(options)) {
     throw new Error(
-      "Meeting input or conference record is required. Pass --meeting, --conference-record, or configure defaults.meeting.",
+      "Meeting input or conference record is required. Pass --meeting, --today, --event, --conference-record, or configure defaults.meeting.",
     );
   }
   return {
@@ -466,6 +746,10 @@ function resolveArtifactTokenOptions(
     pageSize: parseOptionalNumber(options.pageSize),
     includeTranscriptEntries: options.transcriptEntries !== false,
     allConferenceRecords: Boolean(options.allConferenceRecords),
+    includeDocumentBodies: Boolean(options.includeDocBodies),
+    mergeDuplicateParticipants: options.mergeDuplicates !== false,
+    lateAfterMinutes: parseOptionalNumber(options.lateAfterMinutes),
+    earlyBeforeMinutes: parseOptionalNumber(options.earlyBeforeMinutes),
   };
 }
 
@@ -507,6 +791,9 @@ function writeArtifactsSummary(result: GoogleMeetArtifactsResult): void {
     }
     for (const transcript of entry.transcripts) {
       writeStdoutLine("- transcript: %s", transcript.name);
+      if (transcript.documentTextError) {
+        writeStdoutLine("- transcript document body warning: %s", transcript.documentTextError);
+      }
     }
     for (const transcriptEntries of entry.transcriptEntries) {
       if (transcriptEntries.entriesError) {
@@ -519,6 +806,9 @@ function writeArtifactsSummary(result: GoogleMeetArtifactsResult): void {
     }
     for (const smartNote of entry.smartNotes) {
       writeStdoutLine("- smart note: %s", smartNote.name);
+      if (smartNote.documentTextError) {
+        writeStdoutLine("- smart note document body warning: %s", smartNote.documentTextError);
+      }
     }
   }
 }
@@ -538,8 +828,12 @@ function writeAttendanceSummary(result: GoogleMeetAttendanceResult): void {
     writeStdoutLine("participant: %s", identity);
     writeStdoutLine("record: %s", row.conferenceRecord);
     writeStdoutLine("resource: %s", row.participant);
-    writeStdoutLine("first joined: %s", formatOptional(row.earliestStartTime));
-    writeStdoutLine("last left: %s", formatOptional(row.latestEndTime));
+    writeStdoutLine("participants merged: %d", row.participants?.length ?? 1);
+    writeStdoutLine("first joined: %s", formatOptional(row.firstJoinTime ?? row.earliestStartTime));
+    writeStdoutLine("last left: %s", formatOptional(row.lastLeaveTime ?? row.latestEndTime));
+    writeStdoutLine("duration: %s", formatDuration(row.durationMs));
+    writeStdoutLine("late: %s", row.late ? formatDuration(row.lateByMs) : "no");
+    writeStdoutLine("early leave: %s", row.earlyLeave ? formatDuration(row.earlyLeaveByMs) : "no");
     writeStdoutLine("sessions: %d", row.sessions.length);
     for (const session of row.sessions) {
       writeStdoutLine(
@@ -564,6 +858,23 @@ function writeLatestConferenceRecordSummary(result: GoogleMeetLatestConferenceRe
   writeStdoutLine("ended: %s", formatOptional(result.conferenceRecord.endTime));
 }
 
+function writeCalendarEventsSummary(
+  result: Awaited<ReturnType<typeof listGoogleMeetCalendarEvents>>,
+): void {
+  writeStdoutLine("calendar: %s", result.calendarId);
+  writeStdoutLine("meet events: %d", result.events.length);
+  for (const entry of result.events) {
+    writeStdoutLine("");
+    writeStdoutLine("%s%s", entry.selected ? "* " : "- ", entry.event.summary ?? "untitled");
+    writeStdoutLine("meeting uri: %s", entry.meetingUri);
+    writeStdoutLine(
+      "starts: %s",
+      formatOptional(entry.event.start?.dateTime ?? entry.event.start?.date),
+    );
+    writeStdoutLine("ends: %s", formatOptional(entry.event.end?.dateTime ?? entry.event.end?.date));
+  }
+}
+
 function pushMarkdownLine(lines: string[], text = ""): void {
   lines.push(text);
 }
@@ -574,6 +885,23 @@ function formatMarkdownOptional(value: unknown): string {
 
 function formatMarkdownIdentity(row: GoogleMeetAttendanceResult["attendance"][number]): string {
   return row.displayName || row.user || row.participant;
+}
+
+function participantDisplayName(
+  entry: GoogleMeetArtifactsResult["artifacts"][number],
+  name: string,
+): string {
+  const participant = entry.participants.find((candidate) => candidate.name === name);
+  if (!participant) {
+    return name;
+  }
+  return (
+    participant.signedinUser?.displayName ??
+    participant.anonymousUser?.displayName ??
+    participant.phoneUser?.displayName ??
+    participant.signedinUser?.user ??
+    name
+  );
 }
 
 function renderArtifactsMarkdown(result: GoogleMeetArtifactsResult): string {
@@ -603,6 +931,18 @@ function renderArtifactsMarkdown(result: GoogleMeetArtifactsResult): string {
       )}`,
     );
     pushMarkdownLine(lines, `Smart notes: ${entry.smartNotes.length}`);
+    const warnings = collectGoogleMeetArtifactWarnings({
+      conferenceRecords: [entry.conferenceRecord],
+      artifacts: [entry],
+    });
+    if (warnings.length > 0) {
+      pushMarkdownLine(lines);
+      pushMarkdownLine(lines, "### Warnings");
+      for (const warning of warnings) {
+        const resource = warning.resource ? `${warning.resource}: ` : "";
+        pushMarkdownLine(lines, `- ${resource}${warning.message}`);
+      }
+    }
     if (entry.recordings.length > 0) {
       pushMarkdownLine(lines);
       pushMarkdownLine(lines, "### Recordings");
@@ -615,6 +955,11 @@ function renderArtifactsMarkdown(result: GoogleMeetArtifactsResult): string {
       pushMarkdownLine(lines, "### Transcripts");
       for (const transcript of entry.transcripts) {
         pushMarkdownLine(lines, `- ${transcript.name}`);
+        if (transcript.documentTextError) {
+          pushMarkdownLine(lines, `  - Document body warning: ${transcript.documentTextError}`);
+        } else if (transcript.documentText) {
+          pushMarkdownLine(lines, `  - Document body: ${transcript.documentText.length} chars`);
+        }
       }
     }
     for (const transcriptEntries of entry.transcriptEntries) {
@@ -635,7 +980,9 @@ function renderArtifactsMarkdown(result: GoogleMeetArtifactsResult): string {
                 transcriptEntry.endTime,
               )})`
             : "";
-        const speaker = transcriptEntry.participant ? `${transcriptEntry.participant}: ` : "";
+        const speaker = transcriptEntry.participant
+          ? `${participantDisplayName(entry, transcriptEntry.participant)}: `
+          : "";
         pushMarkdownLine(lines, `- ${speaker}${transcriptEntry.text ?? ""}${times}`);
       }
     }
@@ -644,6 +991,11 @@ function renderArtifactsMarkdown(result: GoogleMeetArtifactsResult): string {
       pushMarkdownLine(lines, "### Smart Notes");
       for (const smartNote of entry.smartNotes) {
         pushMarkdownLine(lines, `- ${smartNote.name}`);
+        if (smartNote.documentTextError) {
+          pushMarkdownLine(lines, `  - Document body warning: ${smartNote.documentTextError}`);
+        } else if (smartNote.documentText) {
+          pushMarkdownLine(lines, `  - Document body: ${smartNote.documentText.length} chars`);
+        }
       }
     }
   }
@@ -666,8 +1018,21 @@ function renderAttendanceMarkdown(result: GoogleMeetAttendanceResult): string {
     pushMarkdownLine(lines, `## ${formatMarkdownIdentity(row)}`);
     pushMarkdownLine(lines, `Record: ${row.conferenceRecord}`);
     pushMarkdownLine(lines, `Resource: ${row.participant}`);
-    pushMarkdownLine(lines, `First joined: ${formatMarkdownOptional(row.earliestStartTime)}`);
-    pushMarkdownLine(lines, `Last left: ${formatMarkdownOptional(row.latestEndTime)}`);
+    pushMarkdownLine(lines, `Participants merged: ${row.participants?.length ?? 1}`);
+    pushMarkdownLine(
+      lines,
+      `First joined: ${formatMarkdownOptional(row.firstJoinTime ?? row.earliestStartTime)}`,
+    );
+    pushMarkdownLine(
+      lines,
+      `Last left: ${formatMarkdownOptional(row.lastLeaveTime ?? row.latestEndTime)}`,
+    );
+    pushMarkdownLine(lines, `Duration: ${formatDuration(row.durationMs)}`);
+    pushMarkdownLine(lines, `Late: ${row.late ? formatDuration(row.lateByMs) : "no"}`);
+    pushMarkdownLine(
+      lines,
+      `Early leave: ${row.earlyLeave ? formatDuration(row.earlyLeaveByMs) : "no"}`,
+    );
     pushMarkdownLine(lines, `Sessions: ${row.sessions.length}`);
     for (const session of row.sessions) {
       pushMarkdownLine(
@@ -681,11 +1046,362 @@ function renderAttendanceMarkdown(result: GoogleMeetAttendanceResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+function csvCell(value: unknown): string {
+  const text =
+    value === undefined || value === null
+      ? ""
+      : typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? String(value)
+        : JSON.stringify(value);
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function renderAttendanceCsv(result: GoogleMeetAttendanceResult): string {
+  const rows: unknown[][] = [
+    [
+      "conferenceRecord",
+      "displayName",
+      "user",
+      "participants",
+      "firstJoined",
+      "lastLeft",
+      "durationMs",
+      "sessions",
+      "late",
+      "lateByMs",
+      "earlyLeave",
+      "earlyLeaveByMs",
+    ],
+  ];
+  for (const row of result.attendance) {
+    rows.push([
+      row.conferenceRecord,
+      row.displayName ?? "",
+      row.user ?? "",
+      (row.participants ?? [row.participant]).join(";"),
+      row.firstJoinTime ?? row.earliestStartTime ?? "",
+      row.lastLeaveTime ?? row.latestEndTime ?? "",
+      row.durationMs ?? "",
+      row.sessions.length,
+      row.late ?? "",
+      row.lateByMs ?? "",
+      row.earlyLeave ?? "",
+      row.earlyLeaveByMs ?? "",
+    ]);
+  }
+  return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+}
+
+function renderTranscriptMarkdown(result: GoogleMeetArtifactsResult): string {
+  const lines: string[] = ["# Google Meet Transcript"];
+  if (result.input) {
+    pushMarkdownLine(lines, `Input: ${result.input}`);
+  }
+  for (const entry of result.artifacts) {
+    pushMarkdownLine(lines);
+    pushMarkdownLine(lines, `## ${entry.conferenceRecord.name}`);
+    if (entry.transcriptEntries.length === 0) {
+      pushMarkdownLine(lines, "_No transcript entries._");
+      continue;
+    }
+    for (const transcriptEntries of entry.transcriptEntries) {
+      pushMarkdownLine(lines);
+      pushMarkdownLine(lines, `### ${transcriptEntries.transcript}`);
+      if (transcriptEntries.entriesError) {
+        pushMarkdownLine(lines, `Warning: ${transcriptEntries.entriesError}`);
+        continue;
+      }
+      for (const transcriptEntry of transcriptEntries.entries) {
+        const speaker = transcriptEntry.participant
+          ? participantDisplayName(entry, transcriptEntry.participant)
+          : "unknown";
+        const time = transcriptEntry.startTime ? ` [${transcriptEntry.startTime}]` : "";
+        pushMarkdownLine(lines, `- ${speaker}${time}: ${transcriptEntry.text ?? ""}`);
+      }
+    }
+    const docsTranscripts = entry.transcripts.filter((transcript) => transcript.documentText);
+    if (docsTranscripts.length > 0) {
+      pushMarkdownLine(lines);
+      pushMarkdownLine(lines, "### Transcript Document Bodies");
+      for (const transcript of docsTranscripts) {
+        pushMarkdownLine(lines);
+        pushMarkdownLine(lines, `#### ${transcript.name}`);
+        pushMarkdownLine(lines, transcript.documentText?.trim() || "_Empty document body._");
+      }
+    }
+    const smartNotes = entry.smartNotes.filter((smartNote) => smartNote.documentText);
+    if (smartNotes.length > 0) {
+      pushMarkdownLine(lines);
+      pushMarkdownLine(lines, "### Smart Note Document Bodies");
+      for (const smartNote of smartNotes) {
+        pushMarkdownLine(lines);
+        pushMarkdownLine(lines, `#### ${smartNote.name}`);
+        pushMarkdownLine(lines, smartNote.documentText?.trim() || "_Empty document body._");
+      }
+    }
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function collectGoogleMeetArtifactWarnings(
+  result: GoogleMeetArtifactsResult,
+): GoogleMeetExportWarning[] {
+  const warnings: GoogleMeetExportWarning[] = [];
+  for (const entry of result.artifacts) {
+    const conferenceRecord = entry.conferenceRecord.name;
+    if (entry.smartNotesError) {
+      warnings.push({
+        type: "smart_notes",
+        conferenceRecord,
+        message: entry.smartNotesError,
+      });
+    }
+    for (const transcriptEntries of entry.transcriptEntries) {
+      if (transcriptEntries.entriesError) {
+        warnings.push({
+          type: "transcript_entries",
+          conferenceRecord,
+          resource: transcriptEntries.transcript,
+          message: transcriptEntries.entriesError,
+        });
+      }
+    }
+    for (const transcript of entry.transcripts) {
+      if (transcript.documentTextError) {
+        warnings.push({
+          type: "transcript_document_body",
+          conferenceRecord,
+          resource: transcript.name,
+          message: transcript.documentTextError,
+        });
+      }
+    }
+    for (const smartNote of entry.smartNotes) {
+      if (smartNote.documentTextError) {
+        warnings.push({
+          type: "smart_note_document_body",
+          conferenceRecord,
+          resource: smartNote.name,
+          message: smartNote.documentTextError,
+        });
+      }
+    }
+  }
+  return warnings;
+}
+
+export function buildGoogleMeetExportManifest(params: {
+  artifacts: GoogleMeetArtifactsResult;
+  attendance: GoogleMeetAttendanceResult;
+  files: string[];
+  request?: GoogleMeetExportRequest;
+  tokenSource?: "cached-access-token" | "refresh-token";
+  calendarEvent?: GoogleMeetCalendarLookupResult;
+  zipFile?: string;
+}): GoogleMeetExportManifest {
+  const transcriptEntryCount = params.artifacts.artifacts.reduce(
+    (count, entry) =>
+      count +
+      entry.transcriptEntries.reduce(
+        (entryCount, transcript) => entryCount + transcript.entries.length,
+        0,
+      ),
+    0,
+  );
+  const warnings = collectGoogleMeetArtifactWarnings(params.artifacts);
+  return {
+    generatedAt: new Date().toISOString(),
+    ...(params.request ? { request: params.request } : {}),
+    ...(params.tokenSource ? { tokenSource: params.tokenSource } : {}),
+    ...(params.calendarEvent ? { calendarEvent: params.calendarEvent } : {}),
+    inputs: {
+      ...(params.artifacts.input ? { artifacts: params.artifacts.input } : {}),
+      ...(params.attendance.input ? { attendance: params.attendance.input } : {}),
+    },
+    counts: {
+      conferenceRecords: params.artifacts.conferenceRecords.length,
+      artifacts: params.artifacts.artifacts.length,
+      attendanceRows: params.attendance.attendance.length,
+      recordings: params.artifacts.artifacts.reduce(
+        (count, entry) => count + entry.recordings.length,
+        0,
+      ),
+      transcripts: params.artifacts.artifacts.reduce(
+        (count, entry) => count + entry.transcripts.length,
+        0,
+      ),
+      transcriptEntries: transcriptEntryCount,
+      smartNotes: params.artifacts.artifacts.reduce(
+        (count, entry) => count + entry.smartNotes.length,
+        0,
+      ),
+      warnings: warnings.length,
+    },
+    conferenceRecords: params.artifacts.conferenceRecords.map((record) => record.name),
+    files: params.files,
+    ...(params.zipFile ? { zipFile: params.zipFile } : {}),
+    warnings,
+  };
+}
+
+export function googleMeetExportFileNames(): string[] {
+  return [
+    "summary.md",
+    "attendance.csv",
+    "transcript.md",
+    "artifacts.json",
+    "attendance.json",
+    "manifest.json",
+  ];
+}
+
+function defaultExportDirectory(): string {
+  return `google-meet-export-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+}
+
+const CRC32_TABLE = new Uint32Array(
+  Array.from({ length: 256 }, (_, index) => {
+    let value = index;
+    for (let bit = 0; bit < 8; bit += 1) {
+      value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+    }
+    return value >>> 0;
+  }),
+);
+
+function crc32(buffer: Buffer): number {
+  let value = 0xffffffff;
+  for (const byte of buffer) {
+    value = CRC32_TABLE[(value ^ byte) & 0xff] ^ (value >>> 8);
+  }
+  return (value ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(date = new Date()): { date: number; time: number } {
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  };
+}
+
+function buildZipArchive(files: Array<{ name: string; content: string }>): Buffer {
+  const localParts: Buffer[] = [];
+  const centralParts: Buffer[] = [];
+  let offset = 0;
+  const stamp = dosDateTime();
+  for (const file of files) {
+    const name = Buffer.from(file.name, "utf8");
+    const content = Buffer.from(file.content, "utf8");
+    const checksum = crc32(content);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(stamp.time, 10);
+    local.writeUInt16LE(stamp.date, 12);
+    local.writeUInt32LE(checksum, 14);
+    local.writeUInt32LE(content.length, 18);
+    local.writeUInt32LE(content.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    localParts.push(local, name, content);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(stamp.time, 12);
+    central.writeUInt16LE(stamp.date, 14);
+    central.writeUInt32LE(checksum, 16);
+    central.writeUInt32LE(content.length, 20);
+    central.writeUInt32LE(content.length, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centralParts.push(central, name);
+    offset += local.length + name.length + content.length;
+  }
+  const centralDirectory = Buffer.concat(centralParts);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralDirectory.length, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...localParts, centralDirectory, end]);
+}
+
+export async function writeMeetExportBundle(params: {
+  outputDir?: string;
+  artifacts: GoogleMeetArtifactsResult;
+  attendance: GoogleMeetAttendanceResult;
+  zip?: boolean;
+  request?: GoogleMeetExportRequest;
+  tokenSource?: "cached-access-token" | "refresh-token";
+  calendarEvent?: GoogleMeetCalendarLookupResult;
+}): Promise<{ outputDir: string; files: string[]; zipFile?: string }> {
+  const outputDir = params.outputDir?.trim() || defaultExportDirectory();
+  await mkdir(outputDir, { recursive: true });
+  const zipFile = params.zip ? `${outputDir.replace(/\/$/, "")}.zip` : undefined;
+  const fileNames = googleMeetExportFileNames();
+  const files = [
+    {
+      name: "summary.md",
+      content: `${renderArtifactsMarkdown(params.artifacts)}\n${renderAttendanceMarkdown(params.attendance)}`,
+    },
+    { name: "attendance.csv", content: renderAttendanceCsv(params.attendance) },
+    { name: "transcript.md", content: renderTranscriptMarkdown(params.artifacts) },
+    { name: "artifacts.json", content: `${JSON.stringify(params.artifacts, null, 2)}\n` },
+    { name: "attendance.json", content: `${JSON.stringify(params.attendance, null, 2)}\n` },
+    {
+      name: "manifest.json",
+      content: `${JSON.stringify(
+        buildGoogleMeetExportManifest({
+          artifacts: params.artifacts,
+          attendance: params.attendance,
+          files: fileNames,
+          ...(params.request ? { request: params.request } : {}),
+          ...(params.tokenSource ? { tokenSource: params.tokenSource } : {}),
+          ...(params.calendarEvent ? { calendarEvent: params.calendarEvent } : {}),
+          ...(zipFile ? { zipFile } : {}),
+        }),
+        null,
+        2,
+      )}\n`,
+    },
+  ];
+  for (const file of files) {
+    await writeFile(path.join(outputDir, file.name), file.content, "utf8");
+  }
+  const result: { outputDir: string; files: string[]; zipFile?: string } = {
+    outputDir,
+    files: files.map((file) => path.join(outputDir, file.name)),
+  };
+  if (zipFile) {
+    await writeFile(zipFile, buildZipArchive(files));
+    result.zipFile = zipFile;
+  }
+  return result;
+}
+
 export function registerGoogleMeetCli(params: {
   program: Command;
   config: GoogleMeetConfig;
   ensureRuntime: () => Promise<GoogleMeetRuntime>;
+  callGatewayFromCli?: typeof callGatewayFromCli;
 }) {
+  const callGateway = params.callGatewayFromCli ?? callGatewayFromCli;
+  const operationTimeoutMs = resolveGoogleMeetGatewayOperationTimeoutMs(params.config);
   const root = params.program
     .command("googlemeet")
     .description("Google Meet participant utilities")
@@ -760,19 +1476,74 @@ export function registerGoogleMeetCli(params: {
     .option("--client-id <id>", "OAuth client id override")
     .option("--client-secret <secret>", "OAuth client secret override")
     .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
+    .option(
+      "--access-type <type>",
+      "Google Meet SpaceConfig accessType for API create: OPEN, TRUSTED, or RESTRICTED",
+    )
+    .option(
+      "--entry-point-access <type>",
+      "Google Meet SpaceConfig entryPointAccess for API create: ALL or CREATOR_APP_ONLY",
+    )
     .option("--no-join", "Only create the meeting URL; do not join it")
     .option("--transport <transport>", "Join transport: chrome, chrome-node, or twilio")
-    .option(
-      "--mode <mode>",
-      "Join mode: realtime for live talk-back, transcribe for observe/control",
-    )
+    .option("--mode <mode>", "Join mode: agent, bidi, or transcribe")
     .option("--message <text>", "Realtime speech to trigger after join")
     .option("--dial-in-number <phone>", "Meet dial-in number for Twilio transport")
     .option("--pin <pin>", "Meet phone PIN; # is appended if omitted")
     .option("--dtmf-sequence <sequence>", "Explicit Twilio DTMF sequence")
     .option("--json", "Print JSON output", false)
     .action(async (options: CreateOptions) => {
+      if (options.join !== false) {
+        const delegated = await callGoogleMeetGateway({
+          callGateway,
+          method: "googlemeet.create",
+          payload: { ...options },
+          timeoutMs: operationTimeoutMs,
+        });
+        if (delegated.ok) {
+          const payload = delegated.payload as {
+            browser?: { nodeId?: string };
+            joined?: boolean;
+            join?: { session?: { id?: string } };
+            meetingUri?: string;
+            source?: string;
+            space?: { name?: string; meetingCode?: string };
+            tokenSource?: string;
+          };
+          if (options.json) {
+            writeStdoutJson(payload);
+            return;
+          }
+          writeStdoutLine("meeting uri: %s", payload.meetingUri);
+          if (payload.space?.name) {
+            writeStdoutLine("space: %s", payload.space.name);
+          }
+          if (payload.space?.meetingCode) {
+            writeStdoutLine("meeting code: %s", payload.space.meetingCode);
+          }
+          if (payload.source) {
+            writeStdoutLine("source: %s", payload.source);
+          }
+          if (payload.browser?.nodeId) {
+            writeStdoutLine("node: %s", payload.browser.nodeId);
+          }
+          if (payload.tokenSource) {
+            writeStdoutLine("token source: %s", payload.tokenSource);
+          }
+          if (payload.joined && payload.join?.session?.id) {
+            writeStdoutLine("joined: %s", payload.join.session.id);
+          } else {
+            writeStdoutLine("joined: no (run `openclaw googlemeet join %s`)", payload.meetingUri);
+          }
+          return;
+        }
+      }
       if (!hasCreateOAuth(params.config, options)) {
+        if (hasCreateSpaceConfigInput(options as Record<string, unknown>)) {
+          throw new Error(
+            "Google Meet access policy options require OAuth/API room creation. Configure Google Meet OAuth or remove --access-type/--entry-point-access.",
+          );
+        }
         const rt = await params.ensureRuntime();
         const result = await rt.createViaBrowser();
         const join =
@@ -816,7 +1587,10 @@ export function registerGoogleMeetCli(params: {
       const token = await resolveGoogleMeetAccessToken(
         resolveCreateTokenOptions(params.config, options),
       );
-      const result = await createGoogleMeetSpace({ accessToken: token.accessToken });
+      const result = await createGoogleMeetSpace({
+        accessToken: token.accessToken,
+        config: resolveCreateSpaceConfig(options as Record<string, unknown>),
+      });
       const join =
         options.join !== false
           ? await (
@@ -857,20 +1631,49 @@ export function registerGoogleMeetCli(params: {
     });
 
   root
+    .command("end-active-conference")
+    .description("End the active conference for a Google Meet space")
+    .argument("[meeting]", "Meet URL, meeting code, or spaces/{id}")
+    .option("--access-token <token>", "Access token override")
+    .option("--refresh-token <token>", "Refresh token override")
+    .option("--client-id <id>", "OAuth client id override")
+    .option("--client-secret <secret>", "OAuth client secret override")
+    .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
+    .option("--json", "Print JSON output", false)
+    .action(async (meeting: string | undefined, options: ResolveSpaceOptions & JsonOptions) => {
+      const token = await resolveGoogleMeetAccessToken(
+        resolveOAuthTokenOptions(params.config, options),
+      );
+      const result = await endGoogleMeetActiveConference({
+        accessToken: token.accessToken,
+        meeting: resolveMeetingInput(params.config, meeting ?? options.meeting),
+      });
+      if (options.json) {
+        writeStdoutJson({
+          ...result,
+          tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+        });
+        return;
+      }
+      writeStdoutLine("space: %s", result.space);
+      writeStdoutLine("ended: yes");
+      writeStdoutLine(
+        "token source: %s",
+        token.refreshed ? "refresh-token" : "cached-access-token",
+      );
+    });
+
+  root
     .command("join")
     .argument("[url]", "Explicit https://meet.google.com/... URL")
     .option("--transport <transport>", "Transport: chrome, chrome-node, or twilio")
-    .option(
-      "--mode <mode>",
-      "Mode: realtime for live talk-back, transcribe to join without the realtime voice bridge",
-    )
+    .option("--mode <mode>", "Mode: agent, bidi, or transcribe")
     .option("--message <text>", "Realtime speech to trigger after join")
     .option("--dial-in-number <phone>", "Meet dial-in number for Twilio transport")
     .option("--pin <pin>", "Meet phone PIN; # is appended if omitted")
     .option("--dtmf-sequence <sequence>", "Explicit Twilio DTMF sequence")
     .action(async (url: string | undefined, options: JoinOptions) => {
-      const rt = await params.ensureRuntime();
-      const result = await rt.join({
+      const payload = {
         url: resolveMeetingInput(params.config, url),
         transport: options.transport,
         mode: options.mode,
@@ -878,7 +1681,20 @@ export function registerGoogleMeetCli(params: {
         dialInNumber: options.dialInNumber,
         pin: options.pin,
         dtmfSequence: options.dtmfSequence,
+      };
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.join",
+        payload,
+        timeoutMs: operationTimeoutMs,
       });
+      if (delegated.ok) {
+        const result = delegated.payload as { session?: unknown };
+        writeStdoutJson(result.session ?? delegated.payload);
+        return;
+      }
+      const rt = await params.ensureRuntime();
+      const result = await rt.join(payload);
       writeStdoutJson(result.session);
     });
 
@@ -886,25 +1702,56 @@ export function registerGoogleMeetCli(params: {
     .command("test-speech")
     .argument("[url]", "Explicit https://meet.google.com/... URL")
     .option("--transport <transport>", "Transport: chrome, chrome-node, or twilio")
-    .option(
-      "--mode <mode>",
-      "Mode: realtime for live talk-back, transcribe to join without the realtime voice bridge",
-    )
+    .option("--mode <mode>", "Mode: agent, bidi, or transcribe")
     .option(
       "--message <text>",
       "Realtime speech to trigger",
       "Say exactly: Google Meet speech test complete.",
     )
     .action(async (url: string | undefined, options: JoinOptions) => {
+      const payload = {
+        url: resolveMeetingInput(params.config, url),
+        transport: options.transport,
+        mode: options.mode,
+        message: options.message,
+      };
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.testSpeech",
+        payload,
+        timeoutMs: operationTimeoutMs,
+      });
+      if (delegated.ok) {
+        writeStdoutJson(delegated.payload);
+        return;
+      }
       const rt = await params.ensureRuntime();
-      writeStdoutJson(
-        await rt.testSpeech({
-          url: resolveMeetingInput(params.config, url),
-          transport: options.transport,
-          mode: options.mode,
-          message: options.message,
-        }),
-      );
+      writeStdoutJson(await rt.testSpeech(payload));
+    });
+
+  root
+    .command("test-listen")
+    .argument("[url]", "Explicit https://meet.google.com/... URL")
+    .option("--transport <transport>", "Transport: chrome or chrome-node")
+    .option("--timeout-ms <ms>", "How long to wait for fresh captions/transcript movement")
+    .action(async (url: string | undefined, options: JoinOptions) => {
+      const payload = {
+        url: resolveMeetingInput(params.config, url),
+        transport: options.transport,
+        timeoutMs: parsePositiveNumber(options.timeoutMs, "timeout-ms"),
+      };
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.testListen",
+        payload,
+        timeoutMs: operationTimeoutMs,
+      });
+      if (delegated.ok) {
+        writeStdoutJson(delegated.payload);
+        return;
+      }
+      const rt = await params.ensureRuntime();
+      writeStdoutJson(await rt.testListen(payload));
     });
 
   root
@@ -995,6 +1842,9 @@ export function registerGoogleMeetCli(params: {
     .command("latest")
     .description("Find the latest Meet conference record for a meeting")
     .option("--meeting <value>", "Meet URL, meeting code, or spaces/{id}")
+    .option("--today", "Find a Meet link on today's calendar")
+    .option("--event <query>", "Find a matching calendar event with a Meet link")
+    .option("--calendar <id>", "Calendar id for --today or --event", "primary")
     .option("--access-token <token>", "Access token override")
     .option("--refresh-token <token>", "Refresh token override")
     .option("--client-id <id>", "OAuth client id override")
@@ -1002,8 +1852,15 @@ export function registerGoogleMeetCli(params: {
     .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
     .option("--json", "Print JSON output", false)
     .action(async (options: ResolveSpaceOptions) => {
-      const resolved = resolveTokenOptions(params.config, options);
-      const token = await resolveGoogleMeetAccessToken(resolved);
+      const token = await resolveGoogleMeetAccessToken(
+        resolveOAuthTokenOptions(params.config, options),
+      );
+      const resolved = await resolveMeetingForToken({
+        config: params.config,
+        options,
+        accessToken: token.accessToken,
+        configuredMeeting: options.meeting?.trim(),
+      });
       const result = await fetchLatestGoogleMeetConferenceRecord({
         accessToken: token.accessToken,
         meeting: resolved.meeting,
@@ -1011,11 +1868,54 @@ export function registerGoogleMeetCli(params: {
       if (options.json) {
         writeStdoutJson({
           ...result,
+          ...(resolved.calendarEvent ? { calendarEvent: resolved.calendarEvent } : {}),
           tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
         });
         return;
       }
+      if (resolved.calendarEvent) {
+        writeStdoutLine("calendar event: %s", resolved.calendarEvent.event.summary ?? "untitled");
+        writeStdoutLine("calendar meet: %s", resolved.calendarEvent.meetingUri);
+      }
       writeLatestConferenceRecordSummary(result);
+      writeStdoutLine(
+        "token source: %s",
+        token.refreshed ? "refresh-token" : "cached-access-token",
+      );
+    });
+
+  root
+    .command("calendar-events")
+    .description("Preview Calendar events with Google Meet links")
+    .option("--today", "Find Meet links on today's calendar")
+    .option("--event <query>", "Find matching calendar events with Meet links")
+    .option("--calendar <id>", "Calendar id for lookup", "primary")
+    .option("--access-token <token>", "Access token override")
+    .option("--refresh-token <token>", "Refresh token override")
+    .option("--client-id <id>", "OAuth client id override")
+    .option("--client-secret <secret>", "OAuth client secret override")
+    .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
+    .option("--json", "Print JSON output", false)
+    .action(async (options: ResolveSpaceOptions) => {
+      const token = await resolveGoogleMeetAccessToken(
+        resolveOAuthTokenOptions(params.config, options),
+      );
+      const window = options.today ? buildGoogleMeetCalendarDayWindow() : {};
+      const result = await listGoogleMeetCalendarEvents({
+        accessToken: token.accessToken,
+        calendarId: options.calendar,
+        eventQuery: options.event,
+        ...window,
+      });
+      const payload = {
+        ...result,
+        tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+      };
+      if (options.json) {
+        writeStdoutJson(payload);
+        return;
+      }
+      writeCalendarEventsSummary(result);
       writeStdoutLine(
         "token source: %s",
         token.refreshed ? "refresh-token" : "cached-access-token",
@@ -1027,6 +1927,9 @@ export function registerGoogleMeetCli(params: {
     .description("List Meet conference records and available participant/artifact metadata")
     .option("--meeting <value>", "Meet URL, meeting code, or spaces/{id}")
     .option("--conference-record <name>", "Conference record name or id")
+    .option("--today", "Find a Meet link on today's calendar")
+    .option("--event <query>", "Find a matching calendar event with a Meet link")
+    .option("--calendar <id>", "Calendar id for --today or --event", "primary")
     .option("--access-token <token>", "Access token override")
     .option("--refresh-token <token>", "Refresh token override")
     .option("--client-id <id>", "OAuth client id override")
@@ -1035,19 +1938,31 @@ export function registerGoogleMeetCli(params: {
     .option("--page-size <n>", "Max resources per Meet API page")
     .option("--all-conference-records", "Fetch every conference record for --meeting")
     .option("--no-transcript-entries", "Skip structured transcript entry lookup")
+    .option("--include-doc-bodies", "Export linked transcript and smart-note Google Docs text")
     .option("--format <format>", "Output format: summary or markdown", "summary")
     .option("--output <path>", "Write output to a file instead of stdout")
     .option("--json", "Print JSON output", false)
     .action(async (options: MeetArtifactOptions) => {
       const resolved = resolveArtifactTokenOptions(params.config, options);
       const token = await resolveGoogleMeetAccessToken(resolved);
+      const meeting = resolved.conferenceRecord
+        ? resolved.meeting
+        : (
+            await resolveMeetingForToken({
+              config: params.config,
+              options,
+              accessToken: token.accessToken,
+              configuredMeeting: resolved.meeting,
+            })
+          ).meeting;
       const result = await fetchGoogleMeetArtifacts({
         accessToken: token.accessToken,
-        meeting: resolved.meeting,
+        meeting,
         conferenceRecord: resolved.conferenceRecord,
         pageSize: resolved.pageSize,
         includeTranscriptEntries: resolved.includeTranscriptEntries,
         allConferenceRecords: resolved.allConferenceRecords,
+        includeDocumentBodies: resolved.includeDocumentBodies,
       });
       if (options.json) {
         await writeCliOutput(
@@ -1082,6 +1997,9 @@ export function registerGoogleMeetCli(params: {
     .description("List Meet participants and participant sessions")
     .option("--meeting <value>", "Meet URL, meeting code, or spaces/{id}")
     .option("--conference-record <name>", "Conference record name or id")
+    .option("--today", "Find a Meet link on today's calendar")
+    .option("--event <query>", "Find a matching calendar event with a Meet link")
+    .option("--calendar <id>", "Calendar id for --today or --event", "primary")
     .option("--access-token <token>", "Access token override")
     .option("--refresh-token <token>", "Refresh token override")
     .option("--client-id <id>", "OAuth client id override")
@@ -1089,18 +2007,34 @@ export function registerGoogleMeetCli(params: {
     .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
     .option("--page-size <n>", "Max resources per Meet API page")
     .option("--all-conference-records", "Fetch every conference record for --meeting")
-    .option("--format <format>", "Output format: summary or markdown", "summary")
+    .option("--no-merge-duplicates", "Keep duplicate participant resources as separate rows")
+    .option("--late-after-minutes <n>", "Mark participants late after this many minutes", "5")
+    .option("--early-before-minutes <n>", "Mark early leavers before this many minutes", "5")
+    .option("--format <format>", "Output format: summary, markdown, or csv", "summary")
     .option("--output <path>", "Write output to a file instead of stdout")
     .option("--json", "Print JSON output", false)
     .action(async (options: MeetArtifactOptions) => {
       const resolved = resolveArtifactTokenOptions(params.config, options);
       const token = await resolveGoogleMeetAccessToken(resolved);
+      const meeting = resolved.conferenceRecord
+        ? resolved.meeting
+        : (
+            await resolveMeetingForToken({
+              config: params.config,
+              options,
+              accessToken: token.accessToken,
+              configuredMeeting: resolved.meeting,
+            })
+          ).meeting;
       const result = await fetchGoogleMeetAttendance({
         accessToken: token.accessToken,
-        meeting: resolved.meeting,
+        meeting,
         conferenceRecord: resolved.conferenceRecord,
         pageSize: resolved.pageSize,
         allConferenceRecords: resolved.allConferenceRecords,
+        mergeDuplicateParticipants: resolved.mergeDuplicateParticipants,
+        lateAfterMinutes: resolved.lateAfterMinutes,
+        earlyBeforeMinutes: resolved.earlyBeforeMinutes,
       });
       if (options.json) {
         await writeCliOutput(
@@ -1120,8 +2054,12 @@ export function registerGoogleMeetCli(params: {
         await writeCliOutput(options, renderAttendanceMarkdown(result));
         return;
       }
+      if (options.format === "csv") {
+        await writeCliOutput(options, renderAttendanceCsv(result));
+        return;
+      }
       if (options.format && options.format !== "summary") {
-        throw new Error("Unsupported format. Expected summary or markdown.");
+        throw new Error("Unsupported format. Expected summary, markdown, or csv.");
       }
       writeAttendanceSummary(result);
       writeStdoutLine(
@@ -1131,11 +2069,142 @@ export function registerGoogleMeetCli(params: {
     });
 
   root
+    .command("export")
+    .description("Write Meet artifacts, attendance, transcript, and raw JSON into a folder")
+    .option("--meeting <value>", "Meet URL, meeting code, or spaces/{id}")
+    .option("--conference-record <name>", "Conference record name or id")
+    .option("--today", "Find a Meet link on today's calendar")
+    .option("--event <query>", "Find a matching calendar event with a Meet link")
+    .option("--calendar <id>", "Calendar id for --today or --event", "primary")
+    .option("--access-token <token>", "Access token override")
+    .option("--refresh-token <token>", "Refresh token override")
+    .option("--client-id <id>", "OAuth client id override")
+    .option("--client-secret <secret>", "OAuth client secret override")
+    .option("--expires-at <ms>", "Cached access token expiry as unix epoch milliseconds")
+    .option("--page-size <n>", "Max resources per Meet API page")
+    .option("--all-conference-records", "Fetch every conference record for --meeting")
+    .option("--no-transcript-entries", "Skip structured transcript entry lookup")
+    .option("--include-doc-bodies", "Export linked transcript and smart-note Google Docs text")
+    .option("--no-merge-duplicates", "Keep duplicate participant resources as separate rows")
+    .option("--late-after-minutes <n>", "Mark participants late after this many minutes", "5")
+    .option("--early-before-minutes <n>", "Mark early leavers before this many minutes", "5")
+    .option("--output <dir>", "Output directory")
+    .option("--zip", "Also write a portable .zip archive")
+    .option("--dry-run", "Fetch export data and print the manifest without writing files", false)
+    .option("--json", "Print JSON output", false)
+    .action(async (options: MeetArtifactOptions) => {
+      const resolved = resolveArtifactTokenOptions(params.config, options);
+      const token = await resolveGoogleMeetAccessToken(resolved);
+      const meetingResult: { meeting?: string; calendarEvent?: GoogleMeetCalendarLookupResult } =
+        resolved.conferenceRecord
+          ? { meeting: resolved.meeting }
+          : await resolveMeetingForToken({
+              config: params.config,
+              options,
+              accessToken: token.accessToken,
+              configuredMeeting: resolved.meeting,
+            });
+      const artifacts = await fetchGoogleMeetArtifacts({
+        accessToken: token.accessToken,
+        meeting: meetingResult.meeting,
+        conferenceRecord: resolved.conferenceRecord,
+        pageSize: resolved.pageSize,
+        includeTranscriptEntries: resolved.includeTranscriptEntries,
+        allConferenceRecords: resolved.allConferenceRecords,
+        includeDocumentBodies: resolved.includeDocumentBodies,
+      });
+      const attendance = await fetchGoogleMeetAttendance({
+        accessToken: token.accessToken,
+        meeting: meetingResult.meeting,
+        conferenceRecord: resolved.conferenceRecord,
+        pageSize: resolved.pageSize,
+        allConferenceRecords: resolved.allConferenceRecords,
+        mergeDuplicateParticipants: resolved.mergeDuplicateParticipants,
+        lateAfterMinutes: resolved.lateAfterMinutes,
+        earlyBeforeMinutes: resolved.earlyBeforeMinutes,
+      });
+      const resolvedMeeting = meetingResult.meeting ?? resolved.meeting;
+      const request: GoogleMeetExportRequest = {
+        ...(resolvedMeeting ? { meeting: resolvedMeeting } : {}),
+        ...(resolved.conferenceRecord ? { conferenceRecord: resolved.conferenceRecord } : {}),
+        ...(meetingResult.calendarEvent?.event.id
+          ? { calendarEventId: meetingResult.calendarEvent.event.id }
+          : {}),
+        ...(meetingResult.calendarEvent?.event.summary
+          ? { calendarEventSummary: meetingResult.calendarEvent.event.summary }
+          : {}),
+        ...(options.calendar ? { calendarId: options.calendar } : {}),
+        ...(resolved.pageSize !== undefined ? { pageSize: resolved.pageSize } : {}),
+        includeTranscriptEntries: resolved.includeTranscriptEntries,
+        includeDocumentBodies: resolved.includeDocumentBodies,
+        allConferenceRecords: resolved.allConferenceRecords,
+        mergeDuplicateParticipants: resolved.mergeDuplicateParticipants,
+        ...(resolved.lateAfterMinutes !== undefined
+          ? { lateAfterMinutes: resolved.lateAfterMinutes }
+          : {}),
+        ...(resolved.earlyBeforeMinutes !== undefined
+          ? { earlyBeforeMinutes: resolved.earlyBeforeMinutes }
+          : {}),
+      };
+      if (options.dryRun) {
+        writeStdoutJson({
+          dryRun: true,
+          manifest: buildGoogleMeetExportManifest({
+            artifacts,
+            attendance,
+            files: googleMeetExportFileNames(),
+            request,
+            tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+            ...(meetingResult.calendarEvent ? { calendarEvent: meetingResult.calendarEvent } : {}),
+          }),
+          ...(meetingResult.calendarEvent ? { calendarEvent: meetingResult.calendarEvent } : {}),
+          tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+        });
+        return;
+      }
+      const bundle = await writeMeetExportBundle({
+        outputDir: options.output,
+        artifacts,
+        attendance,
+        zip: Boolean(options.zip),
+        request,
+        tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+        ...(meetingResult.calendarEvent ? { calendarEvent: meetingResult.calendarEvent } : {}),
+      });
+      const payload = {
+        ...bundle,
+        ...(meetingResult.calendarEvent ? { calendarEvent: meetingResult.calendarEvent } : {}),
+        tokenSource: token.refreshed ? "refresh-token" : "cached-access-token",
+      };
+      if (options.json) {
+        writeStdoutJson(payload);
+        return;
+      }
+      writeStdoutLine("export: %s", bundle.outputDir);
+      for (const file of bundle.files) {
+        writeStdoutLine("- %s", file);
+      }
+      if (bundle.zipFile) {
+        writeStdoutLine("zip: %s", bundle.zipFile);
+      }
+    });
+
+  root
     .command("status")
     .argument("[session-id]", "Meet session ID")
+    .option("--json", "Print JSON output", false)
     .action(async (sessionId?: string) => {
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.status",
+        payload: { sessionId },
+      });
+      if (delegated.ok) {
+        writeStdoutJson(delegated.payload);
+        return;
+      }
       const rt = await params.ensureRuntime();
-      writeStdoutJson(rt.status(sessionId));
+      writeStdoutJson(await rt.status(sessionId));
     });
 
   root
@@ -1161,8 +2230,22 @@ export function registerGoogleMeetCli(params: {
         writeOAuthDoctorReport(report);
         return;
       }
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.status",
+        payload: { sessionId },
+      });
+      if (delegated.ok) {
+        const status = delegated.payload as Awaited<ReturnType<GoogleMeetRuntime["status"]>>;
+        if (options.json) {
+          writeStdoutJson(status);
+          return;
+        }
+        writeDoctorStatus(status);
+        return;
+      }
       const rt = await params.ensureRuntime();
-      const status = rt.status(sessionId);
+      const status = await rt.status(sessionId);
       if (options.json) {
         writeStdoutJson(status);
         return;
@@ -1172,12 +2255,13 @@ export function registerGoogleMeetCli(params: {
 
   root
     .command("recover-tab")
-    .description("Focus and inspect an existing Google Meet tab on the Chrome node")
+    .description("Focus and inspect an existing Google Meet tab")
     .argument("[url]", "Optional Meet URL to match")
+    .option("--transport <transport>", "Transport to inspect: chrome or chrome-node")
     .option("--json", "Print JSON output", false)
-    .action(async (url: string | undefined, options: JsonOptions) => {
+    .action(async (url: string | undefined, options: RecoverTabOptions) => {
       const rt = await params.ensureRuntime();
-      const result = await rt.recoverCurrentTab({ url });
+      const result = await rt.recoverCurrentTab({ url, transport: options.transport });
       if (options.json) {
         writeStdoutJson(result);
         return;
@@ -1188,10 +2272,12 @@ export function registerGoogleMeetCli(params: {
   root
     .command("setup")
     .description("Show Google Meet transport setup status")
+    .option("--transport <transport>", "Transport to check: chrome, chrome-node, or twilio")
+    .option("--mode <mode>", "Mode to check: agent, bidi, or transcribe")
     .option("--json", "Print JSON output", false)
     .action(async (options: SetupOptions) => {
       const rt = await params.ensureRuntime();
-      const status = await rt.setupStatus();
+      const status = await rt.setupStatus({ transport: options.transport, mode: options.mode });
       if (options.json) {
         writeStdoutJson(status);
         return;
@@ -1203,6 +2289,19 @@ export function registerGoogleMeetCli(params: {
     .command("leave")
     .argument("<session-id>", "Meet session ID")
     .action(async (sessionId: string) => {
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.leave",
+        payload: { sessionId },
+      });
+      if (delegated.ok) {
+        const result = delegated.payload as { found?: boolean };
+        if (!result.found) {
+          throw new Error("session not found");
+        }
+        writeStdoutLine("left %s", sessionId);
+        return;
+      }
       const rt = await params.ensureRuntime();
       const result = await rt.leave(sessionId);
       if (!result.found) {
@@ -1216,13 +2315,35 @@ export function registerGoogleMeetCli(params: {
     .argument("<session-id>", "Meet session ID")
     .argument("[message]", "Realtime instructions to speak now")
     .action(async (sessionId: string, message?: string) => {
+      const delegated = await callGoogleMeetGateway({
+        callGateway,
+        method: "googlemeet.speak",
+        payload: { sessionId, message },
+      });
+      if (delegated.ok) {
+        const result = delegated.payload as Awaited<ReturnType<GoogleMeetRuntime["speak"]>>;
+        if (!result.found) {
+          throw new Error("session not found");
+        }
+        if (!result.spoken) {
+          throw new Error(
+            result.session?.chrome?.health?.speechBlockedMessage ??
+              "session has no active realtime audio bridge",
+          );
+        }
+        writeStdoutLine("speaking on %s", sessionId);
+        return;
+      }
       const rt = await params.ensureRuntime();
-      const result = rt.speak(sessionId, message);
+      const result = await rt.speak(sessionId, message);
       if (!result.found) {
         throw new Error("session not found");
       }
       if (!result.spoken) {
-        throw new Error("session has no active realtime audio bridge");
+        throw new Error(
+          result.session?.chrome?.health?.speechBlockedMessage ??
+            "session has no active realtime audio bridge",
+        );
       }
       writeStdoutLine("speaking on %s", sessionId);
     });

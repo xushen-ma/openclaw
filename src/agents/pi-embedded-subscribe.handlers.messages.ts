@@ -1,5 +1,5 @@
-import type { AgentEvent, AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { AgentEvent, AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
 import {
   parseReplyDirectives,
@@ -16,6 +16,7 @@ import {
   type AssistantPhase,
 } from "../shared/chat-message-content.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
+import { uniqueStrings } from "../shared/string-normalization.js";
 import {
   isMessagingToolDuplicateNormalized,
   normalizeTextForComparison,
@@ -27,13 +28,13 @@ import type {
 } from "./pi-embedded-subscribe.handlers.types.js";
 import { isPromiseLike } from "./pi-embedded-subscribe.promise.js";
 import { appendRawStream } from "./pi-embedded-subscribe.raw-stream.js";
+import { warnIfAssistantEmittedToolText } from "./pi-embedded-subscribe.tool-text-diagnostics.js";
 import {
   extractAssistantText,
   extractAssistantThinking,
   extractAssistantVisibleText,
   extractThinkingFromTaggedStream,
   extractThinkingFromTaggedText,
-  formatReasoningMessage,
   promoteThinkingTagsToBlocks,
 } from "./pi-embedded-utils.js";
 
@@ -48,6 +49,55 @@ function isTranscriptOnlyOpenClawAssistantMessage(message: AgentMessage | undefi
   const provider = normalizeOptionalString(message.provider) ?? "";
   const model = normalizeOptionalString(message.model) ?? "";
   return provider === "openclaw" && (model === "delivery-mirror" || model === "gateway-injected");
+}
+
+function isOpenAiResponsesAssistantMessage(message: AgentMessage | undefined): boolean {
+  if (!message || message.role !== "assistant") {
+    return false;
+  }
+  const api = normalizeOptionalString((message as { api?: unknown }).api) ?? "";
+  return api === "openai-responses" || api === "azure-openai-responses";
+}
+
+function isOpenAiCompletionsAssistantMessage(message: AgentMessage | undefined): boolean {
+  if (!message || message.role !== "assistant") {
+    return false;
+  }
+  const api = normalizeOptionalString((message as { api?: unknown }).api) ?? "";
+  return api === "openai-completions" || api === "openclaw-openai-completions-transport";
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function extractStandaloneMessageToolText(
+  text: string,
+  params: { allowCurrentSourceReply?: boolean; allowRoutedReply?: boolean } = {},
+): string | undefined {
+  try {
+    const record = asRecord(JSON.parse(text.trim()) as unknown);
+    const args = asRecord(record?.arguments);
+    const hasRoute = Boolean(
+      normalizeOptionalString(args?.target) ||
+      normalizeOptionalString(args?.to) ||
+      normalizeOptionalString(args?.channel) ||
+      normalizeOptionalString(args?.accountId) ||
+      Array.isArray(args?.targets),
+    );
+    if (
+      normalizeOptionalString(record?.name) !== "message" ||
+      normalizeOptionalString(args?.action) !== "send" ||
+      (hasRoute ? !params.allowRoutedReply : !params.allowCurrentSourceReply)
+    ) {
+      return undefined;
+    }
+    return normalizeOptionalString(args?.message);
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveAssistantStreamItemId(params: {
@@ -177,6 +227,10 @@ function clearPendingToolMedia(
   state.pendingToolTrustedLocalMedia = false;
 }
 
+function hasReplyMedia(payload: BlockReplyPayload): boolean {
+  return (payload.mediaUrls ?? []).some((url) => url.trim().length > 0);
+}
+
 export function consumePendingToolMediaIntoReply(
   state: Pick<
     EmbeddedPiSubscribeState,
@@ -192,6 +246,12 @@ export function consumePendingToolMediaIntoReply(
     !state.pendingToolAudioAsVoice &&
     !state.pendingToolTrustedLocalMedia
   ) {
+    return payload;
+  }
+  if (hasReplyMedia(payload)) {
+    // Pending tool media is a fallback delivery queue; explicit final media is
+    // the assistant's user-visible selection, while tool output remains in the transcript.
+    clearPendingToolMedia(state);
     return payload;
   }
   const mergedMediaUrls = Array.from(
@@ -213,6 +273,20 @@ export function consumePendingToolMediaReply(
     "pendingToolMediaUrls" | "pendingToolAudioAsVoice" | "pendingToolTrustedLocalMedia"
   >,
 ): BlockReplyPayload | null {
+  const payload = readPendingToolMediaReply(state);
+  if (!payload) {
+    return null;
+  }
+  clearPendingToolMedia(state);
+  return payload;
+}
+
+export function readPendingToolMediaReply(
+  state: Pick<
+    EmbeddedPiSubscribeState,
+    "pendingToolMediaUrls" | "pendingToolAudioAsVoice" | "pendingToolTrustedLocalMedia"
+  >,
+): BlockReplyPayload | null {
   if (
     state.pendingToolMediaUrls.length === 0 &&
     !state.pendingToolAudioAsVoice &&
@@ -220,15 +294,13 @@ export function consumePendingToolMediaReply(
   ) {
     return null;
   }
-  const payload: BlockReplyPayload = {
+  return {
     mediaUrls: state.pendingToolMediaUrls.length
-      ? Array.from(new Set(state.pendingToolMediaUrls))
+      ? uniqueStrings(state.pendingToolMediaUrls)
       : undefined,
     audioAsVoice: state.pendingToolAudioAsVoice || undefined,
     trustedLocalMedia: state.pendingToolTrustedLocalMedia || undefined,
   };
-  clearPendingToolMedia(state);
-  return payload;
 }
 
 function hasReplyDirectiveMetadata(parsed: ReplyDirectiveParseResult | null | undefined): boolean {
@@ -258,7 +330,7 @@ function mergeReplyDirectiveResults(
   if (!second) {
     return first;
   }
-  const mediaUrls = Array.from(new Set([...(first.mediaUrls ?? []), ...(second.mediaUrls ?? [])]));
+  const mediaUrls = uniqueStrings([...(first.mediaUrls ?? []), ...(second.mediaUrls ?? [])]);
   return {
     text: `${first.text ?? ""}${second.text ?? ""}`,
     mediaUrls: mediaUrls.length ? mediaUrls : undefined,
@@ -459,7 +531,12 @@ export function handleMessageUpdate(
     contentIndex: assistantRecord?.contentIndex,
     message: partialAssistant,
   });
-  if (deliveryPhase && streamItemId) {
+  const isPhasePendingOpenAiResponsesTextItem =
+    evtType !== "text_end" &&
+    !deliveryPhase &&
+    Boolean(streamItemId) &&
+    isOpenAiResponsesAssistantMessage(partialAssistant);
+  if ((deliveryPhase || isPhasePendingOpenAiResponsesTextItem) && streamItemId) {
     const previousStreamItemId = ctx.state.lastAssistantStreamItemId;
     if (previousStreamItemId && previousStreamItemId !== streamItemId) {
       void ctx.flushBlockReplyBuffer({ assistantMessageIndex: ctx.state.assistantMessageIndex });
@@ -469,6 +546,9 @@ export function handleMessageUpdate(
     ctx.state.lastAssistantStreamItemId = streamItemId;
   }
   if (deliveryPhase === "commentary") {
+    return;
+  }
+  if (isPhasePendingOpenAiResponsesTextItem) {
     return;
   }
   const phaseAwareVisibleText = coerceChatContentText(
@@ -492,15 +572,22 @@ export function handleMessageUpdate(
     (deliveryPhase === "final_answer"
       ? ""
       : ctx
-          .stripBlockTags(ctx.state.deltaBuffer, {
-            thinking: false,
-            final: false,
-            inlineCode: createInlineCodeState(),
-          })
+          .stripBlockTags(
+            ctx.state.deltaBuffer,
+            {
+              thinking: false,
+              final: false,
+              inlineCode: createInlineCodeState(),
+            },
+            { final: evtType === "text_end" },
+          )
           .trim());
   if (next) {
     const wasThinking = ctx.state.partialBlockState.thinking;
-    const visibleDelta = chunk ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState) : "";
+    const visibleDelta =
+      chunk || evtType === "text_end"
+        ? ctx.stripBlockTags(chunk, ctx.state.partialBlockState, { final: evtType === "text_end" })
+        : "";
     if (!wasThinking && ctx.state.partialBlockState.thinking) {
       openReasoningStream(ctx);
     }
@@ -562,7 +649,7 @@ export function handleMessageUpdate(
         delta: deltaText,
         replace,
         mediaUrls,
-        phase: assistantPhase,
+        phase: deliveryPhase ?? assistantPhase,
       });
       emitAgentEvent({
         runId: ctx.params.runId,
@@ -598,7 +685,7 @@ export function handleMessageUpdate(
   ) {
     const assistantMessageIndex = ctx.state.assistantMessageIndex;
     void Promise.resolve()
-      .then(() => ctx.flushBlockReplyBuffer({ assistantMessageIndex }))
+      .then(() => ctx.flushBlockReplyBuffer({ assistantMessageIndex, final: true }))
       .catch((err) => {
         ctx.log.debug(`text_end block reply flush failed: ${String(err)}`);
       });
@@ -636,16 +723,24 @@ export function handleMessageEnd(
     rawText,
     rawThinking: extractAssistantThinking(assistantMessage),
   });
+  warnIfAssistantEmittedToolText(ctx, assistantMessage);
+  const visibleText =
+    extractStandaloneMessageToolText(rawVisibleText, {
+      allowRoutedReply: isOpenAiCompletionsAssistantMessage(assistantMessage),
+      allowCurrentSourceReply:
+        ctx.params.sourceReplyDeliveryMode === "message_tool_only" &&
+        ctx.builtinToolNames?.has("message") === true,
+    }) ?? rawVisibleText;
 
   const text = resolveSilentReplyFallbackText({
-    text: ctx.stripBlockTags(rawVisibleText, { thinking: false, final: false }),
+    text: ctx.stripBlockTags(visibleText, { thinking: false, final: false }, { final: true }),
     messagingToolSentTexts: ctx.state.messagingToolSentTexts,
   });
   const rawThinking =
     ctx.state.includeReasoning || ctx.state.streamReasoning
       ? extractAssistantThinking(assistantMessage) || extractThinkingFromTaggedText(rawText)
       : "";
-  const formattedReasoning = rawThinking ? formatReasoningMessage(rawThinking) : "";
+  const trimmedReasoning = rawThinking ? rawThinking.trim() : "";
   const trimmedText = text.trim();
   const parsedText = trimmedText
     ? parseReplyDirectives(splitTrailingDirective(trimmedText, { final: true }).text)
@@ -660,6 +755,8 @@ export function handleMessageEnd(
     ctx.state.blockState.thinking = false;
     ctx.state.blockState.final = false;
     ctx.state.blockState.inlineCode = createInlineCodeState();
+    ctx.state.blockState.pendingTagFragment = undefined;
+    ctx.state.partialBlockState.pendingTagFragment = undefined;
     ctx.state.lastStreamedAssistant = undefined;
     ctx.state.lastStreamedAssistantCleaned = undefined;
     ctx.state.reasoningStreamOpen = false;
@@ -721,18 +818,18 @@ export function handleMessageEnd(
     !ctx.params.silentExpected &&
     !suppressDeterministicApprovalOutput &&
     ctx.state.includeReasoning &&
-    formattedReasoning &&
+    trimmedReasoning &&
     onBlockReply &&
-    formattedReasoning !== ctx.state.lastReasoningSent,
+    trimmedReasoning !== ctx.state.lastReasoningSent,
   );
   const shouldEmitReasoningBeforeAnswer =
     shouldEmitReasoning && ctx.state.blockReplyBreak === "message_end" && !addedDuringMessage;
   const maybeEmitReasoning = () => {
-    if (!shouldEmitReasoning || !formattedReasoning) {
+    if (!shouldEmitReasoning || !trimmedReasoning) {
       return;
     }
-    ctx.state.lastReasoningSent = formattedReasoning;
-    ctx.emitBlockReply({ text: formattedReasoning, isReasoning: true });
+    ctx.state.lastReasoningSent = trimmedReasoning;
+    ctx.emitBlockReply({ text: trimmedReasoning, isReasoning: true });
   };
 
   if (shouldEmitReasoningBeforeAnswer) {
@@ -780,8 +877,15 @@ export function handleMessageEnd(
       text !== ctx.state.lastBlockReplyText)
   ) {
     if (hasBufferedBlockReply && ctx.blockChunker?.hasBuffered()) {
-      ctx.blockChunker.drain({ force: true, emit: ctx.emitBlockChunk });
-      ctx.blockChunker.reset();
+      const flushBlockReplyBufferResult = ctx.flushBlockReplyBuffer({
+        assistantMessageIndex: ctx.state.assistantMessageIndex,
+        final: true,
+      });
+      if (isPromiseLike<void>(flushBlockReplyBufferResult)) {
+        void flushBlockReplyBufferResult.catch((err) => {
+          ctx.log.debug(`message_end block reply flush failed: ${String(err)}`);
+        });
+      }
       // Final-flush the streaming directive accumulator so any partial
       // directive tail held back by splitTrailingDirective (for example a
       // trailing `MEDIA:<path>` that arrived without a closing newline)
@@ -816,6 +920,8 @@ export function handleMessageEnd(
           );
         } else {
           ctx.state.lastBlockReplyText = text;
+          ctx.state.lastDeliveredBlockReplyText = text;
+          ctx.state.toolExecutionSinceLastBlockReply = false;
           emitSplitResultAsBlockReply(ctx.consumeReplyDirectives(text, { final: true }));
         }
       }

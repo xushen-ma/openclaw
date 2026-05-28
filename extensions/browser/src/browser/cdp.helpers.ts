@@ -7,13 +7,46 @@ import {
   resolvePinnedHostnameWithPolicy,
 } from "../infra/net/ssrf.js";
 import { redactSensitiveText } from "../logging/redact.js";
-import { getDirectAgentForCdp, withNoProxyForCdpUrl } from "./cdp-proxy-bypass.js";
+import {
+  getDirectAgentForCdp,
+  withManagedProxyForCdpUrl,
+  withNoProxyForCdpUrl,
+} from "./cdp-proxy-bypass.js";
 import { CDP_HTTP_REQUEST_TIMEOUT_MS, CDP_WS_HANDSHAKE_TIMEOUT_MS } from "./cdp-timeouts.js";
 import { BrowserCdpEndpointBlockedError } from "./errors.js";
 import { resolveBrowserRateLimitMessage } from "./rate-limit-message.js";
 import { withAllowedHostname } from "./ssrf-policy-helpers.js";
 
 export { isLoopbackHost };
+
+/**
+ * Detects whether a raw URL string contains an explicitly written port.
+ *
+ * WHATWG `URL` normalizes default ports (e.g. `:80` for http, `:443` for
+ * https) to an empty `.port` string, making it impossible to distinguish
+ * "user wrote :80" from "user omitted the port". This helper inspects the
+ * raw string to preserve that intent.
+ *
+ * Handles IPv6 bracket notation and userinfo (user:pass@host) correctly.
+ */
+function hasRawExplicitPort(raw: string): boolean {
+  // Strip scheme (e.g. "http://") and take only the authority portion
+  // (everything before the first /, ?, or #).
+  const authority = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").split(/[/?#]/, 1)[0] ?? "";
+
+  // Strip userinfo (user:pass@); the colon there is not a port separator.
+  const hostPort = authority.includes("@")
+    ? authority.slice(authority.lastIndexOf("@") + 1)
+    : authority;
+
+  // IPv6: [::1]:9222 has a port after the closing bracket.
+  if (hostPort.startsWith("[")) {
+    return /^\[[^\]]+\]:\d+$/.test(hostPort);
+  }
+
+  // IPv4 / hostname: host:port
+  return /:\d+$/.test(hostPort);
+}
 
 export function parseBrowserHttpUrl(raw: string, label: string) {
   const trimmed = raw.trim();
@@ -40,10 +73,41 @@ export function parseBrowserHttpUrl(raw: string, label: string) {
     throw new Error(`${label} has invalid port: ${parsed.port}`);
   }
 
+  const normalized = parsed.toString().replace(/\/$/, "");
+  const hasExplicitPort = hasRawExplicitPort(trimmed);
+
+  // When the user explicitly wrote a default port (e.g. :80 for http),
+  // WHATWG normalization drops it from the URL string. Rebuild a
+  // port-preserving normalized form so callers don't need raw-string hacks.
+  // Note: the URL .port setter silently discards protocol-default ports,
+  // so we must inject the port via string surgery on the normalized form.
+  let normalizedWithPort: string;
+  if (hasExplicitPort && !parsed.port) {
+    const proto = parsed.protocol + "//";
+    const rest = normalized.slice(proto.length);
+    // Skip userinfo (user:pass@) if present
+    const atIdx = rest.indexOf("@");
+    const hostStart = atIdx >= 0 ? atIdx + 1 : 0;
+    const hostPart = rest.slice(hostStart);
+    // Find the end of the host: IPv6 brackets, a path slash, or a port colon.
+    const hostLen = hostPart.startsWith("[")
+      ? hostPart.indexOf("]") + 1
+      : (() => {
+          const idx = hostPart.search(/[:/]/);
+          return idx < 0 ? hostPart.length : idx;
+        })();
+    const insertAt = hostStart + hostLen;
+    normalizedWithPort = proto + rest.slice(0, insertAt) + ":" + port + rest.slice(insertAt);
+  } else {
+    normalizedWithPort = normalized;
+  }
+
   return {
     parsed,
     port,
-    normalized: parsed.toString().replace(/\/$/, ""),
+    hasExplicitPort,
+    normalized,
+    normalizedWithPort,
   };
 }
 
@@ -185,6 +249,20 @@ export function getHeadersWithAuth(url: string, headers: Record<string, string> 
     // ignore
   }
   return mergedHeaders;
+}
+
+function stripUrlCredentials(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (!parsed.username && !parsed.password) {
+      return url;
+    }
+    parsed.username = "";
+    parsed.password = "";
+    return parsed.toString();
+  } catch {
+    return url;
+  }
 }
 
 export function appendCdpPath(cdpUrl: string, path: string): string {
@@ -350,21 +428,24 @@ export async function fetchCdpChecked(
   };
   try {
     const headers = getHeadersWithAuth(url, (init?.headers as Record<string, string>) || {});
-    const res = await withNoProxyForCdpUrl(url, async () => {
-      const parsedUrl = new URL(url);
-      const policy = isLoopbackHost(parsedUrl.hostname)
-        ? withAllowedHostname(ssrfPolicy, parsedUrl.hostname)
-        : (ssrfPolicy ?? { allowPrivateNetwork: true });
-      const guarded = await fetchWithSsrFGuard({
-        url,
-        init: { ...init, headers },
-        signal: ctrl.signal,
-        policy,
-        auditContext: "browser-cdp",
-      });
-      guardedRelease = guarded.release;
-      return guarded.response;
-    });
+    const fetchUrl = stripUrlCredentials(url);
+    const res = await withManagedProxyForCdpUrl(fetchUrl, () =>
+      withNoProxyForCdpUrl(url, async () => {
+        const parsedUrl = new URL(fetchUrl);
+        const policy = isLoopbackHost(parsedUrl.hostname)
+          ? withAllowedHostname(ssrfPolicy, parsedUrl.hostname)
+          : (ssrfPolicy ?? { allowPrivateNetwork: true });
+        const guarded = await fetchWithSsrFGuard({
+          url: fetchUrl,
+          init: { ...init, headers },
+          signal: ctrl.signal,
+          policy,
+          auditContext: "browser-cdp",
+        });
+        guardedRelease = guarded.release;
+        return guarded.response;
+      }),
+    );
     if (!res.ok) {
       if (res.status === 429) {
         // Do not reflect upstream response text into the error surface (log/agent injection risk)
@@ -402,53 +483,137 @@ export function openCdpWebSocket(
       ? Math.max(1, Math.floor(opts.handshakeTimeoutMs))
       : CDP_WS_HANDSHAKE_TIMEOUT_MS;
   const agent = getDirectAgentForCdp(wsUrl);
-  return new WebSocket(wsUrl, {
-    handshakeTimeout: handshakeTimeoutMs,
-    ...(Object.keys(headers).length ? { headers } : {}),
-    ...(agent ? { agent } : {}),
-  });
+  const bypassUrl = stripUrlCredentials(wsUrl);
+  return withManagedProxyForCdpUrl(
+    bypassUrl,
+    () =>
+      new WebSocket(wsUrl, {
+        handshakeTimeout: handshakeTimeoutMs,
+        ...(Object.keys(headers).length ? { headers } : {}),
+        ...(agent ? { agent } : {}),
+      }),
+  );
+}
+
+type CdpSocketOptions = {
+  headers?: Record<string, string>;
+  handshakeTimeoutMs?: number;
+  commandTimeoutMs?: number;
+  handshakeRetries?: number;
+  handshakeRetryDelayMs?: number;
+  handshakeMaxRetryDelayMs?: number;
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeRetryCount(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function computeHandshakeRetryDelayMs(attempt: number, opts?: CdpSocketOptions): number {
+  const baseDelayMs =
+    typeof opts?.handshakeRetryDelayMs === "number" && Number.isFinite(opts.handshakeRetryDelayMs)
+      ? Math.max(1, Math.floor(opts.handshakeRetryDelayMs))
+      : 200;
+  const maxDelayMs =
+    typeof opts?.handshakeMaxRetryDelayMs === "number" &&
+    Number.isFinite(opts.handshakeMaxRetryDelayMs)
+      ? Math.max(baseDelayMs, Math.floor(opts.handshakeMaxRetryDelayMs))
+      : 3000;
+  const raw = Math.min(maxDelayMs, baseDelayMs * 2 ** Math.max(0, attempt - 1));
+  const jitterScale = 0.8 + Math.random() * 0.4;
+  return Math.max(1, Math.floor(raw * jitterScale));
+}
+
+function shouldRetryCdpHandshakeError(err: unknown): boolean {
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const msg = err.message.toLowerCase();
+  if (!msg) {
+    return false;
+  }
+  if (msg.includes("rate limit")) {
+    return false;
+  }
+  const statusMatch = msg.match(/(?:unexpected server response|response):\s*(\d{3})/);
+  if (statusMatch?.[1]) {
+    return Number(statusMatch[1]) >= 500;
+  }
+  return (
+    msg.includes("cdp socket closed") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("econnaborted") ||
+    msg.includes("ehostunreach") ||
+    msg.includes("enetunreach") ||
+    msg.includes("etimedout") ||
+    msg.includes("socket hang up") ||
+    msg.includes("websocket error") ||
+    msg.includes("closed before")
+  );
 }
 
 export async function withCdpSocket<T>(
   wsUrl: string,
   fn: (send: CdpSendFn) => Promise<T>,
-  opts?: {
-    headers?: Record<string, string>;
-    handshakeTimeoutMs?: number;
-    commandTimeoutMs?: number;
-  },
+  opts?: CdpSocketOptions,
 ): Promise<T> {
-  const ws = openCdpWebSocket(wsUrl, opts);
-  const { send, closeWithError } = createCdpSender(ws, opts);
+  const maxHandshakeRetries = normalizeRetryCount(opts?.handshakeRetries, 2);
+  let lastHandshakeError: unknown;
+  for (let attempt = 0; attempt <= maxHandshakeRetries; attempt += 1) {
+    const ws = openCdpWebSocket(wsUrl, opts);
+    const { send, closeWithError } = createCdpSender(ws, opts);
 
-  const openPromise = new Promise<void>((resolve, reject) => {
-    ws.once("open", () => resolve());
-    ws.once("error", (err) => reject(err));
-    ws.once("close", () => reject(new Error("CDP socket closed")));
-  });
+    const openPromise = new Promise<void>((resolve, reject) => {
+      ws.once("open", () => resolve());
+      ws.once("error", (err) => reject(err));
+      ws.once("close", () => reject(new Error("CDP socket closed")));
+    });
 
-  try {
-    await openPromise;
-  } catch (err) {
-    // openPromise is only rejected via `ws.once('error', err => reject(err))`
-    // or the close event's `new Error(...)`; the former always carries an
-    // Error from Node's `ws` library, the latter is already an Error. The
-    // non-Error wrap is defensive and structurally unreachable.
-    /* c8 ignore next */
-    closeWithError(err instanceof Error ? err : new Error(String(err)));
-    throw err;
-  }
-
-  try {
-    return await fn(send);
-  } catch (err) {
-    closeWithError(err instanceof Error ? err : new Error(String(err)));
-    throw err;
-  } finally {
     try {
-      ws.close();
-    } catch {
-      // ignore
+      await openPromise;
+    } catch (err) {
+      lastHandshakeError = err;
+      // openPromise is only rejected via `ws.once('error', err => reject(err))`
+      // or the close event's `new Error(...)`; the former always carries an
+      // Error from Node's `ws` library, the latter is already an Error. The
+      // non-Error wrap is defensive and structurally unreachable.
+      /* c8 ignore next */
+      closeWithError(err instanceof Error ? err : new Error(String(err)));
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+      if (attempt >= maxHandshakeRetries || !shouldRetryCdpHandshakeError(err)) {
+        throw err;
+      }
+      await sleep(computeHandshakeRetryDelayMs(attempt + 1, opts));
+      continue;
+    }
+
+    try {
+      return await fn(send);
+    } catch (err) {
+      closeWithError(err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    } finally {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
     }
   }
+
+  if (lastHandshakeError instanceof Error) {
+    throw lastHandshakeError;
+  }
+  throw new Error("CDP socket failed to open");
 }

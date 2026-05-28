@@ -1,7 +1,11 @@
 import type { SlackEventMiddlewareArgs } from "@slack/bolt";
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
-import { enqueueSystemEvent } from "openclaw/plugin-sdk/infra-runtime";
-import { danger } from "openclaw/plugin-sdk/runtime-env";
+import { danger, logVerbose, shouldLogVerbose } from "openclaw/plugin-sdk/runtime-env";
+import {
+  asOptionalRecord as asRecord,
+  normalizeOptionalString as asString,
+} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { enqueueSystemEvent } from "openclaw/plugin-sdk/system-event-runtime";
 import type { SlackAppMentionEvent, SlackMessageEvent } from "../../types.js";
 import { normalizeSlackChannelType } from "../channel-type.js";
 import type { SlackMonitorContext } from "../context.js";
@@ -18,19 +22,10 @@ type SlackAssistantMessageRecord = {
   thread_ts?: unknown;
   files?: unknown;
   attachments?: unknown;
+  assistant_thread?: unknown;
   metadata?: unknown;
   blocks?: unknown;
 };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 function isSlackUserId(value: string): boolean {
   return /^[UW][A-Z0-9]+$/.test(value);
@@ -59,31 +54,12 @@ function collectMetadataUserCandidates(
   }
 }
 
-function collectBlockUserIds(candidates: Set<string>, value: unknown, botUserId: string): void {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      collectBlockUserIds(candidates, entry, botUserId);
-    }
-    return;
-  }
-  const record = asRecord(value);
-  if (!record) {
-    return;
-  }
-  addUserCandidate(candidates, record.user_id, botUserId);
-  for (const key of ["elements", "accessory", "fields"]) {
-    collectBlockUserIds(candidates, record[key], botUserId);
-  }
-}
-
 function resolveAssistantMessageChangedSender(params: {
-  event: SlackMessageChangedEvent;
   message?: SlackAssistantMessageRecord;
   botUserId: string;
 }): string | undefined {
   const candidates = new Set<string>();
   collectMetadataUserCandidates(candidates, params.message?.metadata, params.botUserId);
-  collectBlockUserIds(candidates, params.message?.blocks, params.botUserId);
   return candidates.size === 1 ? [...candidates][0] : undefined;
 }
 
@@ -122,11 +98,15 @@ function resolveAssistantMessageChangedInbound(params: {
     return undefined;
   }
   const senderId = resolveAssistantMessageChangedSender({
-    event: changed,
     message,
     botUserId: params.ctx.botUserId,
   });
   if (!senderId) {
+    if (shouldLogVerbose()) {
+      logVerbose(
+        `slack: assistant_app_thread message_changed in DM channel=${changed.channel} dropped: no sender resolved from metadata`,
+      );
+    }
     return undefined;
   }
   return {
@@ -138,6 +118,11 @@ function resolveAssistantMessageChangedInbound(params: {
     ts: asString(message.ts) ?? asString(changed.event_ts),
     thread_ts: asString(message.thread_ts),
     event_ts: changed.event_ts,
+    assistant_thread:
+      asRecord(message.assistant_thread) ??
+      asRecord(
+        (changed as SlackMessageChangedEvent & { assistant_thread?: unknown }).assistant_thread,
+      ),
     files: Array.isArray(message.files) ? (message.files as SlackMessageEvent["files"]) : undefined,
     attachments: Array.isArray(message.attachments)
       ? (message.attachments as SlackMessageEvent["attachments"])

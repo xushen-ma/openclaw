@@ -73,7 +73,7 @@ async function runQaCli(
     "gateway" | "repoRoot" | "primaryModel" | "alternateModel" | "providerMode"
   >,
   args: string[],
-  opts?: { timeoutMs?: number; json?: boolean },
+  opts?: { timeoutMs?: number; json?: boolean; env?: NodeJS.ProcessEnv },
 ) {
   const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
@@ -82,7 +82,10 @@ async function runQaCli(
   await new Promise<void>((resolve, reject) => {
     const child = spawn(nodeExecPath, [distEntryPath, ...args], {
       cwd: env.gateway.tempRoot,
-      env: env.gateway.runtimeEnv,
+      env: {
+        ...env.gateway.runtimeEnv,
+        ...opts?.env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     const timeout = setTimeout(() => {
@@ -253,7 +256,7 @@ async function forceMemoryIndex(params: {
   await runQaCli(params.env, ["memory", "index", "--agent", "qa", "--force"], {
     timeoutMs: liveTurnTimeoutMs(params.env, 60_000),
   });
-  return await waitForMemorySearchMatch({
+  const result = await waitForMemorySearchMatch({
     expectedNeedle: params.expectedNeedle,
     timeoutMs: liveTurnTimeoutMs(params.env, 20_000),
     search: async () =>
@@ -266,6 +269,8 @@ async function forceMemoryIndex(params: {
         },
       )) as QaMemorySearchResult,
   });
+  await params.env.gateway.restartAfterStateMutation?.(async () => {});
+  return result;
 }
 
 async function runAgentPrompt(

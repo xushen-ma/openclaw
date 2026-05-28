@@ -1,4 +1,11 @@
 export type BrowserTransport = "cdp" | "chrome-mcp";
+type BrowserHeadlessSource =
+  | "request"
+  | "env"
+  | "profile"
+  | "config"
+  | "linux-display-fallback"
+  | "default";
 
 export type BrowserStatus = {
   enabled: boolean;
@@ -8,6 +15,13 @@ export type BrowserStatus = {
   running: boolean;
   cdpReady?: boolean;
   cdpHttp?: boolean;
+  /**
+   * For Chrome MCP existing-session profiles, true only if a page-level tool
+   * round-trip (`list_pages`) completes; for managed CDP profiles, mirrors
+   * `cdpReady`. Distinguishes "transport handshake passed" from "page tools
+   * are actually usable".
+   */
+  pageReady?: boolean;
   pid: number | null;
   cdpPort: number | null;
   cdpUrl?: string | null;
@@ -18,6 +32,7 @@ export type BrowserStatus = {
   userDataDir: string | null;
   color: string;
   headless: boolean;
+  headlessSource?: BrowserHeadlessSource;
   noSandbox?: boolean;
   executablePath?: string | null;
   attachOnly: boolean;
