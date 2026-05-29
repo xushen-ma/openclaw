@@ -1730,7 +1730,7 @@ importers:
     dependencies:
       '@google/genai':
         specifier: ^1.50.1
-        version: 1.50.1(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
+        version: 1.52.0(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))
     devDependencies:
       '@openclaw/plugin-sdk':
         specifier: workspace:*
