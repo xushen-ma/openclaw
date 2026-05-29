@@ -141,6 +141,7 @@ describe("resolveBootstrapFilesForRun", () => {
       "USER.md",
       "HEARTBEAT.md",
       "BOOTSTRAP.md",
+      "TEAM.md",
     ]);
     expect(warnings).toHaveLength(3);
     expect(warnings[0]).toContain('missing or invalid "path" field');
@@ -305,7 +306,7 @@ describe("resolveBootstrapFilesForRun", () => {
       sessionKey: "agent:main:subagent:worker",
     });
 
-    expect(files.map((file) => file.name)).toStrictEqual(["AGENTS.md", "TOOLS.md"]);
+    expect(files.map((file) => file.name)).toStrictEqual(["AGENTS.md", "TOOLS.md", "TEAM.md"]);
   });
 
   it("keeps cron sessions on their existing minimal bootstrap files", async () => {
@@ -336,6 +337,7 @@ describe("resolveBootstrapFilesForRun", () => {
       "TOOLS.md",
       "IDENTITY.md",
       "USER.md",
+      "TEAM.md",
     ]);
   });
 });

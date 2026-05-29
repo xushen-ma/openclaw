@@ -123,8 +123,8 @@ function resolvePolicyAgentExec(params: {
   )?.tools?.exec;
 }
 
-function listAgentEntries(config: OpenClawConfig): AgentEntry[] {
-  return (config.agents?.list ?? []).filter(
+function listAgentEntries(config?: OpenClawConfig): AgentEntry[] {
+  return (config?.agents?.list ?? []).filter(
     (entry): entry is AgentEntry => entry !== null && typeof entry === "object",
   );
 }

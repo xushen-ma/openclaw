@@ -252,13 +252,12 @@ function resolveDefaultAgentWorkspaceDir(env: NodeJS.ProcessEnv = process.env): 
   return path.join(home, ".openclaw", "workspace");
 }
 
-function listAgentEntries(cfg: OpenClawConfig): AgentConfig[] {
-  return Array.isArray(cfg.agents?.list)
-    ? cfg.agents.list.filter((entry): entry is AgentConfig => Boolean(entry))
-    : [];
+function listAgentEntries(cfg: OpenClawConfig | undefined): AgentConfig[] {
+  const list = cfg?.agents?.list;
+  return Array.isArray(list) ? list.filter((entry): entry is AgentConfig => Boolean(entry)) : [];
 }
 
-function resolveDefaultAgentId(cfg: OpenClawConfig): string {
+function resolveDefaultAgentId(cfg: OpenClawConfig | undefined): string {
   const agents = listAgentEntries(cfg);
   if (agents.length === 0) {
     return DEFAULT_AGENT_ID;

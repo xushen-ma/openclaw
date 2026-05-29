@@ -3,6 +3,9 @@
   "kind": "tool",
   "name": "Quick Memory & Session Search (OV)",
   "description": "Fast semantic search for workspace knowledge and session history via OpenViking.",
+  "contracts": {
+    "tools": ["quick_memory_search", "quick_session_search"]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

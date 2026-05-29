@@ -58,8 +58,8 @@ function stripNullBytes(s: string): string {
   return s.replaceAll("\0", "");
 }
 
-export function listAgentEntries(cfg: OpenClawConfig): AgentEntry[] {
-  const list = cfg.agents?.list;
+export function listAgentEntries(cfg: OpenClawConfig | undefined): AgentEntry[] {
+  const list = cfg?.agents?.list;
   if (!Array.isArray(list)) {
     return [];
   }

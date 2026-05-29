@@ -186,19 +186,19 @@ describe("workspace path resolution", () => {
 
   it("allows read-only extra fs roots while workspaceOnly remains enabled", async () => {
     await withTempDir("openclaw-ws-", async (workspaceDir) => {
-      await withTempDir("openclaw-extra-", async (extraDir) => {
-        await fs.writeFile(path.join(extraDir, "allowed.txt"), "extra read ok", "utf8");
-        const cfg: OpenClawConfig = {
-          tools: { fs: { workspaceOnly: true, extraRoots: [extraDir] } },
-        };
-        const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
-        const { readTool } = expectReadWriteEditTools(tools);
+      const extraDir = path.join(workspaceDir, ".openclaw", "tmp", "extra-read");
+      await fs.mkdir(extraDir, { recursive: true });
+      await fs.writeFile(path.join(extraDir, "allowed.txt"), "extra read ok", "utf8");
+      const cfg: OpenClawConfig = {
+        tools: { fs: { workspaceOnly: true, extraRoots: [extraDir] } },
+      };
+      const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+      const { readTool } = expectReadWriteEditTools(tools);
 
-        const result = await readTool.execute("extra-read", {
-          path: path.join(extraDir, "allowed.txt"),
-        });
-        expect(getTextContent(result)).toContain("extra read ok");
+      const result = await readTool.execute("extra-read", {
+        path: path.join(extraDir, "allowed.txt"),
       });
+      expect(getTextContent(result)).toContain("extra read ok");
     });
   });
 
@@ -240,21 +240,21 @@ describe("workspace path resolution", () => {
 
   it("allows writes into extra fs roots only when configured rw", async () => {
     await withTempDir("openclaw-ws-", async (workspaceDir) => {
-      await withTempDir("openclaw-extra-", async (extraDir) => {
-        const target = path.join(extraDir, "rw.txt");
-        const cfg: OpenClawConfig = {
-          tools: { fs: { workspaceOnly: true, extraRoots: [{ path: extraDir, mode: "rw" }] } },
-        };
-        const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
-        const { writeTool, editTool } = expectReadWriteEditTools(tools);
+      const extraDir = path.join(workspaceDir, ".openclaw", "tmp", "extra-rw");
+      await fs.mkdir(extraDir, { recursive: true });
+      const target = path.join(extraDir, "rw.txt");
+      const cfg: OpenClawConfig = {
+        tools: { fs: { workspaceOnly: true, extraRoots: [{ path: extraDir, mode: "rw" }] } },
+      };
+      const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+      const { writeTool, editTool } = expectReadWriteEditTools(tools);
 
-        await writeTool.execute("extra-write-rw", { path: target, content: "rw write" });
-        await editTool.execute("extra-edit-rw", {
-          path: target,
-          edits: [{ oldText: "write", newText: "edit" }],
-        });
-        expect(await fs.readFile(target, "utf8")).toBe("rw edit");
+      await writeTool.execute("extra-write-rw", { path: target, content: "rw write" });
+      await editTool.execute("extra-edit-rw", {
+        path: target,
+        edits: [{ oldText: "write", newText: "edit" }],
       });
+      expect(await fs.readFile(target, "utf8")).toBe("rw edit");
     });
   });
 

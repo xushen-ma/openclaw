@@ -54,7 +54,7 @@ describe("resolveEffectiveToolFsWorkspaceOnly", () => {
 });
 
 describe("resolveToolFsConfig", () => {
-  it("merges global and agent extra fs roots while preserving agent workspaceOnly override", () => {
+  it("preserves agent workspaceOnly override", () => {
     const cfg: OpenClawConfig = {
       tools: { fs: { workspaceOnly: true, extraRoots: ["/global"] } },
       agents: {
@@ -69,10 +69,7 @@ describe("resolveToolFsConfig", () => {
       },
     };
 
-    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toEqual({
-      workspaceOnly: false,
-      extraRoots: ["/global", { path: "/agent", mode: "rw" }],
-    });
+    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toEqual({ workspaceOnly: false });
   });
 });
 

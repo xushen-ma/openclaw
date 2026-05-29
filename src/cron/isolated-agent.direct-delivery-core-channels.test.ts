@@ -431,8 +431,7 @@ describe("runCronIsolatedAgentTurn core-channel direct delivery", () => {
       mockAgentPayloads([{ text: "hello from cron" }]);
 
       const res = await runExplicitAnnounceTurn({
-        home,
-        storePath,
+        cfg: makeCfg(home),
         deps,
         channel: "discord",
         to: "user:789",

@@ -511,7 +511,7 @@ async function prepareCronRunContext(params: {
   isFastTestEnv: boolean;
 }): Promise<CronPreparationResult> {
   const { input } = params;
-  const runtimeCfg = resolveCronActiveRuntimeConfig(input.cfg);
+  const runtimeCfg = resolveCronActiveRuntimeConfig(input.cfg) ?? {};
   const defaultAgentId = resolveDefaultAgentId(runtimeCfg);
   const requestedAgentId =
     typeof input.agentId === "string" && input.agentId.trim()
@@ -525,12 +525,12 @@ async function prepareCronRunContext(params: {
     : undefined;
   const agentId = normalizedRequested ?? defaultAgentId;
   const agentCfg: AgentDefaultsConfig = buildCronAgentDefaultsConfig({
-    defaults: runtimeCfg.agents?.defaults,
+    defaults: runtimeCfg?.agents?.defaults,
     agentConfigOverride,
   });
   const cfgWithAgentDefaults: OpenClawConfig = {
     ...runtimeCfg,
-    agents: Object.assign({}, runtimeCfg.agents, { defaults: agentCfg }),
+    agents: Object.assign({}, runtimeCfg?.agents, { defaults: agentCfg }),
   };
   let catalog: Awaited<ReturnType<CronModelCatalogRuntime["loadModelCatalog"]>> | undefined;
   const loadCatalog = async () => {
@@ -548,16 +548,16 @@ async function prepareCronRunContext(params: {
   const agentSessionKey = resolveCronAgentSessionKey({
     sessionKey: baseSessionKey,
     agentId,
-    mainKey: input.cfg.session?.mainKey,
-    cfg: input.cfg,
+    mainKey: input.cfg?.session?.mainKey,
+    cfg: input.cfg ?? {},
   });
   const payloadHookExternalContentSource =
     input.job.payload.kind === "agentTurn" ? input.job.payload.externalContentSource : undefined;
   const hookExternalContentSource =
     payloadHookExternalContentSource ?? resolveHookExternalContentSource(baseSessionKey);
 
-  const workspaceDirRaw = resolveAgentWorkspaceDir(input.cfg, agentId);
-  const agentDir = resolveAgentDir(input.cfg, agentId);
+  const workspaceDirRaw = resolveAgentWorkspaceDir(input.cfg ?? {}, agentId);
+  const agentDir = resolveAgentDir(input.cfg ?? {}, agentId);
   const workspace = await ensureAgentWorkspace({
     dir: workspaceDirRaw,
     ensureBootstrapFiles: !agentCfg?.skipBootstrap && !params.isFastTestEnv,
@@ -575,7 +575,7 @@ async function prepareCronRunContext(params: {
   const isGmailHook = hookExternalContentSource === "gmail";
   const now = Date.now();
   const cronSession = resolveCronSession({
-    cfg: input.cfg,
+    cfg: input.cfg ?? {},
     sessionKey: agentSessionKey,
     agentId,
     nowMs: now,
@@ -612,7 +612,7 @@ async function prepareCronRunContext(params: {
   }
 
   const resolvedModelSelection = await resolveCronModelSelection({
-    cfg: input.cfg,
+    cfg: input.cfg ?? {},
     cfgWithAgentDefaults,
     agentConfigOverride,
     sessionEntry: cronSession.sessionEntry,
