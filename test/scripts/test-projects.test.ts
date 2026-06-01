@@ -207,6 +207,17 @@ describe("scripts/test-projects changed-target routing", () => {
     });
   });
 
+  it("routes write-build-info changes through both exact-tag regressions", () => {
+    expect(resolveChangedTestTargetPlan(["scripts/write-build-info.ts"])).toEqual({
+      mode: "targets",
+      targets: ["scripts/write-build-info.test.ts", "test/scripts/write-build-info.test.ts"],
+    });
+    expect(resolveChangedTestTargetPlan(["scripts/write-build-info.test.ts"])).toEqual({
+      mode: "targets",
+      targets: ["scripts/write-build-info.test.ts"],
+    });
+  });
+
   it("routes group visible reply config changes through channel delivery regressions", () => {
     expect(
       resolveChangedTestTargetPlan([
