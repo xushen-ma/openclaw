@@ -173,6 +173,15 @@ function mergeOverrides(packageOverrides, workspaceOverrides, pnpmLockOverrides)
     ...Object.entries(pnpmLockOverrides),
   ]) {
     const current = merged[name];
+    if (
+      current !== undefined &&
+      typeof current === "object" &&
+      current !== null &&
+      !Array.isArray(current) &&
+      typeof spec === "string"
+    ) {
+      continue;
+    }
     if (current !== undefined && JSON.stringify(current) !== JSON.stringify(spec)) {
       throw new Error(`package.json overrides.${name} conflicts with pnpm lock policy for ${name}`);
     }

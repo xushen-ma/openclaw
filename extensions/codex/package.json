@@ -17,6 +17,14 @@
   "devDependencies": {
     "@openclaw/plugin-sdk": "workspace:*"
   },
+  "overrides": {
+    "hosted-git-info": {
+      "lru-cache": "11.5.0"
+    },
+    "path-scurry": {
+      "lru-cache": "11.5.0"
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"

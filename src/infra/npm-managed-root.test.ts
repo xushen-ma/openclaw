@@ -237,8 +237,14 @@ describe("managed npm root", () => {
       axios: "1.16.0",
       "fast-uri": "3.1.2",
       "follow-redirects": "1.16.0",
+      "hosted-git-info": {
+        "lru-cache": "11.5.0",
+      },
       "ip-address": "10.2.0",
       "node-domexception": "npm:@nolyfill/domexception@1.0.28",
+      "path-scurry": {
+        "lru-cache": "11.5.0",
+      },
       uuid: "14.0.0",
     });
   });

@@ -14,6 +14,8 @@ export function createToolingVitestConfig(env?: Record<string, string | undefine
       "test/**/*.test.ts",
       "src/scripts/**/*.test.ts",
       "scripts/**/*.test.ts",
+      "scripts/replay-ov-session-ingests.test.mjs",
+      "extensions/quick-memory-search/per-agent-ov-http-common.test.mjs",
     ],
     {
       env,

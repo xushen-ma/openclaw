@@ -1253,8 +1253,10 @@ describe("installPluginFromNpmSpec", () => {
             );
             expect(manifest.openclaw?.managedOverrides).toEqual([
               "axios",
+              "hosted-git-info",
               "nested",
               "node-domexception",
+              "path-scurry",
             ]);
             return {
               code: 1,
@@ -1267,11 +1269,22 @@ describe("installPluginFromNpmSpec", () => {
           }
           expect(manifest.overrides).toEqual({
             axios: "1.16.0",
+            "hosted-git-info": {
+              "lru-cache": "11.5.0",
+            },
             nested: {
               semver: "1.2.3",
             },
+            "path-scurry": {
+              "lru-cache": "11.5.0",
+            },
           });
-          expect(manifest.openclaw?.managedOverrides).toEqual(["axios", "nested"]);
+          expect(manifest.openclaw?.managedOverrides).toEqual([
+            "axios",
+            "hosted-git-info",
+            "nested",
+            "path-scurry",
+          ]);
         }
         return await baseImplementation?.(argv, options);
       },

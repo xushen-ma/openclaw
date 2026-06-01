@@ -25,6 +25,11 @@
       "optional": true
     }
   },
+  "overrides": {
+    "baileys": {
+      "lru-cache": "11.5.0"
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"
