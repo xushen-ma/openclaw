@@ -111,6 +111,38 @@ export function resolveVersionTagFromTagList(tags: readonly string[]): string | 
   );
 }
 
+export function resolveVersionTagFromHeadTagList(tags: readonly string[]): string | null {
+  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
+  const latest = (matcher: RegExp) =>
+    candidates
+      .filter((tag) => matcher.test(tag))
+      .toSorted(compareReleaseCandidates)
+      .at(-1) ?? null;
+  return latest(FORK_TAG_PATTERN) ?? latest(STABLE_TAG_PATTERN);
+}
+
+export function resolveVersionTagFromHeadTagOutput(raw: string): string | null {
+  return resolveVersionTagFromHeadTagList(
+    raw
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+}
+
+export function resolveVersionTagFromHeadTags(): string | null {
+  try {
+    const raw = execSync("git tag --points-at HEAD", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).toString();
+
+    return resolveVersionTagFromHeadTagOutput(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function resolveVersionTagFromMergedHeadTagOutput(raw: string): string | null {
   return resolveVersionTagFromTagList(
     raw
@@ -150,6 +182,10 @@ function resolveBuildInfoVersion(): string | null {
   const explicitTagVersion = resolveVersionTagFromEnv();
   if (explicitTagVersion) {
     return explicitTagVersion;
+  }
+  const headTagVersion = resolveVersionTagFromHeadTags();
+  if (headTagVersion) {
+    return headTagVersion;
   }
   return resolvePreferredBuildInfoVersion(
     resolveVersionTagFromMergedHeadTags(),
