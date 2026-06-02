@@ -143,6 +143,11 @@ openclaw_e2e_install_package() {
   local prefix="${3:-}"
   local package_tgz="${OPENCLAW_CURRENT_PACKAGE_TGZ:?missing OPENCLAW_CURRENT_PACKAGE_TGZ}"
   local timeout_value="${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}"
+  local npm_bin
+  npm_bin="$(command -v npm)" || {
+    echo "npm command not found for $label" >&2
+    exit 1
+  }
   local args=(-g)
   if [ -n "$prefix" ]; then
     args+=("--prefix" "$prefix")
@@ -153,7 +158,7 @@ openclaw_e2e_install_package() {
     *e*) had_errexit=1 ;;
   esac
   set +e
-  openclaw_e2e_maybe_timeout "$timeout_value" npm install "${args[@]}" "$package_tgz" --no-fund --no-audit >"$log_file" 2>&1
+  openclaw_e2e_maybe_timeout "$timeout_value" "$npm_bin" install "${args[@]}" "$package_tgz" --no-fund --no-audit >"$log_file" 2>&1
   local install_status=$?
   if [ "$had_errexit" -eq 1 ]; then
     set -e
@@ -165,7 +170,11 @@ openclaw_e2e_install_package() {
       echo "npm install timed out after $timeout_value for $label" >&2
     fi
     echo "npm install failed for $label" >&2
-    cat "$log_file" >&2 || true
+    if [ -x /bin/cat ]; then
+      /bin/cat "$log_file" >&2 || true
+    elif command -v cat >/dev/null 2>&1; then
+      cat "$log_file" >&2 || true
+    fi
     exit 1
   fi
 }

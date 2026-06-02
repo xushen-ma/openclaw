@@ -46,6 +46,10 @@ function shellTestEnv(overrides: Record<string, string | undefined>): NodeJS.Pro
   return env;
 }
 
+function timeoutShimUntilNpm(): string {
+  return 'while [ "$#" -gt 0 ]; do case "${1##*/}" in npm) break ;; esac; shift; done';
+}
+
 function expectShellSuccess(result: ReturnType<typeof spawnSync>) {
   expect(result.status, result.stderr || result.stdout || result.error?.message).toBe(0);
 }
@@ -81,6 +85,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
       const npmArgsPath = path.join(tempDir, "npm-args.txt");
       const logPath = path.join(tempDir, "install.log");
       const packagePath = path.join(tempDir, "openclaw.tgz");
+      const npmPath = path.join(tempDir, "npm");
       fs.writeFileSync(packagePath, "");
       fs.writeFileSync(
         path.join(tempDir, "timeout"),
@@ -88,7 +93,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           "#!/bin/sh",
           "set -eu",
           'printf "%s\\n" "$*" >"$OPENCLAW_TEST_TIMEOUT_ARGS"',
-          'while [ "$#" -gt 0 ] && [ "$1" != "npm" ]; do shift; done',
+          timeoutShimUntilNpm(),
           'exec "$@"',
           "",
         ].join("\n"),
@@ -125,7 +130,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
       expectShellSuccess(result);
       expect(result.stdout).toContain("Installing fixture package...");
       expect(fs.readFileSync(timeoutArgsPath, "utf8").trim()).toBe(
-        `--kill-after=30s 42s npm install -g ${packagePath} --no-fund --no-audit`,
+        `--kill-after=30s 42s ${npmPath} install -g ${packagePath} --no-fund --no-audit`,
       );
       expect(fs.readFileSync(npmArgsPath, "utf8").trim()).toBe(
         `install -g ${packagePath} --no-fund --no-audit`,
@@ -142,6 +147,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
       const npmArgsPath = path.join(tempDir, "npm-args.txt");
       const logPath = path.join(tempDir, "install.log");
       const packagePath = path.join(tempDir, "openclaw.tgz");
+      const npmPath = path.join(tempDir, "npm");
       fs.writeFileSync(packagePath, "");
       fs.writeFileSync(
         path.join(tempDir, "timeout"),
@@ -152,7 +158,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           "  exit 1",
           "fi",
           'printf "%s\\n" "$*" >"$OPENCLAW_TEST_TIMEOUT_ARGS"',
-          'while [ "$#" -gt 0 ] && [ "$1" != "npm" ]; do shift; done',
+          timeoutShimUntilNpm(),
           'exec "$@"',
           "",
         ].join("\n"),
@@ -188,7 +194,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
 
       expectShellSuccess(result);
       expect(fs.readFileSync(timeoutArgsPath, "utf8").trim()).toBe(
-        `42s npm install -g ${packagePath} --no-fund --no-audit`,
+        `42s ${npmPath} install -g ${packagePath} --no-fund --no-audit`,
       );
       expect(fs.readFileSync(npmArgsPath, "utf8").trim()).toBe(
         `install -g ${packagePath} --no-fund --no-audit`,
@@ -205,6 +211,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
       const npmArgsPath = path.join(tempDir, "npm-args.txt");
       const logPath = path.join(tempDir, "install.log");
       const packagePath = path.join(tempDir, "openclaw.tgz");
+      const npmPath = path.join(tempDir, "npm");
       fs.writeFileSync(packagePath, "");
       fs.writeFileSync(
         path.join(tempDir, "gtimeout"),
@@ -212,7 +219,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           "#!/bin/bash",
           "set -euo pipefail",
           'printf "%s\\n" "$*" >"$OPENCLAW_TEST_TIMEOUT_ARGS"',
-          'while [ "$#" -gt 0 ] && [ "$1" != "npm" ]; do shift; done',
+          timeoutShimUntilNpm(),
           'exec "$@"',
           "",
         ].join("\n"),
@@ -248,7 +255,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
 
       expectShellSuccess(result);
       expect(fs.readFileSync(timeoutArgsPath, "utf8").trim()).toBe(
-        `--kill-after=30s 42s npm install -g ${packagePath} --no-fund --no-audit`,
+        `--kill-after=30s 42s ${npmPath} install -g ${packagePath} --no-fund --no-audit`,
       );
       expect(fs.readFileSync(npmArgsPath, "utf8").trim()).toBe(
         `install -g ${packagePath} --no-fund --no-audit`,
