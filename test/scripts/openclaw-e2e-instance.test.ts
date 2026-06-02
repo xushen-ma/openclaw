@@ -120,6 +120,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           env: shellTestEnv({
             PATH: `${tempDir}${path.delimiter}${hostPath}`,
             OPENCLAW_CURRENT_PACKAGE_TGZ: packagePath,
+            OPENCLAW_E2E_NPM_BIN: npmPath,
             OPENCLAW_E2E_NPM_INSTALL_TIMEOUT: "42s",
             OPENCLAW_TEST_TIMEOUT_ARGS: timeoutArgsPath,
             OPENCLAW_TEST_NPM_ARGS: npmArgsPath,
@@ -185,6 +186,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           env: shellTestEnv({
             PATH: `${tempDir}${path.delimiter}${hostPath}`,
             OPENCLAW_CURRENT_PACKAGE_TGZ: packagePath,
+            OPENCLAW_E2E_NPM_BIN: npmPath,
             OPENCLAW_E2E_NPM_INSTALL_TIMEOUT: "42s",
             OPENCLAW_TEST_TIMEOUT_ARGS: timeoutArgsPath,
             OPENCLAW_TEST_NPM_ARGS: npmArgsPath,
@@ -246,6 +248,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           env: shellTestEnv({
             PATH: tempDir,
             OPENCLAW_CURRENT_PACKAGE_TGZ: packagePath,
+            OPENCLAW_E2E_NPM_BIN: npmPath,
             OPENCLAW_E2E_NPM_INSTALL_TIMEOUT: "42s",
             OPENCLAW_TEST_TIMEOUT_ARGS: timeoutArgsPath,
             OPENCLAW_TEST_NPM_ARGS: npmArgsPath,
@@ -271,6 +274,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
       const npmArgsPath = path.join(tempDir, "npm-args.txt");
       const logPath = path.join(tempDir, "install.log");
       const packagePath = path.join(tempDir, "openclaw.tgz");
+      const npmPath = path.join(tempDir, "npm");
       const nodeBinDir = path.dirname(process.execPath);
       fs.writeFileSync(packagePath, "");
       fs.writeFileSync(
@@ -294,6 +298,7 @@ describe("scripts/lib/openclaw-e2e-instance.sh", () => {
           env: shellTestEnv({
             PATH: `${tempDir}:${nodeBinDir}`,
             OPENCLAW_CURRENT_PACKAGE_TGZ: packagePath,
+            OPENCLAW_E2E_NPM_BIN: npmPath,
             OPENCLAW_E2E_NPM_INSTALL_TIMEOUT: "42s",
             OPENCLAW_TEST_NPM_ARGS: npmArgsPath,
           }),

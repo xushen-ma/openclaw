@@ -143,11 +143,13 @@ openclaw_e2e_install_package() {
   local prefix="${3:-}"
   local package_tgz="${OPENCLAW_CURRENT_PACKAGE_TGZ:?missing OPENCLAW_CURRENT_PACKAGE_TGZ}"
   local timeout_value="${OPENCLAW_E2E_NPM_INSTALL_TIMEOUT:-600s}"
-  local npm_bin
-  npm_bin="$(command -v npm)" || {
-    echo "npm command not found for $label" >&2
-    exit 1
-  }
+  local npm_bin="${OPENCLAW_E2E_NPM_BIN:-}"
+  if [ -z "$npm_bin" ]; then
+    npm_bin="$(command -v npm)" || {
+      echo "npm command not found for $label" >&2
+      exit 1
+    }
+  fi
   local args=(-g)
   if [ -n "$prefix" ]; then
     args+=("--prefix" "$prefix")
