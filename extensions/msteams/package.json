@@ -29,6 +29,11 @@
       "optional": true
     }
   },
+  "overrides": {
+    "lru-memoizer": {
+      "lru-cache": "11.5.0"
+    }
+  },
   "openclaw": {
     "extensions": [
       "./index.ts"

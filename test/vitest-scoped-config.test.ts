@@ -852,7 +852,13 @@ describe("scoped vitest configs", () => {
 
   it("keeps tooling tests in their own lane", () => {
     const testConfig = requireTestConfig(defaultToolingConfig);
-    expect(testConfig.include).toEqual(["test/**/*.test.ts", "src/scripts/**/*.test.ts"]);
+    expect(testConfig.include).toEqual([
+      "test/**/*.test.ts",
+      "src/scripts/**/*.test.ts",
+      "scripts/**/*.test.ts",
+      "scripts/replay-ov-session-ingests.test.mjs",
+      "extensions/quick-memory-search/per-agent-ov-http-common.test.mjs",
+    ]);
     expect(testConfig.include).not.toContain("src/config/doc-baseline.integration.test.ts");
   });
 
