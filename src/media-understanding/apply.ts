@@ -24,6 +24,7 @@ import {
   formatMediaUnderstandingBody,
 } from "./format.js";
 import { resolveConcurrency } from "./resolve.js";
+import { formatDecisionSummary } from "./runner.entries.js";
 import {
   buildProviderRegistry,
   createMediaAttachmentCache,
@@ -102,6 +103,17 @@ function appendFileBlocks(body: string | undefined, blocks: string[]): string {
     return suffix;
   }
   return `${base}\n\n${suffix}`.trim();
+}
+
+function formatMediaUnderstandingFailureBlock(summaries: string[]): string {
+  return ["[Media understanding failed]", ...summaries.map((summary) => `- ${summary}`)].join("\n");
+}
+
+function redactFailureSummary(summary: string): string {
+  return summary
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,})\b/g, "[redacted]")
+    .replace(/\b(api[_-]?key|access[_-]?token|authorization)=([^\s;&]+)/gi, "$1=[redacted]");
 }
 
 function wrapUntrustedAttachmentContent(content: string): string {
@@ -530,6 +542,17 @@ export async function applyMediaUnderstanding(params: {
     if (decisions.length > 0) {
       ctx.MediaUnderstandingDecisions = [...(ctx.MediaUnderstandingDecisions ?? []), ...decisions];
     }
+    const failureSummaries = decisions
+      .filter((decision) => decision.outcome === "failed")
+      .map((decision) => formatDecisionSummary(decision))
+      .map((summary) => redactFailureSummary(summary))
+      .filter((summary) => summary.trim());
+    if (failureSummaries.length > 0) {
+      ctx.MediaUnderstandingFailures = [
+        ...(ctx.MediaUnderstandingFailures ?? []),
+        ...failureSummaries,
+      ];
+    }
 
     if (outputs.length > 0) {
       ctx.Body = formatMediaUnderstandingBody({ body: ctx.Body, outputs });
@@ -575,7 +598,12 @@ export async function applyMediaUnderstanding(params: {
     if (fileBlocks.length > 0) {
       ctx.Body = appendFileBlocks(ctx.Body, fileBlocks);
     }
-    if (outputs.length > 0 || fileBlocks.length > 0) {
+    if (failureSummaries.length > 0) {
+      ctx.Body = appendFileBlocks(ctx.Body, [
+        formatMediaUnderstandingFailureBlock(failureSummaries),
+      ]);
+    }
+    if (outputs.length > 0 || fileBlocks.length > 0 || failureSummaries.length > 0) {
       finalizeInboundContext(ctx, {
         forceBodyForAgent: true,
         forceBodyForCommands: outputs.length > 0 || fileBlocks.length > 0,

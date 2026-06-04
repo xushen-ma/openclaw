@@ -126,6 +126,7 @@ export type MsgContext = {
   /** Remote host for SCP when media lives on a different machine (e.g., openclaw@192.168.64.3). */
   MediaRemoteHost?: string;
   Transcript?: string;
+  MediaUnderstandingFailures?: string[];
   MediaUnderstanding?: MediaUnderstandingOutput[];
   MediaUnderstandingDecisions?: MediaUnderstandingDecision[];
   LinkUnderstanding?: string[];

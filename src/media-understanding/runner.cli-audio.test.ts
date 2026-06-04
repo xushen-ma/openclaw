@@ -64,4 +64,46 @@ describe("media-understanding CLI audio entry", () => {
       expect.any(Object),
     );
   });
+
+  it("adds a stable model cache directory for configured whisper CLI entries", async () => {
+    const previousModelDir = process.env.OPENCLAW_WHISPER_MODEL_DIR;
+    process.env.OPENCLAW_WHISPER_MODEL_DIR = "/tmp/openclaw-whisper-models";
+    try {
+      await withAudioFixture("openclaw-cli-audio", async ({ ctx, cache }) => {
+        await runCliEntry({
+          capability: "audio",
+          entry: {
+            type: "cli",
+            command: "whisper",
+            args: ["--model", "turbo", "{{MediaPath}}"],
+          },
+          cfg: {
+            tools: {
+              media: {
+                audio: {
+                  enabled: true,
+                },
+              },
+            },
+          } as OpenClawConfig,
+          ctx,
+          attachmentIndex: 0,
+          cache,
+          config: { enabled: true } as never,
+        });
+      });
+    } finally {
+      if (previousModelDir === undefined) {
+        delete process.env.OPENCLAW_WHISPER_MODEL_DIR;
+      } else {
+        process.env.OPENCLAW_WHISPER_MODEL_DIR = previousModelDir;
+      }
+    }
+
+    expect(runExecMock).toHaveBeenCalledWith(
+      "whisper",
+      expect.arrayContaining(["--model_dir", "/tmp/openclaw-whisper-models"]),
+      expect.any(Object),
+    );
+  });
 });

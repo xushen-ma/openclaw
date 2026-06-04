@@ -343,12 +343,17 @@ async function resolveLocalWhisperEntry(): Promise<MediaUnderstandingModelConfig
   if (!(await hasBinary("whisper"))) {
     return null;
   }
+  const modelDir =
+    process.env.OPENCLAW_WHISPER_MODEL_DIR?.trim() ||
+    path.join(os.homedir(), ".cache", "whisper-models");
   return {
     type: "cli",
     command: "whisper",
     args: [
       "--model",
       "turbo",
+      "--model_dir",
+      modelDir,
       "--output_format",
       "txt",
       "--output_dir",

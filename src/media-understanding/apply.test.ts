@@ -575,6 +575,43 @@ describe("applyMediaUnderstanding", () => {
     expect(ctx.Body).toBe("[Audio]\nTranscript:\ncli transcript");
   });
 
+  it("surfaces concise media understanding failures in context when audio transcription fails", async () => {
+    const ctx = await createAudioCtx();
+    const cfg: OpenClawConfig = {
+      tools: {
+        media: {
+          audio: {
+            enabled: true,
+            models: [
+              {
+                type: "cli",
+                command: "whisper",
+                args: ["{{MediaPath}}"],
+              },
+            ],
+          },
+          image: { enabled: false },
+          video: { enabled: false },
+        },
+      },
+    };
+
+    mockedRunExec.mockRejectedValueOnce(
+      new Error("whisper model cache missing: /Users/openclaw/.cache/whisper"),
+    );
+
+    const result = await applyMediaUnderstanding({ ctx, cfg });
+
+    expect(result.appliedAudio).toBe(false);
+    expect(ctx.Transcript).toBeUndefined();
+    expect(ctx.MediaUnderstandingFailures).toEqual([
+      "audio: failed (0/1) reason=whisper model cache missing",
+    ]);
+    expect(ctx.Body).toContain("[Media understanding failed]");
+    expect(ctx.Body).toContain("- audio: failed (0/1) reason=whisper model cache missing");
+    expect(ctx.BodyForAgent).toBe(ctx.Body);
+  });
+
   it("reads parakeet-mlx transcript from output-dir txt file", async () => {
     const ctx = await createAudioCtx({ fileName: "sample.wav", mediaType: "audio/wav" });
     const cfg: OpenClawConfig = {
@@ -707,6 +744,37 @@ describe("applyMediaUnderstanding", () => {
     expect(mockedRunExec).toHaveBeenCalledWith(
       "whisper-cli",
       expect.any(Array),
+      expect.any(Object),
+    );
+  });
+
+  it("auto-detects whisper with a stable model cache directory", async () => {
+    clearMediaUnderstandingBinaryCacheForTests();
+    const binDir = await createTempMediaDir();
+    const modelDir = await createTempMediaDir();
+    await createMockExecutable(binDir, "whisper");
+
+    const { ctx, cfg } = await setupAudioAutoDetectCase("whisper ok\n");
+    mockedResolveApiKey.mockResolvedValue({
+      source: "none",
+      mode: "api-key",
+    });
+
+    await withMediaAutoDetectEnv(
+      {
+        PATH: binDir,
+        OPENCLAW_WHISPER_MODEL_DIR: modelDir,
+      },
+      async () => {
+        const result = await applyMediaUnderstanding({ ctx, cfg });
+        expect(result.appliedAudio).toBe(true);
+      },
+    );
+
+    expect(ctx.Transcript).toBe("whisper ok");
+    expect(mockedRunExec).toHaveBeenCalledWith(
+      "whisper",
+      expect.arrayContaining(["--model_dir", modelDir]),
       expect.any(Object),
     );
   });

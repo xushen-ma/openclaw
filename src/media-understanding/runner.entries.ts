@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   collectProviderApiKeysForExecution,
@@ -136,6 +137,24 @@ function findArgValue(args: string[], keys: string[]): string | undefined {
 
 function hasArg(args: string[], keys: string[]): boolean {
   return args.some((arg) => keys.includes(arg));
+}
+
+function hasWhisperModelDirArg(args: string[]): boolean {
+  return args.some((arg) => arg === "--model_dir" || arg.startsWith("--model_dir="));
+}
+
+function resolveWhisperModelDir(): string {
+  return (
+    process.env.OPENCLAW_WHISPER_MODEL_DIR?.trim() ||
+    path.join(os.homedir(), ".cache", "whisper-models")
+  );
+}
+
+function withDefaultWhisperModelDir(command: string, args: string[]): string[] {
+  if (commandBase(command) !== "whisper" || hasWhisperModelDirArg(args)) {
+    return args;
+  }
+  return ["--model_dir", resolveWhisperModelDir(), ...args];
 }
 
 function resolveWhisperOutputPath(args: string[], mediaPath: string): string | null {
@@ -740,7 +759,7 @@ export async function runCliEntry(params: {
     ...(requestOverrides.language ? { Language: requestOverrides.language } : {}),
     MaxChars: maxChars,
   };
-  const argv = [command, ...args].map((part, index) =>
+  const argv = [command, ...withDefaultWhisperModelDir(command, args)].map((part, index) =>
     index === 0 ? part : applyTemplate(part, templCtx),
   );
   try {
