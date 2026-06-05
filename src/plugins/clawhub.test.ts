@@ -830,15 +830,15 @@ describe("installPluginFromClawHub", () => {
   });
 
   it("installs when a CalVer correction runtime satisfies the base plugin API range", async () => {
-    resolveCompatibilityHostVersionMock.mockReturnValueOnce("2026.5.3-1");
+    resolveCompatibilityHostVersionMock.mockReturnValueOnce("v2026.5.26-x.2");
     fetchClawHubPackageVersionMock.mockResolvedValueOnce({
       version: {
-        version: "2026.5.3",
+        version: "2026.5.26",
         createdAt: 0,
         changelog: "",
         sha256hash: "a9eac48c6129bc44b6f93c9a9f48f6c700d191b7279a1e1915f28df6f59bb1af",
         compatibility: {
-          pluginApiRange: ">=2026.5.3",
+          pluginApiRange: ">=2026.5.26",
           minGatewayVersion: "2026.3.0",
         },
       },
