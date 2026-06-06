@@ -624,6 +624,35 @@ describe("resolveMatrixAccount", () => {
     });
   });
 
+  it("lets named accounts override inherited default wildcard groups", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          accounts: {
+            default: {
+              ...createMatrixAccountConfig("default-token"),
+              groups: {
+                "*": { requireMention: false },
+                "!protected:example.org": { requireMention: true },
+              },
+            },
+            kiki: {
+              ...createMatrixAccountConfig("kiki-token"),
+              groups: {
+                "*": { requireMention: true },
+              },
+            },
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    expect(resolveMatrixAccount({ cfg, accountId: "kiki" }).config.groups).toEqual({
+      "*": { requireMention: true },
+      "!protected:example.org": { requireMention: true },
+    });
+  });
+
   it("filters legacy channel-level rooms by room account in multi-account setups", () => {
     expectMultiAccountMatrixScopedEntries(createMatrixScopedEntriesConfig("rooms"), "rooms");
   });
