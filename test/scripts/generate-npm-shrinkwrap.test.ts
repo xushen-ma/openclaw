@@ -14,6 +14,7 @@ import {
   pnpmLockOverrideVersionForVersions,
   parsePnpmPackageKey,
   parseLockPackagePath,
+  shouldRetryWithCurrentShrinkwrapOverrides,
   shouldUseLegacyPeerDepsForShrinkwrap,
   shrinkwrapPackageDirsForChangedPaths,
 } from "../../scripts/generate-npm-shrinkwrap.mjs";
@@ -141,6 +142,21 @@ describe("generate-npm-shrinkwrap", () => {
         path: "node_modules/react",
       },
     ]);
+  });
+
+  it("retries shrinkwrap checks when npm floats outside the pnpm lock", () => {
+    expect(
+      shouldRetryWithCurrentShrinkwrapOverrides(
+        new Error(
+          "generated npm-shrinkwrap.json contains package versions absent from pnpm-lock.yaml: node_modules/gaxios locked gaxios@7.1.5",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryWithCurrentShrinkwrapOverrides(
+        new Error("generated npm-shrinkwrap.json is stale"),
+      ),
+    ).toBe(false);
   });
 
   it("pins current shrinkwrap versions that are still in the pnpm lock", () => {

@@ -11,6 +11,8 @@ import { resolveNpmRunner } from "./npm-runner.mjs";
 const ROOT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXACT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u;
 const STABLE_VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/u;
+const PNPM_LOCK_VERSION_MISMATCH_PREFIX =
+  "generated npm-shrinkwrap.json contains package versions absent from pnpm-lock.yaml:";
 
 function usage() {
   return [
@@ -607,9 +609,11 @@ function assertShrinkwrapMatchesPnpmLock(shrinkwrap) {
     .slice(0, 5)
     .map((violation) => `${violation.path} locked ${violation.packageKey}`)
     .join("; ");
-  throw new Error(
-    `generated npm-shrinkwrap.json contains package versions absent from pnpm-lock.yaml: ${examples}`,
-  );
+  throw new Error(`${PNPM_LOCK_VERSION_MISMATCH_PREFIX} ${examples}`);
+}
+
+function shouldRetryWithCurrentShrinkwrapOverrides(error) {
+  return error instanceof Error && error.message.startsWith(PNPM_LOCK_VERSION_MISMATCH_PREFIX);
 }
 
 function packageLabel(packageDir) {
@@ -818,11 +822,25 @@ function resolvePackageDirs(args) {
 }
 
 function updateOrCheckPackage(packageDir, check, changedPaths = []) {
-  const generated = generateShrinkwrap(packageDir, {
-    useCurrentShrinkwrapOverrides:
-      check && !packageDependencyInputsChanged(packageDir, changedPaths),
-  });
   const shrinkwrapPath = shrinkwrapPathForPackage(packageDir);
+  const useCurrentShrinkwrapOverrides =
+    check && !packageDependencyInputsChanged(packageDir, changedPaths);
+  let generated;
+  try {
+    generated = generateShrinkwrap(packageDir, {
+      useCurrentShrinkwrapOverrides,
+    });
+  } catch (error) {
+    if (!check || !shouldRetryWithCurrentShrinkwrapOverrides(error)) {
+      throw error;
+    }
+    const currentShrinkwrap = JSON.parse(readFileSync(shrinkwrapPath, "utf8"));
+    const currentViolations = collectPnpmLockViolations(currentShrinkwrap);
+    if (currentViolations.length > 0) {
+      throw error;
+    }
+    generated = `${JSON.stringify(currentShrinkwrap, null, 2)}\n`;
+  }
   const label = packageLabel(packageDir);
   if (!check) {
     writeFileSync(shrinkwrapPath, generated);
@@ -881,6 +899,7 @@ export {
   parsePnpmPackageKey,
   parseLockPackagePath,
   readShrinkwrapOverrides,
+  shouldRetryWithCurrentShrinkwrapOverrides,
   shouldUseLegacyPeerDepsForShrinkwrap,
   shrinkwrapPackageDirsForChangedPaths,
 };
