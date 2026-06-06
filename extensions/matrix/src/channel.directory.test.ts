@@ -206,6 +206,36 @@ describe("matrix directory", () => {
     ).toBe(false);
   });
 
+  it("uses accounts.default wildcard groups for Kiki-style named account new rooms", () => {
+    const cfg = {
+      channels: {
+        matrix: {
+          accounts: {
+            default: {
+              groups: {
+                "*": { requireMention: false },
+              },
+            },
+            kiki: {
+              groupPolicy: "allowlist",
+            },
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    expect(
+      resolveMatrixAccount({ cfg, accountId: "kiki" }).config.groups?.["*"]?.requireMention,
+    ).toBe(false);
+    expect(
+      matrixPlugin.groups!.resolveRequireMention!({
+        cfg,
+        accountId: "kiki",
+        groupId: "!brand-new-room:example.org",
+      }),
+    ).toBe(false);
+  });
+
   it("matches prefixed Matrix aliases in group context", () => {
     const cfg = {
       channels: {
