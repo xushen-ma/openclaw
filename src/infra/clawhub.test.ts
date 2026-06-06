@@ -133,6 +133,8 @@ describe("clawhub helpers", () => {
     expect(satisfiesPluginApiRange("1.1.9", ">=1.2.0")).toBe(false);
     expect(satisfiesPluginApiRange("2026.3.22", ">=2026.3.22")).toBe(true);
     expect(satisfiesPluginApiRange("2026.3.21", ">=2026.3.22")).toBe(false);
+    expect(satisfiesPluginApiRange("v2026.5.26-x.2", ">=2026.5.26")).toBe(true);
+    expect(satisfiesPluginApiRange("2026.5.26-x.2", ">=2026.5.26")).toBe(true);
     expect(satisfiesPluginApiRange("invalid", "^1.2.0")).toBe(false);
   });
 
