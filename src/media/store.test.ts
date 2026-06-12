@@ -250,6 +250,23 @@ describe("media store", () => {
       },
     },
     {
+      name: "uses OPENCLAW_MEDIA_DIR when provided",
+      run: async () => {
+        await withTempStore(async (store, home) => {
+          const mediaDir = path.join(home, "external-media-root");
+          vi.stubEnv("OPENCLAW_MEDIA_DIR", mediaDir);
+          try {
+            const dir = await store.ensureMediaDir();
+            expect(path.normalize(dir)).toBe(path.normalize(mediaDir));
+            const stat = await fs.stat(dir);
+            expect(stat.isDirectory()).toBe(true);
+          } finally {
+            vi.unstubAllEnvs();
+          }
+        });
+      },
+    },
+    {
       name: "enforces the media size limit",
       run: async () => {
         await withTempStore(async (store) => {

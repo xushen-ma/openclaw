@@ -1,6 +1,10 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { describe, expect, it, vi } from "vitest";
+import { patchOpenAIAudioChatCompletionsPayload } from "../../src/agents/pi-embedded-runner/openai-audio-chat-completions.js";
 import { buildOpenAICodexProviderPlugin } from "./openai-codex-provider.js";
 import { buildOpenAIProvider } from "./openai-provider.js";
 
@@ -49,6 +53,38 @@ function runWrappedPayloadCase(params: {
 }
 
 describe("buildOpenAIProvider", () => {
+  it("upgrades media audio notes to Chat Completions input_audio parts", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-openai-audio-"));
+    const audioPath = path.join(tempDir, "voice.mp3");
+    await fs.writeFile(audioPath, Buffer.from("mp3-bytes"));
+    const payload = {
+      messages: [
+        {
+          role: "user",
+          content: `Please answer this.\n[media attached: ${audioPath} (audio/mpeg) | mxc://example]`,
+        },
+      ],
+    };
+
+    try {
+      await patchOpenAIAudioChatCompletionsPayload(payload);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+
+    expect(payload.modalities).toEqual(["text"]);
+    expect(payload.messages[0]?.content).toEqual([
+      { type: "text", text: "Please answer this." },
+      {
+        type: "input_audio",
+        input_audio: {
+          data: Buffer.from("mp3-bytes").toString("base64"),
+          format: "mp3",
+        },
+      },
+    ]);
+  });
+
   it("exposes grouped model/auth picker labels for API key setup", () => {
     const provider = buildOpenAIProvider();
     const apiKey = provider.auth.find((method) => method.id === "api-key");

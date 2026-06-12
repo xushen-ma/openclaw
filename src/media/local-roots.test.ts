@@ -185,4 +185,16 @@ describe("local media roots", () => {
       path.join(configDir, "media"),
     ]);
   });
+
+  it("includes an explicit OPENCLAW_MEDIA_DIR in runtime roots", () => {
+    const stateDir = path.join("/tmp", "openclaw-explicit-media-state");
+    const mediaDir = path.join("/tmp", "openclaw-explicit-media-root");
+    vi.stubEnv("OPENCLAW_MEDIA_DIR", mediaDir);
+    try {
+      const roots = withStateDir(stateDir, () => getDefaultMediaLocalRoots());
+      expectNormalizedRootsContain(roots, [mediaDir]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });

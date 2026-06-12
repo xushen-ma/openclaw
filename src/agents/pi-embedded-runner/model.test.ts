@@ -1609,6 +1609,31 @@ describe("resolveModel", () => {
     });
   });
 
+  it("keeps native OpenAI audio models on Chat Completions", () => {
+    mockDiscoveredModel(discoverModels, {
+      provider: "openai",
+      modelId: "gpt-audio-1.5",
+      templateModel: buildForwardCompatTemplate({
+        id: "gpt-audio-1.5",
+        name: "GPT Audio 1.5",
+        provider: "openai",
+        api: "openai-completions",
+        baseUrl: "https://api.openai.com/v1",
+      }),
+    });
+
+    const result = resolveModelForTest("openai", "gpt-audio-1.5", "/tmp/agent");
+
+    expect(result.error).toBeUndefined();
+    expect(result.model).toMatchObject({
+      provider: "openai",
+      id: "gpt-audio-1.5",
+      api: "openai-completions",
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: false,
+    });
+  });
+
   it("keeps proxied openai completions transport untouched", () => {
     mockDiscoveredModel(discoverModels, {
       provider: "openai",

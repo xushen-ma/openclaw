@@ -19,6 +19,7 @@ import {
   createSiliconFlowThinkingWrapper,
   shouldApplySiliconFlowThinkingOffCompat,
 } from "./moonshot-stream-wrappers.js";
+import { createOpenAIAudioChatCompletionsWrapper } from "./openai-audio-chat-completions.js";
 import {
   createOpenAIResponsesContextManagementWrapper,
   createOpenAIStringContentWrapper,
@@ -507,6 +508,7 @@ function applyPostPluginStreamWrappers(
 ): void {
   ctx.agent.streamFn = createOpenRouterSystemCacheWrapper(ctx.agent.streamFn);
   ctx.agent.streamFn = createOpenAIStringContentWrapper(ctx.agent.streamFn);
+  ctx.agent.streamFn = createOpenAIAudioChatCompletionsWrapper(ctx.agent.streamFn);
 
   if (!ctx.providerWrapperHandled) {
     // Guard Google-family payloads against invalid negative thinking budgets

@@ -82,6 +82,11 @@ export type MediaUnderstandingModelConfig = MediaProviderRequestConfig & {
 export type MediaUnderstandingConfig = MediaProviderRequestConfig & {
   /** Enable media understanding when models are configured. */
   enabled?: boolean;
+  /**
+   * Optional agent model to use directly for audio attachments instead of
+   * running media-understanding transcription first.
+   */
+  nativeModel?: string;
   /** Optional scope gating for understanding. */
   scope?: MediaUnderstandingScopeConfig;
   /** Default max bytes to send. */

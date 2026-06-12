@@ -11,6 +11,7 @@ import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
 import { resolveConfigDir, resolveUserPath } from "../utils.js";
 import { isPassThroughRemoteMediaSource } from "./media-source-url.js";
+import { getMediaDir } from "./store.js";
 
 type BuildMediaLocalRootsOptions = {
   preferredTmpDir?: string;
@@ -48,7 +49,12 @@ export function buildMediaLocalRoots(
 }
 
 export function getDefaultMediaLocalRoots(): readonly string[] {
-  return buildMediaLocalRoots(resolveStateDir(), resolveConfigDir());
+  const roots = buildMediaLocalRoots(resolveStateDir(), resolveConfigDir());
+  const mediaDir = path.resolve(getMediaDir());
+  if (!roots.includes(mediaDir)) {
+    roots.push(mediaDir);
+  }
+  return roots;
 }
 
 export function getAgentScopedMediaLocalRoots(
@@ -56,6 +62,10 @@ export function getAgentScopedMediaLocalRoots(
   agentId?: string,
 ): readonly string[] {
   const roots = buildMediaLocalRoots(resolveStateDir(), resolveConfigDir());
+  const mediaDir = path.resolve(getMediaDir());
+  if (!roots.includes(mediaDir)) {
+    roots.push(mediaDir);
+  }
   const normalizedAgentId = normalizeOptionalString(agentId);
   if (!normalizedAgentId) {
     return roots;

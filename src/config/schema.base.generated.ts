@@ -9380,6 +9380,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     description:
                       "Enable image understanding so attached or referenced images can be interpreted into textual context. Disable if you need text-only operation or want to avoid image-processing cost.",
                   },
+                  nativeModel: {
+                    type: "string",
+                    minLength: 1,
+                  },
                   scope: {
                     type: "object",
                     properties: {
@@ -11967,6 +11971,13 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Enable Audio Understanding",
                     description:
                       "Enable audio understanding so voice notes or audio clips can be transcribed/summarized for agent context. Disable when audio ingestion is outside policy or unnecessary for your workflows.",
+                  },
+                  nativeModel: {
+                    type: "string",
+                    minLength: 1,
+                    title: "Native Audio Model",
+                    description:
+                      "Optional agent model used directly for inbound audio attachments, bypassing the media-understanding transcription pass for those turns. Use an audio-capable model such as openai/gpt-audio-1.5.",
                   },
                   scope: {
                     type: "object",
@@ -14615,6 +14626,10 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
                     title: "Enable Video Understanding",
                     description:
                       "Enable video understanding so clips can be summarized into text for downstream reasoning and responses. Disable when processing video is out of policy or too expensive for your deployment.",
+                  },
+                  nativeModel: {
+                    type: "string",
+                    minLength: 1,
                   },
                   scope: {
                     type: "object",
@@ -24150,6 +24165,11 @@ export const GENERATED_BASE_CONFIG_SCHEMA: BaseConfigSchemaResponse = {
     "tools.media.audio.enabled": {
       label: "Enable Audio Understanding",
       help: "Enable audio understanding so voice notes or audio clips can be transcribed/summarized for agent context. Disable when audio ingestion is outside policy or unnecessary for your workflows.",
+      tags: ["media", "tools"],
+    },
+    "tools.media.audio.nativeModel": {
+      label: "Native Audio Model",
+      help: "Optional agent model used directly for inbound audio attachments, bypassing the media-understanding transcription pass for those turns. Use an audio-capable model such as openai/gpt-audio-1.5.",
       tags: ["media", "tools"],
     },
     "tools.media.audio.maxBytes": {

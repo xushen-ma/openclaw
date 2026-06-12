@@ -777,6 +777,7 @@ export const MediaUnderstandingModelSchema = z
 export const ToolsMediaUnderstandingSchema = z
   .object({
     enabled: z.boolean().optional(),
+    nativeModel: z.string().min(1).optional(),
     scope: MediaUnderstandingScopeSchema,
     maxBytes: z.number().int().positive().optional(),
     maxChars: z.number().int().positive().optional(),

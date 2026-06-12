@@ -33,7 +33,7 @@ import {
 import { handleInlineActions } from "./get-reply-inline-actions.js";
 import { runPreparedReply } from "./get-reply-run.js";
 import { finalizeInboundContext } from "./inbound-context.js";
-import { hasInboundMedia } from "./inbound-media.js";
+import { hasInboundAudioMedia, hasInboundMedia } from "./inbound-media.js";
 import { emitPreAgentMessageHooks } from "./message-preprocess-hooks.js";
 import { createFastTestModelSelectionState } from "./model-selection.js";
 import { initSessionState } from "./session.js";
@@ -133,13 +133,38 @@ async function applyMediaUnderstandingIfNeeded(params: {
   cfg: OpenClawConfig;
   agentDir?: string;
   activeModel: { provider: string; model: string };
+  skipAudioTranscription?: boolean;
 }): Promise<boolean> {
   if (!hasInboundMedia(params.ctx)) {
+    return false;
+  }
+  if (params.skipAudioTranscription && hasInboundAudioMedia(params.ctx)) {
     return false;
   }
   const { applyMediaUnderstanding } = await loadMediaUnderstandingApplyRuntime();
   await applyMediaUnderstanding(params);
   return true;
+}
+
+function resolveNativeAudioModel(params: {
+  ctx: MsgContext;
+  cfg: OpenClawConfig;
+  defaultProvider: string;
+  aliasIndex: Parameters<typeof resolveModelRefFromString>[0]["aliasIndex"];
+}): { provider: string; model: string } | null {
+  if (!hasInboundAudioMedia(params.ctx)) {
+    return null;
+  }
+  const raw = normalizeOptionalString(params.cfg.tools?.media?.audio?.nativeModel);
+  if (!raw) {
+    return null;
+  }
+  const resolved = resolveModelRefFromString({
+    raw,
+    defaultProvider: params.defaultProvider,
+    aliasIndex: params.aliasIndex,
+  });
+  return resolved?.ref ?? null;
 }
 
 async function applyLinkUnderstandingIfNeeded(params: {
@@ -242,6 +267,16 @@ export async function getReplyFromConfig(
   opts?.onTypingController?.(typing);
 
   const finalized = finalizeInboundContext(ctx);
+  const nativeAudioModel = resolveNativeAudioModel({
+    ctx: finalized,
+    cfg,
+    defaultProvider,
+    aliasIndex,
+  });
+  if (nativeAudioModel && !opts?.isHeartbeat) {
+    provider = nativeAudioModel.provider;
+    model = nativeAudioModel.model;
+  }
 
   if (!isFastTestEnv) {
     await applyMediaUnderstandingIfNeeded({
@@ -249,6 +284,7 @@ export async function getReplyFromConfig(
       cfg,
       agentDir,
       activeModel: { provider, model },
+      skipAudioTranscription: Boolean(nativeAudioModel),
     });
     await applyLinkUnderstandingIfNeeded({
       ctx: finalized,

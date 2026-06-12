@@ -11,7 +11,7 @@ import { assertNoPathAliasEscape, type PathAliasPolicy } from "../infra/path-ali
 import { isPathInside } from "../infra/path-guards.js";
 import { resolvePreferredOpenClawTmpDir } from "../infra/tmp-openclaw-dir.js";
 import { isPassThroughRemoteMediaSource } from "../media/media-source-url.js";
-import { resolveConfigDir } from "../utils.js";
+import { getMediaDir } from "../media/store.js";
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const DATA_URL_RE = /^data:/i;
@@ -107,7 +107,7 @@ function isManagedMediaPathUnderRoot(candidate: string): boolean {
   if (!hostPathLooksAbsolute(expanded)) {
     return false;
   }
-  const mediaRoot = path.join(resolveConfigDir(), "media");
+  const mediaRoot = getMediaDir();
   const relative = path.relative(path.resolve(mediaRoot), path.resolve(expanded));
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     return false;
@@ -124,7 +124,7 @@ export async function resolveAllowedManagedMediaPath(
     return undefined;
   }
   const resolved = path.resolve(expanded);
-  const managedMediaRoot = path.resolve(resolveConfigDir(), "media");
+  const managedMediaRoot = path.resolve(getMediaDir());
   await assertNoManagedMediaAliasEscape({
     filePath: resolved,
     managedMediaRoot,

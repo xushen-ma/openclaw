@@ -1,6 +1,11 @@
 import { vi } from "vitest";
 import { createMockTypingController } from "./reply.test-helpers.js";
 
+const getReplyModelSelectionMocksHoisted = vi.hoisted(() => ({
+  resolveModelRefFromString: vi.fn(() => null),
+}));
+export const getReplyModelSelectionMocks = getReplyModelSelectionMocksHoisted;
+
 vi.mock("../../agents/agent-scope.js", async () => {
   const actual = await vi.importActual<typeof import("../../agents/agent-scope.js")>(
     "../../agents/agent-scope.js",
@@ -20,7 +25,7 @@ vi.mock("../../agents/model-selection.js", async () => {
   );
   return {
     ...actual,
-    resolveModelRefFromString: vi.fn(() => null),
+    resolveModelRefFromString: getReplyModelSelectionMocks.resolveModelRefFromString,
   };
 });
 

@@ -28,6 +28,12 @@ const OPENAI_GPT_54_MODEL_ID = "gpt-5.4";
 const OPENAI_GPT_54_PRO_MODEL_ID = "gpt-5.4-pro";
 const OPENAI_GPT_54_MINI_MODEL_ID = "gpt-5.4-mini";
 const OPENAI_GPT_54_NANO_MODEL_ID = "gpt-5.4-nano";
+const OPENAI_AUDIO_MODEL_IDS = [
+  "gpt-audio",
+  "gpt-audio-1.5",
+  "gpt-audio-mini",
+  "gpt-4o-audio-preview",
+] as const;
 const OPENAI_GPT_55_PRO_CONTEXT_TOKENS = 1_000_000;
 const OPENAI_GPT_54_CONTEXT_TOKENS = 1_050_000;
 const OPENAI_GPT_54_PRO_CONTEXT_TOKENS = 1_050_000;
@@ -79,11 +85,25 @@ const OPENAI_MODERN_MODEL_IDS = [
 ] as const;
 const OPENAI_DIRECT_SPARK_MODEL_ID = "gpt-5.3-codex-spark";
 const SUPPRESSED_SPARK_PROVIDERS = new Set(["openai", "azure-openai-responses"]);
+function isOpenAIAudioModelId(modelId: unknown): modelId is string {
+  if (typeof modelId !== "string") {
+    return false;
+  }
+  const normalized = normalizeLowercaseStringOrEmpty(modelId);
+  return OPENAI_AUDIO_MODEL_IDS.some(
+    (audioModelId) => normalized === audioModelId || normalized.startsWith(`${audioModelId}-`),
+  );
+}
+
 function shouldUseOpenAIResponsesTransport(params: {
   provider: string;
   api?: string | null;
   baseUrl?: string;
+  modelId?: string | null;
 }): boolean {
+  if (isOpenAIAudioModelId(params.modelId)) {
+    return false;
+  }
   if (params.api !== "openai-completions") {
     return false;
   }
@@ -99,7 +119,18 @@ function normalizeOpenAITransport(model: ProviderRuntimeModel): ProviderRuntimeM
     provider: model.provider,
     api: model.api,
     baseUrl: model.baseUrl,
+    modelId: model.id,
   });
+
+  if (isOpenAIAudioModelId(model.id)) {
+    return {
+      ...model,
+      api: "openai-completions",
+      provider: PROVIDER_ID,
+      baseUrl: model.baseUrl ?? "https://api.openai.com/v1",
+      reasoning: false,
+    };
+  }
 
   if (!useResponsesTransport) {
     return model;
@@ -116,6 +147,20 @@ function resolveOpenAIGptForwardCompatModel(ctx: ProviderResolveDynamicModelCont
   const lower = normalizeLowercaseStringOrEmpty(trimmedModelId);
   let templateIds: readonly string[];
   let patch: Partial<ProviderRuntimeModel>;
+  if (isOpenAIAudioModelId(lower)) {
+    return normalizeModelCompat({
+      id: trimmedModelId,
+      name: trimmedModelId,
+      api: "openai-completions",
+      provider: PROVIDER_ID,
+      baseUrl: "https://api.openai.com/v1",
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 16_384,
+    } as ProviderRuntimeModel);
+  }
   if (lower === OPENAI_GPT_55_PRO_MODEL_ID) {
     templateIds = OPENAI_GPT_55_PRO_TEMPLATE_MODEL_IDS;
     patch = {

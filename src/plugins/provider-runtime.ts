@@ -336,6 +336,20 @@ export function applyProviderResolvedTransportWithPlugin(params: {
   env?: NodeJS.ProcessEnv;
   context: ProviderNormalizeResolvedModelContext;
 }): ProviderRuntimeModel | undefined {
+  if (
+    params.context.provider.trim().toLowerCase() === "openai" &&
+    typeof params.context.model.id === "string"
+  ) {
+    const id = params.context.model.id.trim().toLowerCase();
+    if (
+      id === "gpt-audio" ||
+      id.startsWith("gpt-audio-") ||
+      id === "gpt-4o-audio-preview" ||
+      id.startsWith("gpt-4o-audio-preview-")
+    ) {
+      return undefined;
+    }
+  }
   const normalized = normalizeProviderTransportWithPlugin({
     provider: params.provider,
     config: params.config,

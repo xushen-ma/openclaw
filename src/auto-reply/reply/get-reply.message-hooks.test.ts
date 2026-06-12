@@ -7,7 +7,10 @@ import {
   registerGetReplyRuntimeOverrides,
 } from "./get-reply.test-fixtures.js";
 import { loadGetReplyModuleForTest } from "./get-reply.test-loader.js";
-import { registerGetReplyCommonMocks } from "./get-reply.test-mocks.js";
+import {
+  getReplyModelSelectionMocks,
+  registerGetReplyCommonMocks,
+} from "./get-reply.test-mocks.js";
 
 const mocks = vi.hoisted(() => ({
   applyMediaUnderstanding: vi.fn(async (..._args: unknown[]) => undefined),
@@ -74,6 +77,8 @@ describe("getReplyFromConfig message hooks", () => {
     mocks.triggerInternalHook.mockReset();
     mocks.resolveReplyDirectives.mockReset();
     mocks.initSessionState.mockReset();
+    getReplyModelSelectionMocks.resolveModelRefFromString.mockReset();
+    getReplyModelSelectionMocks.resolveModelRefFromString.mockReturnValue(null);
 
     mocks.applyMediaUnderstanding.mockImplementation(async (...args: unknown[]) => {
       const { ctx } = args[0] as { ctx: MsgContext };
@@ -197,5 +202,34 @@ describe("getReplyFromConfig message hooks", () => {
 
     expect(mocks.applyMediaUnderstanding).not.toHaveBeenCalled();
     expect(mocks.applyLinkUnderstanding).not.toHaveBeenCalled();
+  });
+
+  it("uses native audio model and skips transcription when configured", async () => {
+    getReplyModelSelectionMocks.resolveModelRefFromString.mockReturnValueOnce({
+      ref: { provider: "openai", model: "gpt-audio-1.5" },
+      source: "explicit",
+    });
+
+    await getReplyFromConfig(
+      buildCtx(),
+      undefined,
+      withFastReplyConfig({
+        tools: {
+          media: {
+            audio: {
+              nativeModel: "openai/gpt-audio-1.5",
+            },
+          },
+        },
+      }),
+    );
+
+    expect(mocks.applyMediaUnderstanding).not.toHaveBeenCalled();
+    expect(mocks.resolveReplyDirectives).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "openai",
+        model: "gpt-audio-1.5",
+      }),
+    );
   });
 });

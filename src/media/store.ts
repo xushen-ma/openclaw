@@ -8,11 +8,19 @@ import { pipeline } from "node:stream/promises";
 import { retainSafeHeadersForCrossOriginRedirect } from "../infra/net/redirect-headers.js";
 import { resolvePinnedHostname } from "../infra/net/ssrf.js";
 import { normalizeOptionalString } from "../shared/string-coerce.js";
-import { resolveConfigDir } from "../utils.js";
+import { resolveConfigDir, resolveUserPath } from "../utils.js";
 import { detectMime, extensionForMime } from "./mime.js";
 import { isSafeOpenError, readLocalFileSafely, type SafeOpenLikeError } from "./store.runtime.js";
 
-const resolveMediaDir = () => path.join(resolveConfigDir(), "media");
+export const OPENCLAW_MEDIA_DIR_ENV = "OPENCLAW_MEDIA_DIR";
+
+const resolveMediaDir = () => {
+  const explicit = normalizeOptionalString(process.env[OPENCLAW_MEDIA_DIR_ENV]);
+  if (explicit) {
+    return path.resolve(explicit.startsWith("~") ? resolveUserPath(explicit) : explicit);
+  }
+  return path.join(resolveConfigDir(), "media");
+};
 export const MEDIA_MAX_BYTES = 5 * 1024 * 1024; // 5MB default
 const MAX_BYTES = MEDIA_MAX_BYTES;
 const DEFAULT_TTL_MS = 2 * 60 * 1000; // 2 minutes

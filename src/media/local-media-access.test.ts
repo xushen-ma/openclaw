@@ -1,14 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveStateDir } from "../config/paths.js";
 import { assertLocalMediaAllowed } from "./local-media-access.js";
+import { getMediaDir } from "./store.js";
 
 describe("assertLocalMediaAllowed", () => {
   it("allows managed inbound media paths before explicit root checks", async () => {
-    const stateDir = resolveStateDir();
     const id = `managed-local-${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-    const filePath = path.join(stateDir, "media", "inbound", id);
+    const filePath = path.join(getMediaDir(), "inbound", id);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, Buffer.from("png"));
 
@@ -20,8 +19,7 @@ describe("assertLocalMediaAllowed", () => {
   });
 
   it("does not allow nested inbound paths as managed media", async () => {
-    const stateDir = resolveStateDir();
-    const filePath = path.join(stateDir, "media", "inbound", "nested", "hidden.png");
+    const filePath = path.join(getMediaDir(), "inbound", "nested", "hidden.png");
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, Buffer.from("png"));
 

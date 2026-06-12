@@ -121,6 +121,13 @@ function canonicalizeLegacyResolvedModel(params: {
   provider: string;
   model: Model<Api>;
 }): Model<Api> {
+  if (isOpenAIAudioChatCompletionsModel(params.model)) {
+    return {
+      ...params.model,
+      api: "openai-completions",
+      reasoning: false,
+    };
+  }
   if (
     normalizeProviderId(params.provider) !== "openai-codex" ||
     params.model.id.trim().toLowerCase() !== "gpt-5.4-codex"
@@ -135,12 +142,27 @@ function canonicalizeLegacyResolvedModel(params: {
   };
 }
 
+function isOpenAIAudioChatCompletionsModel(model: Model<Api>): boolean {
+  const provider = normalizeProviderId(model.provider);
+  const id = model.id.trim().toLowerCase();
+  return (
+    provider === "openai" &&
+    (id === "gpt-audio" ||
+      id.startsWith("gpt-audio-") ||
+      id === "gpt-4o-audio-preview" ||
+      id.startsWith("gpt-4o-audio-preview-"))
+  );
+}
+
 function applyResolvedTransportFallback(params: {
   provider: string;
   cfg?: OpenClawConfig;
   runtimeHooks: ProviderRuntimeHooks;
   model: Model<Api>;
 }): Model<Api> | undefined {
+  if (isOpenAIAudioChatCompletionsModel(params.model)) {
+    return undefined;
+  }
   const normalized = params.runtimeHooks.normalizeProviderTransportWithPlugin({
     provider: params.provider,
     config: params.cfg,
