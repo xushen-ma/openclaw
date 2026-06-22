@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { LogService } from "./sdk/logger.js";
 
 function requestUrl(input: RequestInfo | URL | undefined): string {
   if (!input) {
@@ -654,7 +655,35 @@ describe("MatrixClient event bridge", () => {
     ]);
   });
 
+  it("logs the lower-level bridge probe for the fleet mgmt room", async () => {
+    const infoSpy = vi.spyOn(LogService, "info").mockImplementation(() => {});
+    const client = new MatrixClient("https://matrix.example.org", "token");
+
+    await client.start();
+
+    const encrypted = new FakeMatrixEvent({
+      roomId: "!bSZooEPKekiUuHRikF:home.jxs.com.au",
+      eventId: "$event",
+      sender: "@alice:example.org",
+      type: "m.room.encrypted",
+      ts: Date.now(),
+      content: {},
+    });
+
+    matrixJsClient.emit("event", encrypted);
+
+    expect(infoSpy).toHaveBeenCalledWith(
+      "MatrixClientLite",
+      expect.stringContaining("matrix-probe: stage=sdk.bridge.event"),
+    );
+    expect(infoSpy).toHaveBeenCalledWith(
+      "MatrixClientLite",
+      expect.stringContaining("matrix-probe: stage=decrypt.attach"),
+    );
+  });
+
   it("emits room.failed_decryption when decrypting fails", async () => {
+    const infoSpy = vi.spyOn(LogService, "info").mockImplementation(() => {});
     const client = new MatrixClient("https://matrix.example.org", "token");
     const failed: string[] = [];
     const delivered: string[] = [];
@@ -669,7 +698,7 @@ describe("MatrixClient event bridge", () => {
     await client.start();
 
     const encrypted = new FakeMatrixEvent({
-      roomId: "!room:example.org",
+      roomId: "!bSZooEPKekiUuHRikF:home.jxs.com.au",
       eventId: "$event",
       sender: "@alice:example.org",
       type: "m.room.encrypted",
@@ -677,7 +706,7 @@ describe("MatrixClient event bridge", () => {
       content: {},
     });
     const decrypted = new FakeMatrixEvent({
-      roomId: "!room:example.org",
+      roomId: "!bSZooEPKekiUuHRikF:home.jxs.com.au",
       eventId: "$event",
       sender: "@alice:example.org",
       type: "m.room.message",
@@ -693,6 +722,12 @@ describe("MatrixClient event bridge", () => {
 
     expect(failed).toEqual(["decrypt failed"]);
     expect(delivered).toHaveLength(0);
+    expect(infoSpy).toHaveBeenCalledWith(
+      "MatrixClientLite",
+      expect.stringContaining(
+        "matrix-probe: stage=decrypt.callback room=!bSZooEPKekiUuHRikF:home.jxs.com.au",
+      ),
+    );
   });
 
   it("retries failed decryption and emits room.message after late key availability", async () => {

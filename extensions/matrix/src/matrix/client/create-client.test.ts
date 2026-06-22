@@ -192,7 +192,7 @@ describe("createMatrixClient", () => {
 
     expect(handler).toHaveBeenCalledWith("!bSZooEPKekiUuHRikF:home.jxs.com.au", event);
     expect(log).toHaveBeenCalledWith(
-      "matrix-probe: emit account=mini user=@mini:home.jxs.com.au event=room.message room=!bSZooEPKekiUuHRikF:home.jxs.com.au type=m.room.message id=$event1 listeners=1",
+      "matrix-probe: stage=client.emit account=mini user=@mini:home.jxs.com.au event=room.message room=!bSZooEPKekiUuHRikF:home.jxs.com.au type=m.room.message id=$event1 listeners=1",
     );
   });
 

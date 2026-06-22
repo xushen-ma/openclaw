@@ -7,6 +7,7 @@ import {
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type { MatrixClient } from "../sdk.js";
 import { resolveValidatedMatrixHomeserverUrl } from "./config.js";
+import { logMatrixFleetMgmtProbe } from "./fleet-mgmt-probe.js";
 import {
   maybeMigrateLegacyStorage,
   resolveMatrixStoragePaths,
@@ -18,7 +19,6 @@ type MatrixCreateClientRuntimeDeps = {
   ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
 };
 
-const MATRIX_FLEET_MGMT_PROBE_ROOM_ID = "!bSZooEPKekiUuHRikF:home.jxs.com.au";
 const MATRIX_CLIENT_EMIT_PROBE_PATCHED = Symbol("matrixClientEmitProbePatched");
 
 type MatrixEmitterLike = {
@@ -83,17 +83,22 @@ export function attachMatrixFleetMgmtEmitProbe(params: {
       const { roomId, event } = extractProbeEvent(args);
       const eventRoomId = typeof event?.room_id === "string" ? event.room_id : null;
       const resolvedRoomId = roomId ?? eventRoomId;
-      if (resolvedRoomId === MATRIX_FLEET_MGMT_PROBE_ROOM_ID) {
-        const eventType = typeof event?.type === "string" ? event.type : "unknown";
-        const eventId = typeof event?.event_id === "string" ? event.event_id : "unknown";
-        const listeners =
-          typeof client.listenerCount === "function"
-            ? String(client.listenerCount(eventName))
-            : "unknown";
-        params.log(
-          `matrix-probe: emit account=${params.accountId ?? "default"} user=${params.userId} event=${eventName} room=${resolvedRoomId} type=${eventType} id=${eventId} listeners=${listeners}`,
-        );
-      }
+      const eventType = typeof event?.type === "string" ? event.type : "unknown";
+      const eventId = typeof event?.event_id === "string" ? event.event_id : "unknown";
+      const listeners =
+        typeof client.listenerCount === "function"
+          ? String(client.listenerCount(eventName))
+          : "unknown";
+      logMatrixFleetMgmtProbe(params.log, {
+        stage: "client.emit",
+        roomId: resolvedRoomId,
+        accountId: params.accountId ?? "default",
+        userId: params.userId,
+        eventName,
+        eventType,
+        eventId,
+        listeners,
+      });
     } catch {
       // Never let probe logging interfere with Matrix event delivery.
     }
