@@ -125,6 +125,62 @@ describe("parseCliJson", () => {
     });
   });
 
+  it("unwraps nested Claude result JSON from JSON output", () => {
+    const result = parseCliJson(
+      JSON.stringify({
+        session_id: "session-nested-json",
+        result: JSON.stringify({
+          type: "result",
+          result: JSON.stringify({
+            type: "result",
+            subtype: "success",
+            result: "actual response text",
+          }),
+        }),
+      }),
+      {
+        command: "claude",
+        output: "json",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result).toEqual({
+      text: "actual response text",
+      sessionId: "session-nested-json",
+      usage: undefined,
+    });
+  });
+
+  it("does not unwrap nested result-shaped JSON for non-claude json backends", () => {
+    const nestedResult = JSON.stringify({
+      type: "result",
+      result: JSON.stringify({
+        type: "result",
+        result: "actual response text",
+      }),
+    });
+    const result = parseCliJson(
+      JSON.stringify({
+        session_id: "gemini-session-nested-json",
+        result: nestedResult,
+      }),
+      {
+        command: "gemini",
+        output: "json",
+        sessionIdFields: ["session_id"],
+      },
+      "gemini",
+    );
+
+    expect(result).toEqual({
+      text: nestedResult,
+      sessionId: "gemini-session-nested-json",
+      usage: undefined,
+    });
+  });
+
   it("parses nested OpenAI-style cached token details from CLI json payloads", () => {
     const result = parseCliJson(
       JSON.stringify({
@@ -216,10 +272,16 @@ describe("parseCliJsonl", () => {
       "local-cli",
     );
 
-    expect(result).toMatchObject({
+    expect(result).toEqual({
       text: "dialect says hello",
       sessionId: "session-dialect",
-      usage: { input: 5, output: 2 },
+      usage: {
+        input: 5,
+        output: 2,
+        cacheRead: undefined,
+        cacheWrite: undefined,
+        total: undefined,
+      },
     });
   });
 
@@ -260,6 +322,48 @@ describe("parseCliJsonl", () => {
     });
   });
 
+  it("does not let cumulative Claude result usage overwrite assistant usage", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-stream" }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            id: "msg-1",
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 },
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            id: "msg-2",
+            usage: { input_tokens: 11, output_tokens: 6, cache_read_input_tokens: 125 },
+          },
+        }),
+        JSON.stringify({
+          type: "result",
+          session_id: "session-stream",
+          result: "done",
+          usage: { input_tokens: 30, output_tokens: 15, cache_read_input_tokens: 300 },
+        }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result?.usage).toEqual({
+      input: 11,
+      output: 6,
+      cacheRead: 125,
+      cacheWrite: undefined,
+      total: undefined,
+    });
+  });
+
   it("preserves Claude session metadata even when the final result text is empty", () => {
     const result = parseCliJsonl(
       [
@@ -292,6 +396,38 @@ describe("parseCliJsonl", () => {
         cacheWrite: undefined,
         total: undefined,
       },
+    });
+  });
+
+  it("unwraps nested Claude agent result JSON from stream-json output", () => {
+    const result = parseCliJsonl(
+      [
+        JSON.stringify({ type: "init", session_id: "session-nested-jsonl" }),
+        JSON.stringify({
+          type: "result",
+          session_id: "session-nested-jsonl",
+          result: JSON.stringify({
+            type: "result",
+            result: JSON.stringify({
+              type: "result",
+              subtype: "success",
+              result: "actual response text",
+            }),
+          }),
+        }),
+      ].join("\n"),
+      {
+        command: "claude",
+        output: "jsonl",
+        sessionIdFields: ["session_id"],
+      },
+      "claude-cli",
+    );
+
+    expect(result).toEqual({
+      text: "actual response text",
+      sessionId: "session-nested-jsonl",
+      usage: undefined,
     });
   });
 
@@ -352,5 +488,53 @@ describe("createCliJsonlStreamingParser", () => {
     expect(deltas).toEqual([
       { text: "hello", delta: "hello", sessionId: "session-stream", usage: undefined },
     ]);
+  });
+
+  it("ignores cumulative usage from result events to avoid cache_read inflation", () => {
+    const parser = createCliJsonlStreamingParser({
+      backend: {
+        command: "local-cli",
+        output: "jsonl",
+        jsonlDialect: "claude-stream-json",
+        sessionIdFields: ["session_id"],
+      },
+      providerId: "local-cli",
+      onAssistantDelta: () => {},
+    });
+
+    parser.push(
+      [
+        JSON.stringify({ type: "init", session_id: "session-stream" }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            id: "msg-1",
+            usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 100 },
+          },
+        }),
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            id: "msg-2",
+            usage: { input_tokens: 11, output_tokens: 6, cache_read_input_tokens: 125 },
+          },
+        }),
+        JSON.stringify({
+          type: "result",
+          result: "done",
+          usage: { input_tokens: 30, output_tokens: 15, cache_read_input_tokens: 300 },
+        }),
+      ].join("\n"),
+    );
+    parser.finish();
+
+    const output = parser.getOutput();
+    expect(output?.usage).toEqual({
+      input: 11,
+      output: 6,
+      cacheRead: 125,
+      cacheWrite: undefined,
+      total: undefined,
+    });
   });
 });

@@ -16,22 +16,22 @@
       "class": "core-runtime",
       "risk": ["native", "terminal"]
     },
-    "@mariozechner/pi-agent-core": {
+    "@earendil-works/pi-agent-core": {
       "owner": "capability:agent-runtime-pi",
       "class": "default-runtime-initially",
       "risk": ["large-transitive-cone", "agent-runtime"]
     },
-    "@mariozechner/pi-ai": {
+    "@earendil-works/pi-ai": {
       "owner": "capability:agent-runtime-pi",
       "class": "default-runtime-initially",
       "risk": ["large-transitive-cone", "provider-sdk-fanout"]
     },
-    "@mariozechner/pi-coding-agent": {
+    "@earendil-works/pi-coding-agent": {
       "owner": "capability:agent-runtime-pi",
       "class": "default-runtime-initially",
       "risk": ["large-transitive-cone", "agent-runtime"]
     },
-    "@mariozechner/pi-tui": {
+    "@earendil-works/pi-tui": {
       "owner": "capability:tui-pi",
       "class": "default-runtime-initially",
       "risk": ["tui-runtime"]
@@ -55,11 +55,6 @@
         "plugins.entries.document-extract.enabled"
       ],
       "risk": ["native", "parser", "untrusted-files"]
-    },
-    "@vincentkoc/qrcode-tui": {
-      "owner": "core:qr-setup",
-      "class": "default-runtime-initially",
-      "risk": ["terminal-rendering"]
     },
     "ajv": {
       "owner": "core:json-schema-validation",
@@ -101,6 +96,11 @@
       "class": "core-runtime",
       "risk": ["file-sniffing", "untrusted-files"]
     },
+    "@openclaw/proxyline": {
+      "owner": "core:proxy",
+      "class": "core-runtime",
+      "risk": ["network", "proxy"]
+    },
     "https-proxy-agent": {
       "owner": "core:proxy",
       "class": "core-runtime",
@@ -126,6 +126,11 @@
       "class": "core-runtime",
       "risk": ["archive-parser", "untrusted-files"]
     },
+    "kysely": {
+      "owner": "core:sqlite-storage",
+      "class": "core-runtime",
+      "risk": ["database-query-builder"]
+    },
     "linkedom": {
       "owner": "plugin:web-readability",
       "class": "plugin-runtime",
@@ -142,10 +147,10 @@
       "class": "default-runtime-initially",
       "risk": ["provider-sdk", "network"]
     },
-    "osc-progress": {
-      "owner": "core:terminal-progress",
+    "playwright-core": {
+      "owner": "core:browser",
       "class": "core-runtime",
-      "risk": ["terminal-rendering"]
+      "risk": ["browser-automation", "cdp"]
     },
     "pdfjs-dist": {
       "owner": "plugin:document-extract",
@@ -158,15 +163,15 @@
       "class": "core-runtime",
       "risk": ["network", "proxy"]
     },
-    "semver": {
-      "owner": "core:package-versioning",
-      "class": "core-runtime",
-      "risk": ["version-parser"]
-    },
-    "sharp": {
-      "owner": "capability:image-ops",
+    "qrcode": {
+      "owner": "core:qr-setup",
       "class": "default-runtime-initially",
-      "risk": ["native", "parser", "untrusted-files"]
+      "risk": ["terminal-rendering", "png-encoding"]
+    },
+    "rastermill": {
+      "owner": "core:media",
+      "class": "core-runtime",
+      "risk": ["wasm", "parser", "untrusted-files", "native-tool-fallback"]
     },
     "sqlite-vec": {
       "owner": "capability:memory-sqlite-vec",
@@ -192,6 +197,11 @@
       "owner": "core:http-client",
       "class": "core-runtime",
       "risk": ["network"]
+    },
+    "web-push": {
+      "owner": "core:web-push",
+      "class": "core-runtime",
+      "risk": ["network", "push-notifications", "crypto"]
     },
     "ws": {
       "owner": "core:gateway-websocket",

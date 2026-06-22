@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { Component, SelectItem, TUI } from "@mariozechner/pi-tui";
+import type { Component, SelectItem, TUI } from "@earendil-works/pi-tui";
+import { modelKey } from "../agents/model-ref-shared.js";
 import { normalizeGroupActivation } from "../auto-reply/group-activation.js";
 import {
   formatThinkingLevels,
   normalizeUsageDisplay,
   resolveResponseUsageMode,
 } from "../auto-reply/thinking.js";
+import { isChatStopCommandText } from "../gateway/chat-abort.js";
 import type { SessionsPatchResult } from "../gateway/protocol/index.js";
 import { formatRelativeTimestamp } from "../infra/format-time/format-relative.ts";
 import { normalizeAgentId } from "../routing/session-key.js";
@@ -18,10 +20,15 @@ import {
 } from "./components/selectors.js";
 import type { TuiBackend } from "./tui-backend.js";
 import { sanitizeRenderableText } from "./tui-formatters.js";
+import {
+  TUI_RECENT_SESSIONS_ACTIVE_MINUTES,
+  TUI_SESSION_PICKER_LIMIT,
+} from "./tui-session-list-policy.js";
 import { formatStatusSummary } from "./tui-status-summary.js";
 import type {
   AgentSummary,
   GatewayStatusSummary,
+  TuiResult,
   TuiOptions,
   TuiStateAccess,
 } from "./tui-types.js";
@@ -39,7 +46,7 @@ type CommandHandlerContext = {
   loadHistory: () => Promise<void>;
   setSession: (key: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
-  abortActive: () => Promise<void>;
+  abortActive: (params?: { preferActive?: boolean }) => Promise<void>;
   setActivityStatus: (text: string) => void;
   formatSessionKey: (key: string) => string;
   applySessionInfoFromPatch: (result: SessionsPatchResult) => void;
@@ -50,11 +57,16 @@ type CommandHandlerContext = {
   runAuthFlow?: (params: {
     provider?: string;
   }) => Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>;
-  requestExit: () => void;
+  requestExit: (result?: Partial<TuiResult>) => void;
 };
 
 function isBtwCommand(text: string): boolean {
-  return /^\/btw(?::|\s|$)/i.test(text.trim());
+  return /^\/(?:btw|side)(?::|\s|$)/i.test(text.trim());
+}
+
+function isSlashStopCommand(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.startsWith("/") && isChatStopCommandText(trimmed);
 }
 
 export function createCommandHandlers(context: CommandHandlerContext) {
@@ -85,12 +97,16 @@ export function createCommandHandlers(context: CommandHandlerContext) {
   const setAgent = async (id: string) => {
     state.currentAgentId = normalizeAgentId(id);
     await setSession("");
+    chatLog.addSystem(`agent set to ${state.currentAgentId}; use /crestodian to return`);
   };
 
   const closeOverlayAndRender = () => {
     closeOverlay();
     tui.requestRender();
   };
+
+  const hasTrackedAbortTarget = () =>
+    Boolean(state.activeChatRunId || state.pendingChatRunId || state.pendingOptimisticUserMessage);
 
   const openSelector = (
     selector: {
@@ -118,11 +134,14 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         tui.requestRender();
         return;
       }
-      const items = models.map((model) => ({
-        value: `${model.provider}/${model.id}`,
-        label: `${model.provider}/${model.id}`,
-        description: model.name && model.name !== model.id ? model.name : "",
-      }));
+      const items = models.map((model) => {
+        const ref = modelKey(model.provider, model.id);
+        return {
+          value: ref,
+          label: ref,
+          description: model.name && model.name !== model.id ? model.name : "",
+        };
+      });
       const selector = createSearchableSelectList(items, 9);
       openSelector(selector, async (value) => {
         try {
@@ -161,9 +180,35 @@ export function createCommandHandlers(context: CommandHandlerContext) {
     });
   };
 
+  const openContextModeSelector = () => {
+    const items = [
+      {
+        value: "list",
+        label: "list",
+        description: "Short context breakdown",
+      },
+      {
+        value: "detail",
+        label: "detail",
+        description: "Per-file, per-tool, per-skill, and system prompt size",
+      },
+      {
+        value: "json",
+        label: "json",
+        description: "Machine-readable context report",
+      },
+    ];
+    const selector = createSearchableSelectList(items, 9);
+    openSelector(selector, async (value) => {
+      await sendMessage(`/context ${value}`);
+    });
+  };
+
   const openSessionSelector = async () => {
     try {
       const result = await client.listSessions({
+        limit: TUI_SESSION_PICKER_LIMIT,
+        activeMinutes: TUI_RECENT_SESSIONS_ACTIVE_MINUTES,
         includeGlobal: false,
         includeUnknown: false,
         includeDerivedTitles: true,
@@ -329,6 +374,22 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       case "agents":
         await openAgentSelector();
         break;
+      case "context":
+        if (!args) {
+          openContextModeSelector();
+        } else {
+          await sendMessage(raw);
+        }
+        break;
+      case "crestodian":
+        chatLog.addSystem(
+          args ? `returning to Crestodian with request: ${args}` : "returning to Crestodian",
+        );
+        requestExit({
+          exitReason: "return-to-crestodian",
+          ...(args ? { crestodianMessage: args } : {}),
+        });
+        break;
       case "session":
         if (!args) {
           await openSessionSelector();
@@ -361,11 +422,9 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         break;
       case "think":
         if (!args) {
-          const levels = formatThinkingLevels(
-            state.sessionInfo.modelProvider,
-            state.sessionInfo.model,
-            "|",
-          );
+          const levels =
+            state.sessionInfo.thinkingLevels?.map((level) => level.label).join("|") ||
+            formatThinkingLevels(state.sessionInfo.modelProvider, state.sessionInfo.model, "|");
           chatLog.addSystem(`usage: /think <${levels}>`);
           break;
         }
@@ -556,6 +615,13 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       case "abort":
         await abortActive();
         break;
+      case "stop":
+        if (hasTrackedAbortTarget()) {
+          await abortActive({ preferActive: true });
+          break;
+        }
+        await sendMessage(raw);
+        break;
       case "settings":
         openSettings();
         break;
@@ -582,9 +648,37 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       return;
     }
     const isBtw = isBtwCommand(text);
+    const busy = Boolean(
+      state.activeChatRunId || state.pendingChatRunId || state.pendingOptimisticUserMessage,
+    );
+    if (
+      hasTrackedAbortTarget() &&
+      (isSlashStopCommand(text) || (busy && isChatStopCommandText(text)))
+    ) {
+      await abortActive({ preferActive: true });
+      return;
+    }
+    if (
+      !isBtw &&
+      (state.pendingChatRunId ||
+        state.pendingOptimisticUserMessage ||
+        (opts.local !== true && state.activeChatRunId))
+    ) {
+      chatLog.addSystem("agent is busy — press Esc to abort before sending a new message");
+      tui.requestRender();
+      return;
+    }
     const runId = randomUUID();
     try {
       if (!isBtw) {
+        if (
+          opts.local === true &&
+          state.activeChatRunId &&
+          !state.pendingChatRunId &&
+          !state.pendingOptimisticUserMessage
+        ) {
+          chatLog.reserveAssistantSlot(state.activeChatRunId);
+        }
         chatLog.addUser(text);
         state.pendingOptimisticUserMessage = true;
         setActivityStatus("sending");
@@ -594,6 +688,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       tui.requestRender();
       await client.sendChat({
         sessionKey: state.currentSessionKey,
+        sessionId: state.currentSessionId,
         message: text,
         thinking: opts.thinking,
         deliver: deliverDefault,
@@ -601,6 +696,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
         runId,
       });
       if (!isBtw) {
+        state.pendingChatRunId = runId;
         setActivityStatus("waiting");
         tui.requestRender();
       }
@@ -613,6 +709,7 @@ export function createCommandHandlers(context: CommandHandlerContext) {
       }
       if (!isBtw) {
         state.pendingOptimisticUserMessage = false;
+        state.pendingChatRunId = null;
         state.activeChatRunId = null;
       }
       chatLog.addSystem(`${isBtw ? "btw failed" : "send failed"}: ${String(err)}`);

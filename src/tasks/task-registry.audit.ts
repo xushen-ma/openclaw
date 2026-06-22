@@ -7,12 +7,18 @@ import {
   type TaskAuditSummary,
 } from "./task-registry.audit.shared.js";
 import type { TaskRecord } from "./task-registry.types.js";
+import { resolveEffectiveTaskCleanupAfter } from "./task-retention.js";
 
 export type TaskAuditOptions = {
   now?: number;
   tasks?: TaskRecord[];
   staleQueuedMs?: number;
   staleRunningMs?: number;
+};
+
+export type RetainedLostTaskAuditSummary = {
+  count: number;
+  nextCleanupAfter?: number;
 };
 
 const DEFAULT_STALE_QUEUED_MS = 10 * 60_000;
@@ -125,13 +131,18 @@ export function listTaskAuditFindings(options: TaskAuditOptions = {}): TaskAudit
     }
 
     if (task.status === "lost") {
+      const retainedUntilCleanup =
+        typeof task.cleanupAfter === "number" && resolveEffectiveTaskCleanupAfter(task) > now;
       findings.push(
         createFinding({
-          severity: "error",
+          severity: retainedUntilCleanup ? "warn" : "error",
           code: "lost",
           task,
           ageMs,
-          detail: task.error?.trim() || "task lost its backing session",
+          detail: retainedUntilCleanup
+            ? task.error?.trim() ||
+              "task lost its backing session and is retained until cleanupAfter"
+            : task.error?.trim() || "task lost its backing session",
         }),
       );
     }
@@ -174,6 +185,19 @@ export function listTaskAuditFindings(options: TaskAuditOptions = {}): TaskAudit
   return findings.toSorted(compareFindings);
 }
 
+export function isRetainedLostTaskAuditFinding(
+  finding: TaskAuditFinding,
+  now = Date.now(),
+): boolean {
+  const cleanupAfter = resolveEffectiveTaskCleanupAfter(finding.task);
+  return (
+    finding.code === "lost" &&
+    finding.task.status === "lost" &&
+    typeof finding.task.cleanupAfter === "number" &&
+    cleanupAfter > now
+  );
+}
+
 export function summarizeTaskAuditFindings(findings: Iterable<TaskAuditFinding>): TaskAuditSummary {
   const summary = createEmptyTaskAuditSummary();
   for (const finding of findings) {
@@ -186,4 +210,40 @@ export function summarizeTaskAuditFindings(findings: Iterable<TaskAuditFinding>)
     }
   }
   return summary;
+}
+
+export function summarizeActionableTaskAuditFindings(
+  findings: Iterable<TaskAuditFinding>,
+  options: { now?: number } = {},
+): TaskAuditSummary {
+  const now = options.now ?? Date.now();
+  return summarizeTaskAuditFindings(
+    Array.from(findings).filter((finding) => !isRetainedLostTaskAuditFinding(finding, now)),
+  );
+}
+
+export function summarizeRetainedLostTaskAuditFindings(
+  findings: Iterable<TaskAuditFinding>,
+  options: { now?: number } = {},
+): RetainedLostTaskAuditSummary {
+  const now = options.now ?? Date.now();
+  let count = 0;
+  let nextCleanupAfter: number | undefined;
+  for (const finding of findings) {
+    if (!isRetainedLostTaskAuditFinding(finding, now)) {
+      continue;
+    }
+    count += 1;
+    const cleanupAfter = resolveEffectiveTaskCleanupAfter(finding.task);
+    if (
+      typeof cleanupAfter === "number" &&
+      (nextCleanupAfter === undefined || cleanupAfter < nextCleanupAfter)
+    ) {
+      nextCleanupAfter = cleanupAfter;
+    }
+  }
+  return {
+    count,
+    ...(nextCleanupAfter !== undefined ? { nextCleanupAfter } : {}),
+  };
 }

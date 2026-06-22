@@ -22,7 +22,7 @@ Common use cases:
 - Keep exec **sandboxed** on the gateway, but delegate approved runs to other hosts.
 - Provide a lightweight, headless execution target for automation or CI nodes.
 
-Execution is still guarded by **exec approvals** and per‑agent allowlists on the
+Execution is still guarded by **exec approvals** and per-agent allowlists on the
 node host, so you can keep command access scoped and explicit.
 
 ## Browser proxy (zero-config)
@@ -74,10 +74,12 @@ Options:
 - In `gateway.mode=remote`, remote client fields (`gateway.remote.token` / `gateway.remote.password`) are also eligible per remote precedence rules.
 - Node host auth resolution only honors `OPENCLAW_GATEWAY_*` env vars.
 
-For a node connecting to a non-loopback `ws://` Gateway on a trusted private
-network, set `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1`. Without it, node startup
-fails closed and asks you to use `wss://`, an SSH tunnel, or Tailscale.
-This is a process-environment opt-in, not an `openclaw.json` config key.
+For a node connecting to a plaintext `ws://` Gateway, loopback, private IP
+literals, `.local`, and Tailnet `*.ts.net` hosts are accepted. For other
+trusted private-DNS names, set `OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1`; without
+it, node startup fails closed and asks you to use `wss://`, an SSH tunnel, or
+Tailscale. This is a process-environment opt-in, not an `openclaw.json` config
+key.
 `openclaw node install` persists it into the supervised node service when it is
 present in the install command environment.
 
@@ -104,6 +106,7 @@ Manage the service:
 
 ```bash
 openclaw node status
+openclaw node start
 openclaw node stop
 openclaw node restart
 openclaw node uninstall
@@ -112,6 +115,12 @@ openclaw node uninstall
 Use `openclaw node run` for a foreground node host (no service).
 
 Service commands accept `--json` for machine-readable output.
+
+The node host retries Gateway restart and network closes in-process. If the
+Gateway reports a terminal token/password/bootstrap auth pause, the node host
+logs the close detail and exits non-zero so launchd/systemd can restart it with
+fresh config and credentials. Pairing-required pauses stay in the foreground
+flow so the pending request can be approved.
 
 ## Pairing
 

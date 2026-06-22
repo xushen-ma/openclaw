@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,9 +8,10 @@ import {
   resolveCommandsLightIncludePattern,
 } from "../test/vitest/vitest.commands-light-paths.mjs";
 import { isAcpxExtensionRoot } from "../test/vitest/vitest.extension-acpx-paths.mjs";
-import { isBlueBubblesExtensionRoot } from "../test/vitest/vitest.extension-bluebubbles-paths.mjs";
+import { isActiveMemoryExtensionRoot } from "../test/vitest/vitest.extension-active-memory-paths.mjs";
 import { isBrowserExtensionRoot } from "../test/vitest/vitest.extension-browser-paths.mjs";
 import { resolveSplitChannelExtensionShard } from "../test/vitest/vitest.extension-channel-split-paths.mjs";
+import { isCodexExtensionRoot } from "../test/vitest/vitest.extension-codex-paths.mjs";
 import { isDiffsExtensionRoot } from "../test/vitest/vitest.extension-diffs-paths.mjs";
 import { isFeishuExtensionRoot } from "../test/vitest/vitest.extension-feishu-paths.mjs";
 import { isIrcExtensionRoot } from "../test/vitest/vitest.extension-irc-paths.mjs";
@@ -35,16 +36,28 @@ import {
   resolvePluginSdkLightIncludePattern,
 } from "../test/vitest/vitest.plugin-sdk-paths.mjs";
 import { fullSuiteVitestShards } from "../test/vitest/vitest.test-shards.mjs";
+import { isUnitUiTestTarget } from "../test/vitest/vitest.ui-paths.mjs";
 import { resolveUnitFastTestIncludePattern } from "../test/vitest/vitest.unit-fast-paths.mjs";
 import {
   isBoundaryTestFile,
   isBundledPluginDependentUnitTestFile,
 } from "../test/vitest/vitest.unit-paths.mjs";
-import { detectChangedLanes } from "./changed-lanes.mjs";
+import {
+  detectChangedLanes,
+  listChangedPathsFromGit as listChangedPathsFromGitSource,
+} from "./changed-lanes.mjs";
 import { isCiLikeEnv, resolveLocalFullSuiteProfile } from "./lib/vitest-local-scheduling.mjs";
-import { resolveVitestCliEntry, resolveVitestNodeArgs } from "./run-vitest.mjs";
+import {
+  DEFAULT_VITEST_NO_OUTPUT_TIMEOUT_MS,
+  resolveVitestCliEntry,
+  resolveVitestNodeArgs,
+} from "./run-vitest.mjs";
 
 const DEFAULT_VITEST_CONFIG = "test/vitest/vitest.unit.config.ts";
+const AGENTS_CORE_VITEST_CONFIG = "test/vitest/vitest.agents-core.config.ts";
+const AGENTS_PI_EMBEDDED_VITEST_CONFIG = "test/vitest/vitest.agents-pi-embedded.config.ts";
+const AGENTS_SUPPORT_VITEST_CONFIG = "test/vitest/vitest.agents-support.config.ts";
+const AGENTS_TOOLS_VITEST_CONFIG = "test/vitest/vitest.agents-tools.config.ts";
 const AGENTS_VITEST_CONFIG = "test/vitest/vitest.agents.config.ts";
 const ACP_VITEST_CONFIG = "test/vitest/vitest.acp.config.ts";
 const AUTO_REPLY_CORE_VITEST_CONFIG = "test/vitest/vitest.auto-reply-core.config.ts";
@@ -69,9 +82,11 @@ const CONTRACTS_PLUGIN_VITEST_CONFIG = "test/vitest/vitest.contracts-plugin.conf
 const CRON_VITEST_CONFIG = "test/vitest/vitest.cron.config.ts";
 const DAEMON_VITEST_CONFIG = "test/vitest/vitest.daemon.config.ts";
 const E2E_VITEST_CONFIG = "test/vitest/vitest.e2e.config.ts";
+const EXTENSION_ACTIVE_MEMORY_VITEST_CONFIG =
+  "test/vitest/vitest.extension-active-memory.config.ts";
 const EXTENSION_ACPX_VITEST_CONFIG = "test/vitest/vitest.extension-acpx.config.ts";
-const EXTENSION_BLUEBUBBLES_VITEST_CONFIG = "test/vitest/vitest.extension-bluebubbles.config.ts";
 const EXTENSION_BROWSER_VITEST_CONFIG = "test/vitest/vitest.extension-browser.config.ts";
+const EXTENSION_CODEX_VITEST_CONFIG = "test/vitest/vitest.extension-codex.config.ts";
 const EXTENSION_CHANNELS_VITEST_CONFIG = "test/vitest/vitest.extension-channels.config.ts";
 const EXTENSION_DIFFS_VITEST_CONFIG = "test/vitest/vitest.extension-diffs.config.ts";
 const EXTENSION_DISCORD_VITEST_CONFIG = "test/vitest/vitest.extension-discord.config.ts";
@@ -116,6 +131,104 @@ const UNIT_SECURITY_VITEST_CONFIG = "test/vitest/vitest.unit-security.config.ts"
 const UNIT_SRC_VITEST_CONFIG = "test/vitest/vitest.unit-src.config.ts";
 const UNIT_SUPPORT_VITEST_CONFIG = "test/vitest/vitest.unit-support.config.ts";
 const UNIT_UI_VITEST_CONFIG = "test/vitest/vitest.unit-ui.config.ts";
+
+const FULL_SUITE_CONFIG_WEIGHT = new Map([
+  [GATEWAY_VITEST_CONFIG, 180],
+  [GATEWAY_SERVER_VITEST_CONFIG, 180],
+  [GATEWAY_CORE_VITEST_CONFIG, 179],
+  [GATEWAY_CLIENT_VITEST_CONFIG, 178],
+  [GATEWAY_METHODS_VITEST_CONFIG, 177],
+  [COMMANDS_VITEST_CONFIG, 175],
+  [AGENTS_CORE_VITEST_CONFIG, 170],
+  [AGENTS_PI_EMBEDDED_VITEST_CONFIG, 169],
+  [AGENTS_SUPPORT_VITEST_CONFIG, 168],
+  [AGENTS_TOOLS_VITEST_CONFIG, 167],
+  [EXTENSION_CODEX_VITEST_CONFIG, 168],
+  [EXTENSION_VOICE_CALL_VITEST_CONFIG, 169],
+  [EXTENSIONS_VITEST_CONFIG, 168],
+  [EXTENSION_PROVIDER_OPENAI_VITEST_CONFIG, 167],
+  ["test/vitest/vitest.runtime-config.config.ts", 166],
+  [CONTRACTS_CHANNEL_CONFIG_VITEST_CONFIG, 85],
+  [CONTRACTS_CHANNEL_SURFACE_VITEST_CONFIG, 60],
+  [CONTRACTS_CHANNEL_SESSION_VITEST_CONFIG, 50],
+  [CONTRACTS_CHANNEL_REGISTRY_VITEST_CONFIG, 35],
+  [CONTRACTS_PLUGIN_VITEST_CONFIG, 20],
+  ["test/vitest/vitest.tasks.config.ts", 165],
+  [CHANNEL_VITEST_CONFIG, 164],
+  [UNIT_FAST_VITEST_CONFIG, 160],
+  [AUTO_REPLY_REPLY_VITEST_CONFIG, 155],
+  [INFRA_VITEST_CONFIG, 145],
+  ["test/vitest/vitest.secrets.config.ts", 140],
+  [CRON_VITEST_CONFIG, 135],
+  ["test/vitest/vitest.wizard.config.ts", 130],
+  [UNIT_SRC_VITEST_CONFIG, 125],
+  [EXTENSION_MATRIX_VITEST_CONFIG, 100],
+  [EXTENSION_DISCORD_VITEST_CONFIG, 98],
+  [EXTENSION_PROVIDERS_VITEST_CONFIG, 96],
+  [EXTENSION_TELEGRAM_VITEST_CONFIG, 94],
+  [EXTENSION_WHATSAPP_VITEST_CONFIG, 92],
+  [AUTO_REPLY_CORE_VITEST_CONFIG, 90],
+  [CLI_VITEST_CONFIG, 86],
+  [MEDIA_VITEST_CONFIG, 84],
+  [PLUGINS_VITEST_CONFIG, 82],
+  [BUNDLED_VITEST_CONFIG, 80],
+  [EXTENSION_SLACK_VITEST_CONFIG, 78],
+  [COMMANDS_LIGHT_VITEST_CONFIG, 48],
+  [PLUGIN_SDK_VITEST_CONFIG, 46],
+  [AUTO_REPLY_TOP_LEVEL_VITEST_CONFIG, 45],
+  [UNIT_UI_VITEST_CONFIG, 40],
+  [PLUGIN_SDK_LIGHT_VITEST_CONFIG, 38],
+  [DAEMON_VITEST_CONFIG, 36],
+  [BOUNDARY_VITEST_CONFIG, 34],
+  ["test/vitest/vitest.tooling.config.ts", 32],
+  [UNIT_SECURITY_VITEST_CONFIG, 30],
+  [UNIT_SUPPORT_VITEST_CONFIG, 28],
+  [EXTENSION_ZALO_VITEST_CONFIG, 24],
+  [EXTENSION_IRC_VITEST_CONFIG, 20],
+  [EXTENSION_FEISHU_VITEST_CONFIG, 18],
+  [EXTENSION_MATTERMOST_VITEST_CONFIG, 16],
+  [EXTENSION_MESSAGING_VITEST_CONFIG, 14],
+  [EXTENSION_IMESSAGE_VITEST_CONFIG, 13],
+  [EXTENSION_LINE_VITEST_CONFIG, 12],
+  [EXTENSION_SIGNAL_VITEST_CONFIG, 11],
+  [EXTENSION_ACPX_VITEST_CONFIG, 10],
+  [EXTENSION_DIFFS_VITEST_CONFIG, 8],
+  [EXTENSION_ACTIVE_MEMORY_VITEST_CONFIG, 7],
+  [EXTENSION_MEMORY_VITEST_CONFIG, 6],
+  [EXTENSION_MSTEAMS_VITEST_CONFIG, 4],
+]);
+
+function resolveConfigSortWeight(config, shardTimings) {
+  return shardTimings.get(config) ?? (FULL_SUITE_CONFIG_WEIGHT.get(config) ?? 0) * 1000;
+}
+
+function interleaveSlowAndFastSpecs(sortedSpecs) {
+  const ordered = [];
+  let slowIndex = 0;
+  let fastIndex = sortedSpecs.length - 1;
+  while (slowIndex <= fastIndex) {
+    ordered.push(sortedSpecs[slowIndex]);
+    slowIndex += 1;
+    if (slowIndex <= fastIndex) {
+      ordered.push(sortedSpecs[fastIndex]);
+      fastIndex -= 1;
+    }
+  }
+  return ordered;
+}
+
+export function orderFullSuiteSpecsForParallelRun(specs, shardTimings = new Map()) {
+  const sortedSpecs = specs.toSorted((a, b) => {
+    const weightDelta =
+      resolveConfigSortWeight(b.config, shardTimings) -
+      resolveConfigSortWeight(a.config, shardTimings);
+    if (weightDelta !== 0) {
+      return weightDelta;
+    }
+    return a.config.localeCompare(b.config);
+  });
+  return interleaveSlowAndFastSpecs(sortedSpecs);
+}
 const PROCESS_VITEST_CONFIG = "test/vitest/vitest.process.config.ts";
 const RUNTIME_CONFIG_VITEST_CONFIG = "test/vitest/vitest.runtime-config.config.ts";
 const SECRETS_VITEST_CONFIG = "test/vitest/vitest.secrets.config.ts";
@@ -123,15 +236,26 @@ const SHARED_CORE_VITEST_CONFIG = "test/vitest/vitest.shared-core.config.ts";
 const TASKS_VITEST_CONFIG = "test/vitest/vitest.tasks.config.ts";
 const TOOLING_VITEST_CONFIG = "test/vitest/vitest.tooling.config.ts";
 const TUI_VITEST_CONFIG = "test/vitest/vitest.tui.config.ts";
+const TUI_PTY_VITEST_CONFIG = "test/vitest/vitest.tui-pty.config.ts";
 const UI_VITEST_CONFIG = "test/vitest/vitest.ui.config.ts";
+const UI_E2E_VITEST_CONFIG = "test/vitest/vitest.ui-e2e.config.ts";
 const UTILS_VITEST_CONFIG = "test/vitest/vitest.utils.config.ts";
 const WIZARD_VITEST_CONFIG = "test/vitest/vitest.wizard.config.ts";
 const INCLUDE_FILE_ENV_KEY = "OPENCLAW_VITEST_INCLUDE_FILE";
 const FS_MODULE_CACHE_PATH_ENV_KEY = "OPENCLAW_VITEST_FS_MODULE_CACHE_PATH";
+const FAILED_SHARD_DIGEST_LIMIT = 12;
 const CHANGED_ARGS_PATTERN = /^--changed(?:=(.+))?$/u;
 const VITEST_CONFIG_BY_KIND = {
   acp: ACP_VITEST_CONFIG,
+  agentCore: AGENTS_CORE_VITEST_CONFIG,
+  agentPiEmbedded: AGENTS_PI_EMBEDDED_VITEST_CONFIG,
+  agentSupport: AGENTS_SUPPORT_VITEST_CONFIG,
+  agentTools: AGENTS_TOOLS_VITEST_CONFIG,
   agent: AGENTS_VITEST_CONFIG,
+  agentsCore: AGENTS_CORE_VITEST_CONFIG,
+  agentsPiEmbedded: AGENTS_PI_EMBEDDED_VITEST_CONFIG,
+  agentsSupport: AGENTS_SUPPORT_VITEST_CONFIG,
+  agentsTools: AGENTS_TOOLS_VITEST_CONFIG,
   autoReplyCore: AUTO_REPLY_CORE_VITEST_CONFIG,
   autoReplyReply: AUTO_REPLY_REPLY_VITEST_CONFIG,
   autoReplyTopLevel: AUTO_REPLY_TOP_LEVEL_VITEST_CONFIG,
@@ -152,10 +276,11 @@ const VITEST_CONFIG_BY_KIND = {
   e2e: E2E_VITEST_CONFIG,
   extension: EXTENSIONS_VITEST_CONFIG,
   extensionFull: FULL_EXTENSIONS_VITEST_CONFIG,
+  extensionActiveMemory: EXTENSION_ACTIVE_MEMORY_VITEST_CONFIG,
   extensionAcpx: EXTENSION_ACPX_VITEST_CONFIG,
-  extensionBlueBubbles: EXTENSION_BLUEBUBBLES_VITEST_CONFIG,
   extensionBrowser: EXTENSION_BROWSER_VITEST_CONFIG,
   extensionChannel: EXTENSION_CHANNELS_VITEST_CONFIG,
+  extensionCodex: EXTENSION_CODEX_VITEST_CONFIG,
   extensionDiffs: EXTENSION_DIFFS_VITEST_CONFIG,
   extensionDiscord: EXTENSION_DISCORD_VITEST_CONFIG,
   extensionFeishu: EXTENSION_FEISHU_VITEST_CONFIG,
@@ -203,11 +328,13 @@ const VITEST_CONFIG_BY_KIND = {
   tasks: TASKS_VITEST_CONFIG,
   tooling: TOOLING_VITEST_CONFIG,
   tui: TUI_VITEST_CONFIG,
+  tuiPty: TUI_PTY_VITEST_CONFIG,
   ui: UI_VITEST_CONFIG,
+  uiE2e: UI_E2E_VITEST_CONFIG,
   utils: UTILS_VITEST_CONFIG,
   wizard: WIZARD_VITEST_CONFIG,
 };
-const BROAD_CHANGED_RERUN_PATTERNS = [
+const BROAD_CHANGED_FALLBACK_PATTERNS = [
   /^package\.json$/u,
   /^pnpm-lock\.yaml$/u,
   /^test\/setup(?:\.shared|\.extensions|-openclaw-runtime)?\.ts$/u,
@@ -217,17 +344,39 @@ const BROAD_CHANGED_RERUN_PATTERNS = [
 ];
 const PRECISE_SOURCE_TEST_TARGETS = new Map([
   [
-    "test/helpers/plugins/tts-contract-suites.ts",
+    "src/plugins/contracts/tts-contract-suites.ts",
     [
       "src/plugins/contracts/core-extension-facade-boundary.test.ts",
       "src/plugins/contracts/tts.contract.test.ts",
     ],
   ],
 ]);
+const BROAD_ONLY_TEST_HELPERS = new Set(["test/helpers/poll.ts"]);
 const TOOLING_SOURCE_TEST_TARGETS = new Map([
+  ["scripts/github/barnacle-auto-response.mjs", ["test/scripts/barnacle-auto-response.test.ts"]],
   ["scripts/changed-lanes.mjs", ["test/scripts/changed-lanes.test.ts"]],
   ["scripts/check-changed.mjs", ["test/scripts/changed-lanes.test.ts"]],
+  ["scripts/check-deadcode-unused-files.mjs", ["test/scripts/check-deadcode-unused-files.test.ts"]],
+  ["scripts/ci-docker-pull-retry.sh", ["test/scripts/ci-docker-pull-retry.test.ts"]],
+  [
+    "scripts/deadcode-unused-files.allowlist.mjs",
+    ["test/scripts/check-deadcode-unused-files.test.ts"],
+  ],
+  ["scripts/lib/docker-e2e-container.sh", ["test/scripts/docker-build-helper.test.ts"]],
+  ["scripts/lib/docker-e2e-package.sh", ["test/scripts/docker-build-helper.test.ts"]],
+  ["scripts/lib/live-docker-stage.sh", ["test/scripts/live-docker-stage.test.ts"]],
+  ["scripts/lib/openclaw-test-state.mjs", ["test/scripts/openclaw-test-state.test.ts"]],
   ["scripts/lib/vitest-local-scheduling.mjs", ["test/scripts/vitest-local-scheduling.test.ts"]],
+  [
+    "scripts/mantis/build-telegram-evidence.mjs",
+    ["test/scripts/mantis-build-telegram-evidence.test.ts"],
+  ],
+  [
+    "scripts/mantis/build-telegram-desktop-proof-evidence.mjs",
+    ["test/scripts/mantis-build-telegram-desktop-proof-evidence.test.ts"],
+  ],
+  ["scripts/mantis/publish-pr-evidence.mjs", ["test/scripts/mantis-publish-pr-evidence.test.ts"]],
+  ["scripts/qa-lab-up.ts", ["test/scripts/qa-lab-up.test.ts"]],
   [
     "scripts/run-vitest.mjs",
     [
@@ -236,32 +385,201 @@ const TOOLING_SOURCE_TEST_TARGETS = new Map([
       "test/scripts/vitest-local-scheduling.test.ts",
     ],
   ],
+  ["scripts/run-oxlint.mjs", ["test/scripts/run-oxlint.test.ts"]],
+  ["scripts/run-node.mjs", ["src/infra/run-node.test.ts"]],
+  ["scripts/ci-run-timings.mjs", ["test/scripts/ci-run-timings.test.ts"]],
+  ["scripts/docker-e2e.mjs", ["test/scripts/docker-e2e-helper-cli.test.ts"]],
+  ["scripts/docker-e2e-rerun.mjs", ["test/scripts/docker-e2e-helper-cli.test.ts"]],
+  ["scripts/docker-e2e-timings.mjs", ["test/scripts/docker-e2e-helper-cli.test.ts"]],
+  ["scripts/kova-ci-summary.mjs", ["test/scripts/kova-ci-summary.test.ts"]],
   ["scripts/test-extension-batch.mjs", ["test/scripts/test-extension.test.ts"]],
+  [
+    "scripts/write-build-info.js",
+    ["scripts/write-build-info.test.ts", "test/scripts/write-build-info.test.ts"],
+  ],
+  [
+    "scripts/write-build-info.ts",
+    ["scripts/write-build-info.test.ts", "test/scripts/write-build-info.test.ts"],
+  ],
   ["scripts/lib/extension-test-plan.mjs", ["test/scripts/test-extension.test.ts"]],
   ["scripts/lib/vitest-batch-runner.mjs", ["test/scripts/test-extension.test.ts"]],
+  ["scripts/lib/ci-node-test-plan.mjs", ["test/scripts/ci-node-test-plan.test.ts"]],
+  [
+    "scripts/lib/docker-e2e-scenarios.mjs",
+    ["test/scripts/docker-e2e-plan.test.ts", "test/scripts/plugin-prerelease-test-plan.test.ts"],
+  ],
+  [
+    "scripts/lib/plugin-prerelease-test-plan.mjs",
+    ["test/scripts/plugin-prerelease-test-plan.test.ts"],
+  ],
+  [
+    "scripts/e2e/kitchen-sink-plugin-docker.sh",
+    ["test/scripts/plugin-prerelease-test-plan.test.ts"],
+  ],
+  ["scripts/lib/vitest-shard-timings.mjs", ["test/scripts/vitest-shard-timings.test.ts"]],
+  [
+    "scripts/plugin-prerelease-liveish-matrix.mjs",
+    ["test/scripts/plugin-prerelease-test-plan.test.ts"],
+  ],
   ["scripts/test-projects.mjs", ["test/scripts/test-projects.test.ts"]],
   ["scripts/test-projects.test-support.d.mts", ["test/scripts/test-projects.test.ts"]],
   ["scripts/test-projects.test-support.mjs", ["test/scripts/test-projects.test.ts"]],
+  ["scripts/bundled-plugin-assets.mjs", ["test/scripts/bundled-plugin-assets.test.ts"]],
+  ["scripts/bundle-a2ui.mjs", ["test/scripts/bundled-plugin-assets.test.ts"]],
+  ["extensions/canvas/scripts/bundle-a2ui.mjs", ["extensions/canvas/scripts/bundle-a2ui.test.ts"]],
+  ["extensions/canvas/scripts/copy-a2ui.mjs", ["extensions/canvas/scripts/copy-a2ui.test.ts"]],
 ]);
 const TOOLING_TEST_TARGETS = new Map([
+  ["test/scripts/barnacle-auto-response.test.ts", ["test/scripts/barnacle-auto-response.test.ts"]],
   ["test/scripts/changed-lanes.test.ts", ["test/scripts/changed-lanes.test.ts"]],
+  [
+    "test/scripts/check-deadcode-unused-files.test.ts",
+    ["test/scripts/check-deadcode-unused-files.test.ts"],
+  ],
+  ["test/scripts/ci-docker-pull-retry.test.ts", ["test/scripts/ci-docker-pull-retry.test.ts"]],
+  ["test/scripts/docker-build-helper.test.ts", ["test/scripts/docker-build-helper.test.ts"]],
+  ["test/scripts/docker-e2e-helper-cli.test.ts", ["test/scripts/docker-e2e-helper-cli.test.ts"]],
+  ["test/scripts/kova-ci-summary.test.ts", ["test/scripts/kova-ci-summary.test.ts"]],
+  ["test/scripts/live-docker-stage.test.ts", ["test/scripts/live-docker-stage.test.ts"]],
+  ["test/scripts/openclaw-test-state.test.ts", ["test/scripts/openclaw-test-state.test.ts"]],
+  ["test/scripts/qa-lab-up.test.ts", ["test/scripts/qa-lab-up.test.ts"]],
+  [
+    "test/scripts/mantis-publish-pr-evidence.test.ts",
+    ["test/scripts/mantis-publish-pr-evidence.test.ts"],
+  ],
+  [
+    "test/scripts/mantis-build-telegram-evidence.test.ts",
+    ["test/scripts/mantis-build-telegram-evidence.test.ts"],
+  ],
+  [
+    "test/scripts/mantis-build-telegram-desktop-proof-evidence.test.ts",
+    ["test/scripts/mantis-build-telegram-desktop-proof-evidence.test.ts"],
+  ],
+  [
+    "test/scripts/plugin-prerelease-test-plan.test.ts",
+    ["test/scripts/plugin-prerelease-test-plan.test.ts"],
+  ],
+  ["scripts/write-build-info.test.ts", ["scripts/write-build-info.test.ts"]],
+  ["test/scripts/write-build-info.test.ts", ["test/scripts/write-build-info.test.ts"]],
   ["test/scripts/test-projects.test.ts", ["test/scripts/test-projects.test.ts"]],
   [
     "test/scripts/vitest-local-scheduling.test.ts",
     ["test/scripts/vitest-local-scheduling.test.ts"],
   ],
 ]);
+const GROUP_VISIBLE_REPLY_TEST_TARGETS = [
+  "src/auto-reply/reply/dispatch-acp.test.ts",
+  "src/auto-reply/reply/dispatch-from-config.test.ts",
+  "src/auto-reply/reply/followup-runner.test.ts",
+  "src/auto-reply/reply/groups.test.ts",
+  "extensions/discord/src/monitor/message-handler.process.test.ts",
+  "extensions/slack/src/monitor.tool-result.test.ts",
+];
+const GROUP_VISIBLE_REPLY_PROMPT_TEST_TARGETS = [
+  "src/agents/system-prompt.test.ts",
+  ...GROUP_VISIBLE_REPLY_TEST_TARGETS,
+];
+const CHANNEL_CONTRACT_REGISTRY_BACKED_TARGETS = [
+  "directory",
+  "plugin",
+  "surfaces-only",
+  "threading",
+].flatMap((suite) =>
+  "abcdefgh"
+    .split("")
+    .map(
+      (shard) =>
+        `src/channels/plugins/contracts/${suite}.registry-backed-shard-${shard}.contract.test.ts`,
+    ),
+);
+const TEST_HELPER_NORMALIZE_TEXT_TARGETS = [
+  "src/auto-reply/reply/commands-status.test.ts",
+  "src/auto-reply/status.test.ts",
+  "src/tui/components/chat-log.test.ts",
+];
 const SOURCE_TEST_TARGETS = new Map([
   ...PRECISE_SOURCE_TEST_TARGETS,
+  ["src/test-utils/openclaw-test-state.ts", ["src/test-utils/openclaw-test-state.test.ts"]],
+  [
+    "src/channels/plugins/contracts/test-helpers/manifest.ts",
+    [
+      ...CHANNEL_CONTRACT_REGISTRY_BACKED_TARGETS,
+      "src/channels/plugins/contracts/registry.contract.test.ts",
+      "src/channels/plugins/contracts/session-binding.registry-backed.contract.test.ts",
+    ],
+  ],
+  [
+    "src/channels/plugins/contracts/test-helpers/registry-backed-contract-shards.ts",
+    CHANNEL_CONTRACT_REGISTRY_BACKED_TARGETS,
+  ],
+  ["test/helpers/normalize-text.ts", TEST_HELPER_NORMALIZE_TEXT_TARGETS],
+  ["ui/config/control-ui-chunking.ts", ["ui/src/ui/control-ui-chunking.test.ts"]],
+  [
+    "src/plugin-sdk/test-helpers/directory-ids.ts",
+    [
+      "extensions/discord/src/directory-contract.test.ts",
+      "extensions/slack/src/directory-contract.test.ts",
+      "extensions/telegram/src/directory-contract.test.ts",
+    ],
+  ],
+  [
+    "src/plugin-sdk/channel-reply-pipeline.ts",
+    ["src/plugins/contracts/plugin-sdk-subpaths.test.ts", ...GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ],
+  ["src/plugin-sdk/reply-runtime.ts", ["src/plugins/contracts/plugin-sdk-subpaths.test.ts"]],
+  [
+    "test/helpers/channels/directory-ids.ts",
+    [
+      "extensions/discord/src/directory-contract.test.ts",
+      "extensions/slack/src/directory-contract.test.ts",
+      "extensions/telegram/src/directory-contract.test.ts",
+    ],
+  ],
   ["extensions/google-meet/index.ts", ["extensions/google-meet/index.test.ts"]],
   ["extensions/google-meet/src/cli.ts", ["extensions/google-meet/src/cli.test.ts"]],
   ["extensions/google-meet/src/create.ts", ["extensions/google-meet/index.test.ts"]],
   ["extensions/google-meet/src/oauth.ts", ["extensions/google-meet/src/oauth.test.ts"]],
+  [
+    "extensions/discord/src/monitor/message-handler.ts",
+    [
+      "extensions/discord/src/channel-actions.contract.test.ts",
+      "extensions/discord/src/channel.message-adapter.test.ts",
+      "extensions/discord/src/channel.test.ts",
+      "extensions/discord/src/durable-delivery.test.ts",
+      "extensions/discord/src/monitor/message-handler.bot-self-filter.test.ts",
+      "extensions/discord/src/monitor/message-handler.queue.test.ts",
+      "extensions/discord/src/monitor/provider.skill-dedupe.test.ts",
+      "extensions/discord/src/monitor/provider.test.ts",
+    ],
+  ],
+  ["src/commands/doctor-memory-search.ts", ["src/commands/doctor-memory-search.test.ts"]],
+  [
+    "src/commitments/model-selection.runtime.ts",
+    ["src/commitments/runtime.test.ts", "src/agents/model-selection.test.ts"],
+  ],
   ["src/agents/live-model-turn-probes.ts", ["src/agents/live-model-turn-probes.test.ts"]],
   [
-    "src/auto-reply/reply/dispatch-from-config.ts",
-    ["src/auto-reply/reply/dispatch-from-config.test.ts"],
+    "src/plugins/provider-auth-choice.ts",
+    ["src/commands/auth-choice.apply.plugin-provider.test.ts", "src/commands/auth-choice.test.ts"],
   ],
+  [
+    "src/secrets/provider-env-vars.ts",
+    ["src/secrets/provider-env-vars.dynamic.test.ts", "src/secrets/provider-env-vars.test.ts"],
+  ],
+  [
+    "src/memory-host-sdk/host/embedding-defaults.ts",
+    ["packages/memory-host-sdk/src/host/embeddings.test.ts"],
+  ],
+  [
+    "src/plugin-sdk/test-helpers/directory-ids.ts",
+    [
+      "extensions/discord/src/directory-contract.test.ts",
+      "extensions/slack/src/directory-contract.test.ts",
+      "extensions/telegram/src/directory-contract.test.ts",
+    ],
+  ],
+  ["src/auto-reply/reply/dispatch-from-config.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ["src/auto-reply/reply/source-reply-delivery-mode.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
   [
     "src/auto-reply/reply/effective-reply-route.ts",
     [
@@ -269,14 +587,55 @@ const SOURCE_TEST_TARGETS = new Map([
       "src/auto-reply/reply/dispatch-from-config.test.ts",
     ],
   ],
+  ["src/auto-reply/reply/get-reply-run.ts", ["src/auto-reply/reply/followup-runner.test.ts"]],
+  ["src/auto-reply/reply/groups.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ["src/auto-reply/get-reply-options.types.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ["src/agents/system-prompt.ts", GROUP_VISIBLE_REPLY_PROMPT_TEST_TARGETS],
+  ["src/config/types.messages.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ["src/config/zod-schema.core.ts", GROUP_VISIBLE_REPLY_TEST_TARGETS],
+  ["src/auto-reply/reply/commands-acp.ts", ["src/auto-reply/reply/commands-acp.test.ts"]],
+  [
+    "src/auto-reply/reply/dispatch-acp-command-bypass.ts",
+    ["src/auto-reply/reply/dispatch-acp-command-bypass.test.ts"],
+  ],
 ]);
-const GENERATED_CHANGED_TEST_TARGETS = new Set([
-  "src/canvas-host/a2ui/.bundle.hash",
-  "src/canvas-host/a2ui/a2ui.bundle.js",
-]);
+const GENERATED_CHANGED_TEST_TARGET_PATTERNS = [
+  /^extensions\/[^/]+\/src\/host\/.+\/\.bundle\.hash$/u,
+  /^extensions\/[^/]+\/src\/host\/.+\/[^/]+\.bundle\.js$/u,
+];
+const SOURCE_ROOTS_FOR_IMPORT_GRAPH = [
+  "src",
+  "extensions",
+  "packages",
+  "ui/src",
+  "ui/config",
+  "test",
+];
+const IMPORTABLE_FILE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
+const IMPORT_GRAPH_GREP_PATHS = SOURCE_ROOTS_FOR_IMPORT_GRAPH.flatMap((root) =>
+  IMPORTABLE_FILE_EXTENSIONS.map((ext) => `:(glob)${root}/**/*${ext}`),
+);
+const IMPORT_SPECIFIER_PATTERN =
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)/gu;
+const BROAD_CHANGED_ENV_KEY = "OPENCLAW_TEST_CHANGED_BROAD";
 const VITEST_NO_OUTPUT_TIMEOUT_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_TIMEOUT_MS";
 const VITEST_NO_OUTPUT_RETRY_ENV_KEY = "OPENCLAW_VITEST_NO_OUTPUT_RETRY";
-export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_TIMEOUT_MS = "180000";
+export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_TIMEOUT_MS = String(
+  DEFAULT_VITEST_NO_OUTPUT_TIMEOUT_MS,
+);
+const GATEWAY_SERVER_FULL_SUITE_TARGET_CHUNK_COUNT = 4;
+const GATEWAY_SERVER_BACKED_HTTP_TEST_TARGETS = new Set([
+  "src/gateway/embeddings-http.test.ts",
+  "src/gateway/models-http.test.ts",
+  "src/gateway/openai-http.test.ts",
+  "src/gateway/openresponses-http.test.ts",
+  "src/gateway/probe.auth.integration.test.ts",
+]);
+const GATEWAY_SERVER_EXCLUDED_TEST_TARGETS = new Set([
+  "src/gateway/gateway.test.ts",
+  "src/gateway/server.startup-matrix-migration.integration.test.ts",
+  "src/gateway/sessions-history-http.test.ts",
+]);
 const VITEST_CONFIG_TARGET_KIND_BY_PATH = new Map(
   Object.entries(VITEST_CONFIG_BY_KIND).map(([kind, config]) => [config, kind]),
 );
@@ -328,6 +687,77 @@ function normalizePathPattern(value) {
   return value.replaceAll("\\", "/");
 }
 
+function listRepoFilesRecursive(root, cwd) {
+  const entries = fs.readdirSync(root, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const absolute = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      return listRepoFilesRecursive(absolute, cwd);
+    }
+    if (!entry.isFile()) {
+      return [];
+    }
+    return [normalizePathPattern(path.relative(cwd, absolute))];
+  });
+}
+
+function listGatewayFilesFromGit(cwd) {
+  const result = spawnSync("git", ["ls-files", "--", "src/gateway"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split("\n")
+    .map((line) => normalizePathPattern(line.trim()))
+    .filter((line) => line.length > 0);
+}
+
+function isGatewayServerFullSuiteTarget(relative) {
+  if (
+    GATEWAY_SERVER_EXCLUDED_TEST_TARGETS.has(relative) ||
+    relative.startsWith("src/gateway/server-methods/")
+  ) {
+    return false;
+  }
+  return (
+    GATEWAY_SERVER_BACKED_HTTP_TEST_TARGETS.has(relative) ||
+    (relative.startsWith("src/gateway/") &&
+      path.posix.basename(relative).includes("server") &&
+      relative.endsWith(".test.ts"))
+  );
+}
+
+function resolveGatewayServerFullSuiteTargets(cwd) {
+  const gatewayDir = path.join(cwd, "src/gateway");
+  if (!fs.existsSync(gatewayDir)) {
+    return [];
+  }
+  return (listGatewayFilesFromGit(cwd) ?? listRepoFilesRecursive(gatewayDir, cwd))
+    .filter(isGatewayServerFullSuiteTarget)
+    .toSorted((a, b) => a.localeCompare(b));
+}
+
+function splitTargetChunks(targets, chunkCount) {
+  if (targets.length === 0) {
+    return [];
+  }
+  const normalizedChunkCount = Math.min(chunkCount, targets.length);
+  const baseSize = Math.floor(targets.length / normalizedChunkCount);
+  const remainder = targets.length % normalizedChunkCount;
+  const chunks = [];
+  let offset = 0;
+  for (let index = 0; index < normalizedChunkCount; index += 1) {
+    const chunkSize = baseSize + (index < remainder ? 1 : 0);
+    chunks.push(targets.slice(offset, offset + chunkSize));
+    offset += chunkSize;
+  }
+  return chunks;
+}
+
 function isExistingPathTarget(arg, cwd) {
   return fs.existsSync(path.resolve(cwd, arg));
 }
@@ -348,6 +778,10 @@ function isFileLikeTarget(arg) {
   return /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(arg);
 }
 
+function isTestFileTarget(arg) {
+  return /\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(arg);
+}
+
 function isLikelyFileTarget(arg) {
   return /(?:^|\/)[^/]+\.[A-Za-z0-9]+$/u.test(arg);
 }
@@ -356,7 +790,7 @@ function isPathLikeTargetArg(arg, cwd) {
   if (!arg || arg === "--" || arg.startsWith("-")) {
     return false;
   }
-  return isExistingPathTarget(arg, cwd) || isGlobTarget(arg) || isFileLikeTarget(arg);
+  return isGlobTarget(arg) || isFileLikeTarget(arg) || isExistingPathTarget(arg, cwd);
 }
 
 function toRepoRelativeTarget(arg, cwd) {
@@ -379,12 +813,429 @@ function toScopedIncludePattern(arg, cwd) {
   return `${relative.replace(/\/+$/u, "")}/**/*.test.ts`;
 }
 
+const EXPLICIT_TEST_TARGET_ROOTS = ["src", "test", "extensions", "ui", "packages", "apps"];
+let cachedExplicitTestTargetFiles = null;
+let cachedExplicitTestTargetFilesCwd = null;
+
+function listExplicitTestTargetFilesFromGit(cwd) {
+  const result = spawnSync(
+    "git",
+    [
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      ...EXPLICIT_TEST_TARGET_ROOTS,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (result.status !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split("\0")
+    .map((line) => normalizePathPattern(line.trim()))
+    .filter((line) => line.length > 0 && isImportableGraphFile(line));
+}
+
+function listExplicitTestTargetFilesForCwd(cwd) {
+  if (cachedExplicitTestTargetFiles && cachedExplicitTestTargetFilesCwd === cwd) {
+    return cachedExplicitTestTargetFiles;
+  }
+
+  cachedExplicitTestTargetFiles =
+    listExplicitTestTargetFilesFromGit(cwd) ??
+    EXPLICIT_TEST_TARGET_ROOTS.flatMap((root) => listImportGraphFiles(cwd, root));
+  cachedExplicitTestTargetFilesCwd = cwd;
+  return cachedExplicitTestTargetFiles;
+}
+
+function includePatternMatchesAnyFile(pattern, files) {
+  return files.some((file) => file === pattern || path.matchesGlob(file, pattern));
+}
+
+export function findUnmatchedExplicitTestTargets(args, cwd = process.cwd()) {
+  const { targetArgs } = parseTestProjectsArgs(args, cwd);
+  if (targetArgs.length === 0) {
+    return [];
+  }
+
+  let candidateFiles = null;
+  const getCandidateFiles = () => {
+    candidateFiles ??= listExplicitTestTargetFilesForCwd(cwd);
+    return candidateFiles;
+  };
+  const unmatched = [];
+  for (const targetArg of targetArgs) {
+    const relative = toRepoRelativeTarget(targetArg, cwd);
+    if (resolveVitestConfigTargetKind(relative)) {
+      continue;
+    }
+    const kind = classifyTarget(targetArg, cwd);
+    if (shouldUseWholeConfigTarget(kind, targetArg, cwd)) {
+      continue;
+    }
+    if (isGlobTarget(relative)) {
+      if (!includePatternMatchesAnyFile(relative, getCandidateFiles())) {
+        unmatched.push({
+          target: targetArg,
+          reason: "glob-matched-no-files",
+        });
+      }
+      continue;
+    }
+
+    const absolute = path.resolve(cwd, targetArg);
+    if (!fs.existsSync(absolute)) {
+      unmatched.push({
+        target: targetArg,
+        reason: "path-does-not-exist",
+      });
+      continue;
+    }
+
+    if (isTestFileTarget(relative)) {
+      continue;
+    }
+
+    const includePattern = toScopedIncludePattern(targetArg, cwd);
+    if (!includePatternMatchesAnyFile(includePattern, getCandidateFiles())) {
+      unmatched.push({
+        target: targetArg,
+        reason: "target-matched-no-test-files",
+        includePattern,
+      });
+    }
+  }
+  return unmatched;
+}
+
+function isSkippedImportGraphDirectory(name) {
+  return name === ".git" || name === "dist" || name === "node_modules" || name === "vendor";
+}
+
+function listImportGraphFiles(cwd, directory, files = []) {
+  let entries;
+  try {
+    entries = fs.readdirSync(path.join(cwd, directory), { withFileTypes: true });
+  } catch {
+    return files;
+  }
+
+  for (const entry of entries) {
+    const relative = normalizePathPattern(path.posix.join(directory, entry.name));
+    if (entry.isDirectory()) {
+      if (!isSkippedImportGraphDirectory(entry.name)) {
+        listImportGraphFiles(cwd, relative, files);
+      }
+      continue;
+    }
+    if (entry.isFile() && IMPORTABLE_FILE_EXTENSIONS.some((ext) => relative.endsWith(ext))) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+function resolveImportSpecifier(importer, specifier, fileSet) {
+  if (!specifier.startsWith(".")) {
+    return null;
+  }
+
+  const importerDir = path.posix.dirname(importer);
+  const base = normalizePathPattern(path.posix.normalize(path.posix.join(importerDir, specifier)));
+  const candidates = [];
+  const ext = path.posix.extname(base);
+  if (ext) {
+    candidates.push(base);
+    if ([".js", ".jsx", ".mjs", ".cjs"].includes(ext)) {
+      const withoutExt = base.slice(0, -ext.length);
+      candidates.push(
+        ...IMPORTABLE_FILE_EXTENSIONS.map((candidateExt) => `${withoutExt}${candidateExt}`),
+      );
+    }
+  } else {
+    candidates.push(
+      ...IMPORTABLE_FILE_EXTENSIONS.map((candidateExt) => `${base}${candidateExt}`),
+      ...IMPORTABLE_FILE_EXTENSIONS.map((candidateExt) => `${base}/index${candidateExt}`),
+    );
+  }
+
+  return candidates.find((candidate) => fileSet.has(candidate)) ?? null;
+}
+
+let cachedImportGraph = null;
+let cachedImportGraphCwd = null;
+let cachedImportGraphFiles = null;
+let cachedImportGraphFilesCwd = null;
+const cachedImportGraphGrepMatches = new Map();
+const cachedDirectImporters = new Map();
+
+function isImportableGraphFile(relative) {
+  return IMPORTABLE_FILE_EXTENSIONS.some((ext) => relative.endsWith(ext));
+}
+
+function listImportGraphFilesFromGit(cwd) {
+  const result = spawnSync("git", ["ls-files", "--", ...SOURCE_ROOTS_FOR_IMPORT_GRAPH], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status !== 0) {
+    return null;
+  }
+  return result.stdout
+    .split("\n")
+    .map((line) => normalizePathPattern(line.trim()))
+    .filter((line) => line.length > 0 && isImportableGraphFile(line));
+}
+
+function listImportGraphFilesForCwd(cwd) {
+  if (cachedImportGraphFiles && cachedImportGraphFilesCwd === cwd) {
+    return cachedImportGraphFiles;
+  }
+
+  cachedImportGraphFiles =
+    listImportGraphFilesFromGit(cwd) ??
+    SOURCE_ROOTS_FOR_IMPORT_GRAPH.flatMap((root) => listImportGraphFiles(cwd, root));
+  cachedImportGraphFilesCwd = cwd;
+  return cachedImportGraphFiles;
+}
+
+function stripImportableGraphExtension(relative) {
+  for (const ext of IMPORTABLE_FILE_EXTENSIONS) {
+    if (relative.endsWith(ext)) {
+      return relative.slice(0, -ext.length);
+    }
+  }
+  return relative;
+}
+
+function resolveImportGraphSearchTerms(relative) {
+  const withoutExtension = stripImportableGraphExtension(relative);
+  const basename = path.posix.basename(stripImportableGraphExtension(relative));
+  if (basename === "index" || basename.length < 3) {
+    return [];
+  }
+  const terms = [];
+  const segments = withoutExtension.split("/");
+  if (segments.length > 1) {
+    terms.push(segments.slice(-2).join("/"), withoutExtension);
+  }
+  if (relative.startsWith("test/helpers/")) {
+    return [...new Set(terms)];
+  }
+  terms.push(basename);
+  return [...new Set(terms)];
+}
+
+function listImportGraphGrepMatches(cwd, term) {
+  const cacheKey = `${cwd}\0${term}`;
+  if (cachedImportGraphGrepMatches.has(cacheKey)) {
+    return cachedImportGraphGrepMatches.get(cacheKey);
+  }
+
+  const result = spawnSync(
+    "git",
+    ["grep", "-l", "--fixed-strings", term, "--", ...IMPORT_GRAPH_GREP_PATHS],
+    {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  if (result.status === 1) {
+    cachedImportGraphGrepMatches.set(cacheKey, []);
+    return [];
+  }
+  if (result.status !== 0) {
+    cachedImportGraphGrepMatches.set(cacheKey, null);
+    return null;
+  }
+  const matches = result.stdout
+    .split("\n")
+    .map((line) => normalizePathPattern(line.trim()))
+    .filter((line) => line.length > 0 && isImportableGraphFile(line));
+  cachedImportGraphGrepMatches.set(cacheKey, matches);
+  return matches;
+}
+
+function findDirectImportersWithGitGrep(cwd, importedFile, fileSet) {
+  const cacheKey = `${cwd}\0${importedFile}`;
+  if (cachedDirectImporters.has(cacheKey)) {
+    return cachedDirectImporters.get(cacheKey);
+  }
+
+  const terms = resolveImportGraphSearchTerms(importedFile);
+  if (terms.length === 0) {
+    cachedDirectImporters.set(cacheKey, null);
+    return null;
+  }
+
+  let skippedBroadTerm = false;
+  const importers = [];
+  for (const term of terms) {
+    const candidates = listImportGraphGrepMatches(cwd, term);
+    if (!candidates) {
+      cachedDirectImporters.set(cacheKey, null);
+      return null;
+    }
+    if (candidates.length > 800) {
+      skippedBroadTerm = true;
+      continue;
+    }
+    for (const file of candidates) {
+      if (file === importedFile || !fileSet.has(file) || importers.includes(file)) {
+        continue;
+      }
+      let source = "";
+      try {
+        source = fs.readFileSync(path.join(cwd, file), "utf8");
+      } catch {
+        continue;
+      }
+      for (const match of source.matchAll(IMPORT_SPECIFIER_PATTERN)) {
+        const imported = resolveImportSpecifier(file, match[1] ?? match[2] ?? "", fileSet);
+        if (imported === importedFile) {
+          importers.push(file);
+          break;
+        }
+      }
+    }
+    if (importedFile.startsWith("test/helpers/") && importers.length > 0 && term.includes("/")) {
+      break;
+    }
+  }
+  const result =
+    skippedBroadTerm && importers.length === 0 && !importedFile.startsWith("test/helpers/")
+      ? null
+      : importers;
+  cachedDirectImporters.set(cacheKey, result);
+  return result;
+}
+
+function resolveAffectedTestsFromTargetedImportScan(changedPath, cwd) {
+  const normalized = normalizePathPattern(changedPath);
+  const files = listImportGraphFilesForCwd(cwd);
+  const fileSet = new Set(files);
+  if (!fileSet.has(normalized)) {
+    return [];
+  }
+
+  const testFiles = new Set(
+    files.filter((file) => isTestFileTarget(file) && !file.endsWith(".live.test.ts")),
+  );
+  const queue = [normalized];
+  const seen = new Set(queue);
+  const targets = [];
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    const importers = findDirectImportersWithGitGrep(cwd, current, fileSet);
+    if (importers === null) {
+      return null;
+    }
+    for (const importer of importers) {
+      if (seen.has(importer)) {
+        continue;
+      }
+      seen.add(importer);
+      if (testFiles.has(importer)) {
+        targets.push(importer);
+        continue;
+      }
+      queue.push(importer);
+    }
+  }
+
+  return [...new Set(targets)].toSorted((left, right) => left.localeCompare(right));
+}
+
+function getImportGraph(cwd) {
+  if (cachedImportGraph && cachedImportGraphCwd === cwd) {
+    return cachedImportGraph;
+  }
+
+  const files = listImportGraphFilesForCwd(cwd);
+  const fileSet = new Set(files);
+  const reverseImports = new Map();
+  const testFiles = new Set(
+    files.filter((file) => isTestFileTarget(file) && !file.endsWith(".live.test.ts")),
+  );
+
+  for (const file of files) {
+    let source = "";
+    try {
+      source = fs.readFileSync(path.join(cwd, file), "utf8");
+    } catch {
+      continue;
+    }
+    for (const match of source.matchAll(IMPORT_SPECIFIER_PATTERN)) {
+      const imported = resolveImportSpecifier(file, match[1] ?? match[2] ?? "", fileSet);
+      if (!imported) {
+        continue;
+      }
+      const importers = reverseImports.get(imported) ?? [];
+      importers.push(file);
+      reverseImports.set(imported, importers);
+    }
+  }
+
+  cachedImportGraph = { reverseImports, testFiles };
+  cachedImportGraphCwd = cwd;
+  return cachedImportGraph;
+}
+
+function resolveAffectedTestsFromImportGraph(changedPath, cwd) {
+  const normalized = normalizePathPattern(changedPath);
+  const targetedTargets = resolveAffectedTestsFromTargetedImportScan(normalized, cwd);
+  if (targetedTargets !== null) {
+    return targetedTargets;
+  }
+
+  const { reverseImports, testFiles } = getImportGraph(cwd);
+  const queue = [normalized];
+  const seen = new Set(queue);
+  const targets = [];
+
+  for (let index = 0; index < queue.length; index += 1) {
+    const current = queue[index];
+    for (const importer of reverseImports.get(current) ?? []) {
+      if (seen.has(importer)) {
+        continue;
+      }
+      seen.add(importer);
+      if (testFiles.has(importer)) {
+        targets.push(importer);
+      }
+      queue.push(importer);
+    }
+  }
+
+  return [...new Set(targets)].toSorted((left, right) => left.localeCompare(right));
+}
+
 function resolveVitestConfigTargetKind(relative) {
   return VITEST_CONFIG_TARGET_KIND_BY_PATH.get(relative) ?? null;
 }
 
 function isVitestConfigTargetForKind(kind, targetArg, cwd) {
   return resolveVitestConfigTargetKind(toRepoRelativeTarget(targetArg, cwd)) === kind;
+}
+
+function isControlUiE2eTarget(relative) {
+  return (
+    relative === "ui/src/test-helpers/control-ui-e2e.ts" ||
+    relative === "ui/src/ui/e2e" ||
+    relative.startsWith("ui/src/ui/e2e/") ||
+    (relative.startsWith("ui/src/") && relative.endsWith(".e2e.test.ts"))
+  );
 }
 
 function resolveChannelContractTargetKind(relative) {
@@ -436,36 +1287,7 @@ function resolveChannelContractTargetKind(relative) {
 }
 
 function listChangedPathsFromGit(baseRef, cwd) {
-  return [
-    ...new Set([
-      ...runGitNameOnlyDiff(cwd, [`${baseRef}...HEAD`]),
-      ...runGitNameOnlyDiff(cwd, ["--cached", "--diff-filter=ACMR"]),
-      ...runGitNameOnlyDiff(cwd, ["--diff-filter=ACMR"]),
-      ...runGitLsFiles(cwd, ["--others", "--exclude-standard"]),
-    ]),
-  ].toSorted((left, right) => left.localeCompare(right));
-}
-
-function runGitNameOnlyDiff(cwd, extraArgs) {
-  return execFileSync("git", ["diff", "--name-only", ...extraArgs], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-    .split("\n")
-    .map((line) => normalizePathPattern(line.trim()))
-    .filter((line) => line.length > 0);
-}
-
-function runGitLsFiles(cwd, extraArgs) {
-  return execFileSync("git", ["ls-files", ...extraArgs], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  })
-    .split("\n")
-    .map((line) => normalizePathPattern(line.trim()))
-    .filter((line) => line.length > 0);
+  return listChangedPathsFromGitSource({ base: baseRef, cwd });
 }
 
 function extractChangedBaseRef(args) {
@@ -507,7 +1329,7 @@ function shouldKeepBroadChangedRun(changedPaths) {
   return changedPaths.some((changedPath) =>
     PRECISE_SOURCE_TEST_TARGETS.has(changedPath)
       ? false
-      : BROAD_CHANGED_RERUN_PATTERNS.some((pattern) => pattern.test(changedPath)),
+      : BROAD_CHANGED_FALLBACK_PATTERNS.some((pattern) => pattern.test(changedPath)),
   );
 }
 
@@ -527,8 +1349,13 @@ function resolveToolingTestTargets(changedPath) {
   return TOOLING_SOURCE_TEST_TARGETS.get(changedPath) ?? TOOLING_TEST_TARGETS.get(changedPath);
 }
 
+function shouldUseBroadChangedTargets(env = process.env) {
+  const value = env[BROAD_CHANGED_ENV_KEY]?.trim().toLowerCase();
+  return ["1", "true", "yes", "on"].includes(value ?? "");
+}
+
 function isRoutableChangedTarget(changedPath) {
-  if (GENERATED_CHANGED_TEST_TARGETS.has(changedPath)) {
+  if (GENERATED_CHANGED_TEST_TARGET_PATTERNS.some((pattern) => pattern.test(changedPath))) {
     return false;
   }
   if (changedPath.endsWith(".live.test.ts")) {
@@ -537,7 +1364,52 @@ function isRoutableChangedTarget(changedPath) {
   return /^(?:src|test|extensions|ui|packages)(?:\/|$)/u.test(changedPath);
 }
 
-export function resolveChangedTestTargetPlan(changedPaths) {
+function resolveSiblingTestTarget(changedPath, cwd) {
+  if (!/\.[cm]?tsx?$/u.test(changedPath) || isTestFileTarget(changedPath)) {
+    return null;
+  }
+  const withoutExtension = changedPath.replace(/\.[cm]?tsx?$/u, "");
+  const sibling = `${withoutExtension}.test.ts`;
+  return fs.existsSync(path.join(cwd, sibling)) ? sibling : null;
+}
+
+function shouldRouteChangedTargetWithoutImportGraph(changedPath) {
+  return (
+    changedPath.endsWith(".live.test.ts") ||
+    (changedPath.startsWith("ui/src/") && !changedPath.startsWith("ui/src/ui/"))
+  );
+}
+
+function resolvePreciseChangedTestTargets(changedPath, options) {
+  const cwd = options.cwd ?? process.cwd();
+  const mappedTargets =
+    resolveToolingTestTargets(changedPath) ?? SOURCE_TEST_TARGETS.get(changedPath);
+  if (mappedTargets) {
+    return mappedTargets;
+  }
+  if (isRoutableChangedTarget(changedPath) && isTestFileTarget(changedPath)) {
+    return [changedPath];
+  }
+  const siblingTest = resolveSiblingTestTarget(changedPath, cwd);
+  if (siblingTest) {
+    return [siblingTest];
+  }
+  if (BROAD_ONLY_TEST_HELPERS.has(changedPath)) {
+    return null;
+  }
+  if (shouldRouteChangedTargetWithoutImportGraph(changedPath)) {
+    return changedPath.startsWith("ui/src/") ? [changedPath] : null;
+  }
+  if (/^(?:src|test\/helpers|extensions|packages|ui\/src|ui\/config)\//u.test(changedPath)) {
+    const affectedTests = resolveAffectedTestsFromImportGraph(changedPath, cwd);
+    if (affectedTests.length > 0) {
+      return affectedTests;
+    }
+  }
+  return null;
+}
+
+export function resolveChangedTestTargetPlan(changedPaths, options = {}) {
   if (changedPaths.length === 0) {
     return { mode: "none", targets: [] };
   }
@@ -545,22 +1417,28 @@ export function resolveChangedTestTargetPlan(changedPaths) {
   if (toolingTargets) {
     return { mode: "targets", targets: toolingTargets };
   }
-  if (shouldKeepBroadChangedRun(changedPaths)) {
-    return { mode: "broad", targets: [] };
-  }
   const changedLanes = detectChangedLanes(changedPaths);
-  if (changedLanes.lanes.all) {
-    return { mode: "broad", targets: [] };
-  }
-  const targets = changedPaths.flatMap((changedPath) => {
-    const mappedTargets =
-      resolveToolingTestTargets(changedPath) ?? SOURCE_TEST_TARGETS.get(changedPath);
-    if (mappedTargets) {
-      return mappedTargets;
+  const env = options.env ?? {};
+  const useBroadFallback = options.broad ?? shouldUseBroadChangedTargets(env);
+  const targets = [];
+  for (const changedPath of changedPaths) {
+    const preciseTargets = resolvePreciseChangedTestTargets(changedPath, options);
+    if (preciseTargets) {
+      targets.push(...preciseTargets);
+      continue;
     }
-    return isRoutableChangedTarget(changedPath) ? [changedPath] : [];
-  });
-  if (changedLanes.extensionImpactFromCore) {
+    const needsBroadFallback = shouldKeepBroadChangedRun([changedPath]) || changedLanes.lanes.all;
+    if (needsBroadFallback) {
+      if (useBroadFallback) {
+        return { mode: "broad", targets: [] };
+      }
+      continue;
+    }
+    if (isRoutableChangedTarget(changedPath)) {
+      targets.push(changedPath);
+    }
+  }
+  if (useBroadFallback && changedLanes.extensionImpactFromCore) {
     targets.push("extensions");
   }
   return { mode: "targets", targets: [...new Set(targets)] };
@@ -577,13 +1455,17 @@ export function resolveChangedTargetArgs(
   args,
   cwd = process.cwd(),
   listChangedPaths = listChangedPathsFromGit,
+  options = {},
 ) {
   const baseRef = extractChangedBaseRef(args);
   if (!baseRef) {
     return null;
   }
   const changedPaths = listChangedPaths(baseRef, cwd);
-  const plan = resolveChangedTestTargetPlan(changedPaths);
+  const plan = resolveChangedTestTargetPlan(changedPaths, {
+    cwd,
+    ...options,
+  });
   if (plan.mode === "broad") {
     return null;
   }
@@ -596,8 +1478,17 @@ function classifyTarget(arg, cwd) {
   if (configTargetKind) {
     return configTargetKind;
   }
-  if (resolveUnitFastTestIncludePattern(relative)) {
-    return "unitFast";
+  if (isControlUiE2eTarget(relative)) {
+    return "uiE2e";
+  }
+  if (relative.startsWith("ui/src/")) {
+    if (isUnitUiTestTarget(relative)) {
+      return "unitUi";
+    }
+    return "ui";
+  }
+  if (relative.startsWith("src/tui/tui-pty-")) {
+    return "tuiPty";
   }
   if (relative.endsWith(".e2e.test.ts")) {
     return "e2e";
@@ -608,6 +1499,16 @@ function classifyTarget(arg, cwd) {
     relative === "src/gateway/sessions-history-http.test.ts"
   ) {
     return "e2e";
+  }
+  const channelContractKind = resolveChannelContractTargetKind(relative);
+  if (channelContractKind) {
+    return channelContractKind;
+  }
+  if (relative.startsWith("src/plugins/contracts/")) {
+    return "contractsPlugin";
+  }
+  if (resolveUnitFastTestIncludePattern(relative)) {
+    return "unitFast";
   }
   if (relative === "extensions") {
     return "extensionFull";
@@ -630,11 +1531,14 @@ function classifyTarget(arg, cwd) {
     if (isAcpxExtensionRoot(extensionRoot)) {
       return "extensionAcpx";
     }
+    if (isActiveMemoryExtensionRoot(extensionRoot)) {
+      return "extensionActiveMemory";
+    }
+    if (isCodexExtensionRoot(extensionRoot)) {
+      return "extensionCodex";
+    }
     if (isDiffsExtensionRoot(extensionRoot)) {
       return "extensionDiffs";
-    }
-    if (isBlueBubblesExtensionRoot(extensionRoot)) {
-      return "extensionBlueBubbles";
     }
     if (isBrowserExtensionRoot(extensionRoot)) {
       return "extensionBrowser";
@@ -679,13 +1583,6 @@ function classifyTarget(arg, cwd) {
       return "extensionMisc";
     }
     return isProviderExtensionRoot(extensionRoot) ? "extensionProvider" : "extension";
-  }
-  const channelContractKind = resolveChannelContractTargetKind(relative);
-  if (channelContractKind) {
-    return channelContractKind;
-  }
-  if (relative.startsWith("src/plugins/contracts/")) {
-    return "contractsPlugin";
   }
   if (isChannelSurfaceTestFile(relative)) {
     return "channel";
@@ -771,9 +1668,6 @@ function classifyTarget(arg, cwd) {
   if (relative.startsWith("src/plugins/")) {
     return "plugin";
   }
-  if (relative.startsWith("ui/src/")) {
-    return "ui";
-  }
   if (relative.startsWith("src/utils/")) {
     return "utils";
   }
@@ -804,6 +1698,10 @@ function shouldUseWholeConfigTarget(kind, targetArg, cwd) {
   if (isVitestConfigTargetForKind(kind, targetArg, cwd)) {
     return true;
   }
+  if (kind === "uiE2e") {
+    const relative = toRepoRelativeTarget(targetArg, cwd);
+    return relative === "ui/src/test-helpers/control-ui-e2e.ts";
+  }
   if (kind !== "ui") {
     return false;
   }
@@ -820,6 +1718,7 @@ function createVitestArgs(params) {
     ...(params.watchMode ? [] : ["run"]),
     "--config",
     params.config,
+    ...(params.config === UI_E2E_VITEST_CONFIG ? ["--configLoader", "runner"] : []),
     ...params.forwardedArgs,
   ];
 }
@@ -850,10 +1749,11 @@ export function buildVitestRunPlans(
   args,
   cwd = process.cwd(),
   listChangedPaths = listChangedPathsFromGit,
+  options = {},
 ) {
   const { forwardedArgs, targetArgs, watchMode } = parseTestProjectsArgs(args, cwd);
   const changedTargetArgs =
-    targetArgs.length === 0 ? resolveChangedTargetArgs(args, cwd, listChangedPaths) : null;
+    targetArgs.length === 0 ? resolveChangedTargetArgs(args, cwd, listChangedPaths, options) : null;
   const activeTargetArgs = changedTargetArgs ?? targetArgs;
   const activeForwardedArgs =
     changedTargetArgs !== null ? stripChangedArgs(forwardedArgs) : forwardedArgs;
@@ -916,6 +1816,7 @@ export function buildVitestRunPlans(
     "sharedCore",
     "tasks",
     "tui",
+    "tuiPty",
     "mediaUnderstanding",
     "acp",
     "cli",
@@ -925,9 +1826,18 @@ export function buildVitestRunPlans(
     "autoReplyCore",
     "autoReplyReply",
     "autoReplyTopLevel",
+    "agentCore",
+    "agentPiEmbedded",
+    "agentSupport",
+    "agentTools",
     "agent",
+    "agentsCore",
+    "agentsPiEmbedded",
+    "agentsSupport",
+    "agentsTools",
     "plugin",
     "ui",
+    "uiE2e",
     "unitSrc",
     "unitSecurity",
     "unitSupport",
@@ -937,7 +1847,6 @@ export function buildVitestRunPlans(
     "e2e",
     "extensionAcpx",
     "extensionDiffs",
-    "extensionBlueBubbles",
     "extensionBrowser",
     "extensionDiscord",
     "extensionFeishu",
@@ -1013,7 +1922,7 @@ export function buildVitestRunPlans(
 }
 
 export function buildFullSuiteVitestRunPlans(args, cwd = process.cwd()) {
-  const { forwardedArgs, watchMode } = parseTestProjectsArgs(args, cwd);
+  const { forwardedArgs, targetArgs, watchMode } = parseTestProjectsArgs(args, cwd);
   if (watchMode) {
     return [
       {
@@ -1036,14 +1945,32 @@ export function buildFullSuiteVitestRunPlans(args, cwd = process.cwd()) {
     ) {
       return [];
     }
-    const expandShard = expandToProjectConfigs || shard.config === FULL_EXTENSIONS_VITEST_CONFIG;
+    const expandShard = expandToProjectConfigs;
     const configs = expandShard ? shard.projects : [shard.config];
-    return configs.map((config) => ({
-      config,
-      forwardedArgs,
-      includePatterns: null,
-      watchMode: false,
-    }));
+    return configs.flatMap((config) => {
+      if (expandShard && targetArgs.length === 0 && config === GATEWAY_SERVER_VITEST_CONFIG) {
+        const chunks = splitTargetChunks(
+          resolveGatewayServerFullSuiteTargets(cwd),
+          GATEWAY_SERVER_FULL_SUITE_TARGET_CHUNK_COUNT,
+        );
+        if (chunks.length > 0) {
+          return chunks.map((targets) => ({
+            config,
+            forwardedArgs: [...forwardedArgs, ...targets],
+            includePatterns: null,
+            watchMode: false,
+          }));
+        }
+      }
+      return [
+        {
+          config,
+          forwardedArgs,
+          includePatterns: null,
+          watchMode: false,
+        },
+      ];
+    });
   });
 }
 
@@ -1068,7 +1995,8 @@ function hasConservativeVitestWorkerBudget(env) {
   return workerBudget !== null && workerBudget <= 1;
 }
 
-export function resolveParallelFullSuiteConcurrency(specCount, env = process.env, hostInfo) {
+export function resolveParallelFullSuiteConcurrency(specCount, env, hostInfo) {
+  env ??= process.env;
   const override = parsePositiveInt(env.OPENCLAW_TEST_PROJECTS_PARALLEL);
   if (override !== null) {
     return Math.min(override, specCount);
@@ -1160,7 +2088,10 @@ export function shouldRetryVitestNoOutputTimeout(env = process.env) {
 export function createVitestRunSpecs(args, params = {}) {
   const cwd = params.cwd ?? process.cwd();
   const baseEnv = params.baseEnv ?? process.env;
-  const plans = filterPlansForContractIncludeFile(buildVitestRunPlans(args, cwd), baseEnv);
+  const plans = filterPlansForContractIncludeFile(
+    buildVitestRunPlans(args, cwd, listChangedPathsFromGit, { env: baseEnv }),
+    baseEnv,
+  );
   return plans.map((plan, index) => {
     const includeFilePath = plan.includePatterns
       ? path.join(
@@ -1219,6 +2150,10 @@ function filterPlansForContractIncludeFile(plans, env) {
 }
 
 export function shouldAcquireLocalHeavyCheckLock(runSpecs, env = process.env) {
+  if (env.OPENCLAW_TEST_HEAVY_CHECK_LOCK_HELD === "1") {
+    return false;
+  }
+
   if (env.OPENCLAW_TEST_PROJECTS_FORCE_LOCK === "1") {
     return true;
   }
@@ -1234,6 +2169,75 @@ export function shouldAcquireLocalHeavyCheckLock(runSpecs, env = process.env) {
 
 export function writeVitestIncludeFile(filePath, includePatterns) {
   fs.writeFileSync(filePath, `${JSON.stringify(includePatterns, null, 2)}\n`);
+}
+
+function shellQuote(value) {
+  const text = `${value}`;
+  if (text === "") {
+    return "''";
+  }
+  if (/^[A-Za-z0-9_./:=@%+-]+$/u.test(text)) {
+    return text;
+  }
+  return `'${text.replaceAll("'", "'\\''")}'`;
+}
+
+function formatFailedShardRerunCommand(failure) {
+  const includePatterns = failure.includePatterns ?? [];
+  if (includePatterns.length > 0) {
+    return ["pnpm", "test", ...includePatterns.map(shellQuote), "--", "--reporter=verbose"].join(
+      " ",
+    );
+  }
+  return [
+    "node",
+    "scripts/run-vitest.mjs",
+    "run",
+    "--config",
+    shellQuote(failure.config),
+    "--reporter=verbose",
+  ].join(" ");
+}
+
+function formatFailedShardStatus(failure) {
+  const details = [];
+  if (failure.code !== undefined && failure.code !== null) {
+    details.push(`exit ${failure.code}`);
+  }
+  if (failure.signal) {
+    details.push(`signal ${failure.signal}`);
+  }
+  if (failure.noOutputTimedOut) {
+    details.push("no-output timeout");
+  }
+  return details.length > 0 ? ` (${details.join(", ")})` : "";
+}
+
+export function formatFailedShardDigest(failures, options = {}) {
+  if (failures.length === 0) {
+    return [];
+  }
+
+  const limit = options.limit ?? FAILED_SHARD_DIGEST_LIMIT;
+  const orderedFailures = failures.toSorted((left, right) => {
+    const leftOrder = typeof left.order === "number" ? left.order : Number.MAX_SAFE_INTEGER;
+    const rightOrder = typeof right.order === "number" ? right.order : Number.MAX_SAFE_INTEGER;
+    return leftOrder - rightOrder || left.config.localeCompare(right.config);
+  });
+  const shown = orderedFailures.slice(0, limit);
+  const lines = [`[test] failed shard digest (${failures.length}):`];
+  for (const failure of shown) {
+    const includes =
+      failure.includePatterns?.length > 0
+        ? ` includes=${failure.includePatterns.map(shellQuote).join(",")}`
+        : "";
+    lines.push(`[test] - ${failure.config}${formatFailedShardStatus(failure)}${includes}`);
+    lines.push(`[test]   rerun: ${formatFailedShardRerunCommand(failure)}`);
+  }
+  if (shown.length < failures.length) {
+    lines.push(`[test] - ... ${failures.length - shown.length} more failed shard(s) omitted`);
+  }
+  return lines;
 }
 
 export function buildVitestArgs(args, cwd = process.cwd()) {
