@@ -795,6 +795,22 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Bravo");
   });
 
+  it("orders TEAM.md before BOOTSTRAP.md and MEMORY.md when injected", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      contextFiles: [
+        { path: "MEMORY.md", content: "Memory" },
+        { path: "TEAM.md", content: "Team" },
+        { path: "BOOTSTRAP.md", content: "Bootstrap" },
+        { path: "TOOLS.md", content: "Tools" },
+      ],
+    });
+
+    expect(prompt.indexOf("## TOOLS.md")).toBeLessThan(prompt.indexOf("## TEAM.md"));
+    expect(prompt.indexOf("## TEAM.md")).toBeLessThan(prompt.indexOf("## BOOTSTRAP.md"));
+    expect(prompt.indexOf("## BOOTSTRAP.md")).toBeLessThan(prompt.indexOf("## MEMORY.md"));
+  });
+
   it("ignores context files with missing or blank paths", () => {
     const prompt = buildAgentSystemPrompt({
       workspaceDir: "/tmp/openclaw",
