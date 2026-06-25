@@ -134,11 +134,14 @@ describe("clawhub helpers", () => {
     expect(satisfiesPluginApiRange("1.1.9", ">=1.2.0")).toBe(false);
     expect(satisfiesPluginApiRange("2026.3.22", ">=2026.3.22")).toBe(true);
     expect(satisfiesPluginApiRange("2026.3.21", ">=2026.3.22")).toBe(false);
+    expect(satisfiesPluginApiRange("v2026.6.10-x.2", ">=2026.6.10")).toBe(true);
+    expect(satisfiesPluginApiRange("2026.6.10-x.2", ">=2026.6.10")).toBe(true);
     expect(satisfiesPluginApiRange("invalid", "^1.2.0")).toBe(false);
   });
 
   it("treats OpenClaw release correction versions as stable plugin API hosts", () => {
     expect(satisfiesPluginApiRange("2026.5.3-1", ">=2026.5.3")).toBe(true);
+    expect(satisfiesPluginApiRange("2026.6.10-x.2", ">=2026.6.10")).toBe(true);
     expect(satisfiesPluginApiRange("2026.5.32-1", ">=2026.5.32")).toBe(true);
     expect(satisfiesPluginApiRange("2026.5.3-2", ">=2026.5.3")).toBe(true);
     expect(satisfiesPluginApiRange("2026.5.3-beta.1", ">=2026.5.3")).toBe(true);

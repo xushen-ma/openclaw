@@ -589,8 +589,8 @@ function satisfiesSemverRange(version: string, range: string): boolean {
 }
 
 const OPENCLAW_RELEASE_SUFFIX_PATTERN =
-  /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)(?:-\d+|-(?:alpha|beta|rc)\.\d+)$/i;
-const OPENCLAW_NUMERIC_CORRECTION_PATTERN = /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)-\d+$/;
+  /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)(?:-\d+|-x\.\d+|-(?:alpha|beta|rc)\.\d+)$/i;
+const OPENCLAW_NUMERIC_CORRECTION_PATTERN = /^[vV]?(\d{4}\.[1-9]\d?\.[1-9]\d*)(?:-\d+|-x\.\d+)$/i;
 
 function normalizeOpenClawNumericCorrectionForPluginApi(
   pluginApiVersion: string,

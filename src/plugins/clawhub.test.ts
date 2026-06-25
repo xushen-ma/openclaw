@@ -835,16 +835,16 @@ describe("installPluginFromClawHub", () => {
     expect(archiveCleanupMock).toHaveBeenCalledTimes(1);
   });
 
-  it("installs when a release correction runtime satisfies the base plugin API range", async () => {
-    resolveCompatibilityHostVersionMock.mockReturnValueOnce("2026.5.3-1");
+  it("installs when a fork release runtime satisfies the base plugin API range", async () => {
+    resolveCompatibilityHostVersionMock.mockReturnValueOnce("v2026.6.10-x.2");
     fetchClawHubPackageVersionMock.mockResolvedValueOnce({
       version: {
-        version: "2026.5.3",
+        version: "2026.6.10",
         createdAt: 0,
         changelog: "",
         sha256hash: "a9eac48c6129bc44b6f93c9a9f48f6c700d191b7279a1e1915f28df6f59bb1af",
         compatibility: {
-          pluginApiRange: ">=2026.5.3",
+          pluginApiRange: ">=2026.6.10",
           minGatewayVersion: "2026.3.0",
         },
       },
