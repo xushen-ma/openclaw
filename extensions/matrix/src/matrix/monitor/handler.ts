@@ -2426,32 +2426,33 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             recordInboundSession: core.channel.session.recordInboundSession,
             botLoopProtection,
             record: {
-              updateLastRoute: isDirectMessage
-                ? {
-                    sessionKey: inboundLastRouteSessionKey,
-                    channel: "matrix",
-                    to: `room:${roomId}`,
-                    accountId: _route.accountId,
-                    mainDmOwnerPin:
-                      inboundLastRouteSessionKey === _route.mainSessionKey && pinnedMainDmOwner
-                        ? {
-                            ownerRecipient: pinnedMainDmOwner,
-                            senderRecipient: normalizeMatrixUserId(senderId),
-                            onSkip: ({
-                              ownerRecipient,
-                              senderRecipient,
-                            }: {
-                              ownerRecipient: string;
-                              senderRecipient: string;
-                            }) => {
-                              logVerboseMessage(
-                                `matrix: skip main-session last route for ${senderRecipient} (pinned owner ${ownerRecipient})`,
-                              );
-                            },
-                          }
-                        : undefined,
-                  }
-                : undefined,
+              updateLastRoute:
+                isDirectMessage && inboundLastRouteSessionKey === _route.mainSessionKey
+                  ? {
+                      sessionKey: inboundLastRouteSessionKey,
+                      channel: "matrix",
+                      to: `room:${roomId}`,
+                      accountId: _route.accountId,
+                      mainDmOwnerPin:
+                        inboundLastRouteSessionKey === _route.mainSessionKey && pinnedMainDmOwner
+                          ? {
+                              ownerRecipient: pinnedMainDmOwner,
+                              senderRecipient: normalizeMatrixUserId(senderId),
+                              onSkip: ({
+                                ownerRecipient,
+                                senderRecipient,
+                              }: {
+                                ownerRecipient: string;
+                                senderRecipient: string;
+                              }) => {
+                                logVerboseMessage(
+                                  `matrix: skip main-session last route for ${senderRecipient} (pinned owner ${ownerRecipient})`,
+                                );
+                              },
+                            }
+                          : undefined,
+                    }
+                  : undefined,
               onRecordError: (err) => {
                 logger.warn("failed updating session meta", {
                   error: String(err),

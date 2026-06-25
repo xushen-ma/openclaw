@@ -83,6 +83,17 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
     return context?.sessionKey;
   }
 
+  function latestRecordInboundSessionCall(
+    recordInboundSession: MatrixHandlerHarness["recordInboundSession"],
+  ) {
+    const calls = vi.mocked(recordInboundSession).mock.calls;
+    const call = calls[calls.length - 1];
+    if (!call) {
+      throw new Error("expected recordInboundSession call");
+    }
+    return call[0] as { sessionKey?: string; updateLastRoute?: unknown };
+  }
+
   beforeEach(() => {
     installMatrixMonitorTestRuntime({
       matchesMentionPatterns: () => false,
@@ -209,6 +220,36 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
     expect(finalized.RawBody).toContain("1. Pizza (1 vote)");
     expect(finalized.RawBody).toContain("Total voters: 1");
     expect(latestSessionKey(recordInboundSession)).toBe("agent:ops:main");
+  });
+
+  it("does not overwrite main last route for room-scoped DM sessions", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: true,
+      resolveAgentRoute: () => ({
+        agentId: "ops",
+        channel: "matrix",
+        accountId: "ops",
+        sessionKey: "agent:ops:matrix:channel:!dmroom:example.org",
+        mainSessionKey: "agent:ops:main",
+        matchedBy: "binding.account" as const,
+      }),
+    });
+
+    await handler(
+      "!dmroom:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$dm-room-scoped",
+        sender: "@alice:example.org",
+        body: "hello",
+      }),
+    );
+
+    expect(latestRecordInboundSessionCall(recordInboundSession)).toEqual(
+      expect.objectContaining({
+        sessionKey: "agent:ops:matrix:channel:!dmroom:example.org",
+        updateLastRoute: undefined,
+      }),
+    );
   });
 
   it("records reply context for quoted poll start events inside always-threaded replies", async () => {

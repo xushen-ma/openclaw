@@ -52,6 +52,7 @@ import {
   resolveMatrixAccountConfig,
   type ResolvedMatrixAccount,
 } from "./matrix/accounts.js";
+import { ensureMatrixSdkInstalled } from "./matrix/deps.js";
 import { normalizeMatrixUserId } from "./matrix/monitor/allowlist.js";
 import type { MatrixProbe } from "./matrix/probe.js";
 import {
@@ -569,6 +570,7 @@ export const matrixPlugin: ChannelPlugin<ResolvedMatrixAccount, MatrixProbe> =
       }),
       gateway: {
         startAccount: async (ctx) => {
+          await ensureMatrixSdkInstalled({ runtime: ctx.runtime });
           const account = ctx.account;
           ctx.setStatus({
             accountId: account.accountId,

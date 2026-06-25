@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixScopedEnvVarNames } from "../env-vars.js";
 import type { CoreConfig } from "../types.js";
+import { resolveMatrixAccountAllowlistConfig } from "./account-config.js";
 import {
   listMatrixAccountIds,
   resolveConfiguredMatrixBotUserIds,
@@ -618,6 +619,57 @@ describe("resolveMatrixAccount", () => {
     expect(account.config.actions).toEqual({
       reactions: true,
       messages: false,
+    });
+  });
+
+  it("inherits account-scoped default room and allowlist config for named accounts", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          accessToken: "main-token",
+          dm: {
+            allowFrom: ["@top-level:example.org"],
+          },
+          groupAllowFrom: ["@top-level-group:example.org"],
+          accounts: {
+            default: {
+              ...createMatrixAccountConfig("default-token"),
+              dm: {
+                allowFrom: ["@default:example.org"],
+              },
+              groupAllowFrom: ["@default-group:example.org"],
+              groups: {
+                "!shared:example.org": {
+                  enabled: true,
+                },
+              },
+              rooms: {
+                "!legacy-shared:example.org": {
+                  enabled: true,
+                },
+              },
+            },
+            ops: createMatrixAccountConfig("ops-token"),
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    const account = resolveMatrixAccount({ cfg, accountId: "ops" });
+    expect(account.config.groups).toEqual({
+      "!shared:example.org": {
+        enabled: true,
+      },
+    });
+    expect(account.config.rooms).toEqual({
+      "!legacy-shared:example.org": {
+        enabled: true,
+      },
+    });
+    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "ops" })).toEqual({
+      dmAllowFrom: ["@default:example.org"],
+      groupAllowFrom: ["@default-group:example.org"],
     });
   });
 
