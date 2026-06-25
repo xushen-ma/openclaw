@@ -382,6 +382,11 @@ export type FsToolsConfig = {
    * Default: false (unrestricted, matches legacy behavior).
    */
   workspaceOnly?: boolean;
+  /**
+   * Additional absolute roots available when workspaceOnly is enabled.
+   * String entries are read-write. Object entries may set mode to "ro" for read-only.
+   */
+  extraRoots?: Array<string | { path: string; mode?: "ro" | "rw" }>;
 };
 
 export type SessionsSpawnToolsConfig = {

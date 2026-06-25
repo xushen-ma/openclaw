@@ -611,6 +611,19 @@ const ToolExecSchema = z
 const ToolFsSchema = z
   .object({
     workspaceOnly: z.boolean().optional(),
+    extraRoots: z
+      .array(
+        z.union([
+          z.string(),
+          z
+            .object({
+              path: z.string(),
+              mode: z.enum(["ro", "rw"]).optional(),
+            })
+            .strict(),
+        ]),
+      )
+      .optional(),
   })
   .strict()
   .optional();

@@ -55,7 +55,6 @@ import {
   createSandboxedWriteTool,
   getToolParamsRecord,
   wrapToolMemoryFlushAppendOnlyWrite,
-  wrapToolWorkspaceRootGuard,
   wrapToolWorkspaceRootGuardWithOptions,
   wrapToolParamValidation,
 } from "./agent-tools.read.js";
@@ -732,6 +731,7 @@ export function createOpenClawCodingTools(options?: {
   const fsConfig = resolveToolFsConfig({ cfg: options?.config, agentId });
   const fsPolicy = createToolFsPolicy({
     workspaceOnly: isMemoryFlushRun || fsConfig.workspaceOnly,
+    extraRoots: fsConfig.extraRoots,
   });
   const sandboxRoot = sandbox?.workspaceDir;
   const sandboxFsBridge = sandbox?.fsBridge;
@@ -755,6 +755,18 @@ export function createOpenClawCodingTools(options?: {
   const includePluginTools = toolConstructionPlan.includePluginTools;
   const workspaceOnly = fsPolicy.workspaceOnly;
   const skillReadRoots = sandboxRoot ? undefined : resolveSkillReadRoots(options?.skillsSnapshot);
+  const extraReadRoots = sandboxRoot
+    ? undefined
+    : (fsPolicy.extraRoots ?? []).map((root) => path.resolve(root.path));
+  const extraWriteRoots = sandboxRoot
+    ? undefined
+    : (fsPolicy.extraRoots ?? [])
+        .filter((root) => root.mode === "rw")
+        .map((root) => path.resolve(root.path));
+  const hostReadRoots =
+    !sandboxRoot && (skillReadRoots || extraReadRoots?.length)
+      ? [...(skillReadRoots ?? []), ...(extraReadRoots ?? [])]
+      : undefined;
   const applyPatchConfig = execConfig.applyPatch;
   // Secure by default: apply_patch is workspace-contained unless explicitly disabled.
   // (tools.fs.workspaceOnly is a separate umbrella flag for read/write/edit/apply_patch.)
@@ -802,7 +814,7 @@ export function createOpenClawCodingTools(options?: {
         base.push(
           workspaceOnly
             ? wrapToolWorkspaceRootGuardWithOptions(wrapped, codingRoot, {
-                additionalRoots: skillReadRoots,
+                additionalRoots: hostReadRoots,
               })
             : wrapped,
         );
@@ -815,16 +827,34 @@ export function createOpenClawCodingTools(options?: {
         if (sandboxRoot) {
           continue;
         }
-        const wrapped = createHostWorkspaceWriteTool(codingRoot, { workspaceOnly });
-        base.push(workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, codingRoot) : wrapped);
+        const wrapped = createHostWorkspaceWriteTool(codingRoot, {
+          workspaceOnly,
+          additionalRoots: extraWriteRoots,
+        });
+        base.push(
+          workspaceOnly
+            ? wrapToolWorkspaceRootGuardWithOptions(wrapped, codingRoot, {
+                additionalRoots: extraWriteRoots,
+              })
+            : wrapped,
+        );
         continue;
       }
       if (tool.name === "edit") {
         if (sandboxRoot) {
           continue;
         }
-        const wrapped = createHostWorkspaceEditTool(codingRoot, { workspaceOnly });
-        base.push(workspaceOnly ? wrapToolWorkspaceRootGuard(wrapped, codingRoot) : wrapped);
+        const wrapped = createHostWorkspaceEditTool(codingRoot, {
+          workspaceOnly,
+          additionalRoots: extraWriteRoots,
+        });
+        base.push(
+          workspaceOnly
+            ? wrapToolWorkspaceRootGuardWithOptions(wrapped, codingRoot, {
+                additionalRoots: extraWriteRoots,
+              })
+            : wrapped,
+        );
         continue;
       }
       base.push(tool);
@@ -904,6 +934,7 @@ export function createOpenClawCodingTools(options?: {
               ? { root: sandboxRoot, bridge: sandboxFsBridge! }
               : undefined,
           workspaceOnly: applyPatchWorkspaceOnly,
+          additionalRoots: sandboxRoot ? undefined : extraWriteRoots,
         });
   options?.recordToolPrepStage?.("shell-tools");
   const pluginToolAllowlist = collectExplicitAllowlist([

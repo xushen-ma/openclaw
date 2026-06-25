@@ -63,6 +63,11 @@ type OpenClawReadToolOptions = {
   imageSanitization?: ImageSanitizationLimits;
 };
 
+type HostWorkspaceToolOptions = {
+  workspaceOnly?: boolean;
+  additionalRoots?: readonly string[];
+};
+
 type ReadTruncationDetails = {
   truncated: boolean;
   outputLines: number;
@@ -861,7 +866,7 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
 }
 
 /** Create a host workspace write tool using guarded filesystem operations. */
-export function createHostWorkspaceWriteTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceWriteTool(root: string, options?: HostWorkspaceToolOptions) {
   const base = createWriteTool(root, {
     operations: createHostWriteOperations(root, options),
   }) as unknown as AnyAgentTool;
@@ -869,7 +874,7 @@ export function createHostWorkspaceWriteTool(root: string, options?: { workspace
 }
 
 /** Create a host workspace edit tool using guarded filesystem operations. */
-export function createHostWorkspaceEditTool(root: string, options?: { workspaceOnly?: boolean }) {
+export function createHostWorkspaceEditTool(root: string, options?: HostWorkspaceToolOptions) {
   const base = createEditTool(root, {
     operations: createHostEditOperations(root, options),
   }) as unknown as AnyAgentTool;
@@ -1001,17 +1006,63 @@ async function statHostFile(absolutePath: string) {
   }
 }
 
-async function writeWorkspaceFile(
+function normalizeAdditionalRoots(roots: readonly string[] | undefined): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const root of roots ?? []) {
+    const trimmed = typeof root === "string" ? root.trim() : "";
+    if (!trimmed) {
+      continue;
+    }
+    const resolved = path.resolve(expandTildeToOsHome(trimmed));
+    if (seen.has(resolved)) {
+      continue;
+    }
+    seen.add(resolved);
+    result.push(resolved);
+  }
+  return result;
+}
+
+function resolveHostWorkspaceRoot(root: string, roots: readonly string[], filePath: string) {
+  const resolvedPath = resolveHostPath(filePath);
+  for (const candidate of [path.resolve(root), ...roots]) {
+    try {
+      const relative = toRelativeWorkspacePath(candidate, resolvedPath, { allowRoot: true });
+      return {
+        root: candidate,
+        relative,
+        resolvedPath: relative ? path.resolve(candidate, relative) : candidate,
+      };
+    } catch {
+      continue;
+    }
+  }
+  return {
+    root: path.resolve(root),
+    relative: toRelativeWorkspacePath(root, resolvedPath, { allowRoot: true }),
+    resolvedPath,
+  };
+}
+
+async function writeGuardedHostFile(
   root: string,
-  rootPromise: ReturnType<typeof fsRoot>,
+  additionalRoots: readonly string[],
+  rootCache: Map<string, ReturnType<typeof fsRoot>>,
   absolutePath: string,
   content: string,
 ) {
-  const relative = await toCanonicalRelativeWorkspacePath(root, absolutePath);
+  const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
+  const relative = await toCanonicalRelativeWorkspacePath(target.root, target.resolvedPath);
+  let rootPromise = rootCache.get(target.root);
+  if (!rootPromise) {
+    rootPromise = fsRoot(target.root);
+    rootCache.set(target.root, rootPromise);
+  }
   await (await rootPromise).write(relative, content, { mkdir: true });
 }
 
-function createHostWriteOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostWriteOperations(root: string, options?: HostWorkspaceToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
@@ -1030,28 +1081,36 @@ function createHostWriteOperations(root: string, options?: { workspaceOnly?: boo
   }
 
   // When workspaceOnly is true, enforce workspace boundary
-  const rootPromise = fsRoot(root);
+  const additionalRoots = normalizeAdditionalRoots(options?.additionalRoots);
+  const rootCache = new Map<string, ReturnType<typeof fsRoot>>([
+    [path.resolve(root), fsRoot(root)],
+  ]);
   return {
     mkdir: async (dir: string) => {
-      const relative = toRelativeWorkspacePath(root, dir, { allowRoot: true });
-      const resolved = relative ? path.resolve(root, relative) : path.resolve(root);
-      await assertSandboxPath({ filePath: resolved, cwd: root, root });
-      await fs.mkdir(resolved, { recursive: true });
+      const target = resolveHostWorkspaceRoot(root, additionalRoots, dir);
+      await assertSandboxPath({
+        filePath: target.resolvedPath,
+        cwd: target.root,
+        root: target.root,
+      });
+      await fs.mkdir(target.resolvedPath, { recursive: true });
     },
     writeFile: (absolutePath: string, content: string) =>
-      writeWorkspaceFile(root, rootPromise, absolutePath, content),
+      writeGuardedHostFile(root, additionalRoots, rootCache, absolutePath, content),
     readFile: async (absolutePath: string) => {
-      const relative = toRelativeWorkspacePath(root, absolutePath);
-      return (await (await rootPromise).read(relative)).buffer;
+      const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
+      const rootPromise = rootCache.get(target.root) ?? fsRoot(target.root);
+      rootCache.set(target.root, rootPromise);
+      return (await (await rootPromise).read(target.relative)).buffer;
     },
     statFile: async (absolutePath: string) => {
-      const relative = toRelativeWorkspacePath(root, absolutePath);
-      return statHostFile(path.resolve(root, relative));
+      const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
+      return statHostFile(target.resolvedPath);
     },
   } as const;
 }
 
-function createHostEditOperations(root: string, options?: { workspaceOnly?: boolean }) {
+function createHostEditOperations(root: string, options?: HostWorkspaceToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
@@ -1068,19 +1127,27 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
   }
 
   // When workspaceOnly is true, enforce workspace boundary
-  const rootPromise = fsRoot(root);
+  const additionalRoots = normalizeAdditionalRoots(options?.additionalRoots);
+  const rootCache = new Map<string, ReturnType<typeof fsRoot>>([
+    [path.resolve(root), fsRoot(root)],
+  ]);
   return {
     readFile: async (absolutePath: string) => {
-      const relative = toRelativeWorkspacePath(root, absolutePath);
-      const safeRead = await (await rootPromise).read(relative);
+      const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
+      const rootPromise = rootCache.get(target.root) ?? fsRoot(target.root);
+      rootCache.set(target.root, rootPromise);
+      const safeRead = await (await rootPromise).read(target.relative);
       return safeRead.buffer;
     },
     writeFile: (absolutePath: string, content: string) =>
-      writeWorkspaceFile(root, rootPromise, absolutePath, content),
+      writeGuardedHostFile(root, additionalRoots, rootCache, absolutePath, content),
     access: async (absolutePath: string) => {
       let relative: string;
+      let targetRoot = path.resolve(root);
       try {
-        relative = toRelativeWorkspacePath(root, absolutePath);
+        const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
+        relative = target.relative;
+        targetRoot = target.root;
       } catch {
         // Path escapes workspace root.  Don't throw here – the upstream
         // library replaces any `access` error with a misleading "File not
@@ -1090,6 +1157,8 @@ function createHostEditOperations(root: string, options?: { workspaceOnly?: bool
         return;
       }
       try {
+        const rootPromise = rootCache.get(targetRoot) ?? fsRoot(targetRoot);
+        rootCache.set(targetRoot, rootPromise);
         const opened = await (await rootPromise).open(relative);
         await opened.handle.close().catch(() => {});
       } catch (error) {

@@ -409,6 +409,82 @@ describe("workspace path resolution", () => {
     });
   });
 
+  it("allows configured extra roots with read-only and read-write modes", async () => {
+    await withTempDir("openclaw-extra-roots-", async (rootDir) => {
+      const workspaceDir = path.join(rootDir, "workspace");
+      const readOnlyDir = path.join(rootDir, "read-only");
+      const readWriteDir = path.join(rootDir, "read-write");
+      const outsideDir = path.join(rootDir, "outside");
+      await fs.mkdir(workspaceDir, { recursive: true });
+      await fs.mkdir(readOnlyDir, { recursive: true });
+      await fs.mkdir(readWriteDir, { recursive: true });
+      await fs.mkdir(outsideDir, { recursive: true });
+      const readOnlyFile = path.join(readOnlyDir, "notes.txt");
+      const readWriteFile = path.join(readWriteDir, "notes.txt");
+      const outsideFile = path.join(outsideDir, "notes.txt");
+      await fs.writeFile(readOnlyFile, "read only root", "utf8");
+      await fs.writeFile(readWriteFile, "read write root", "utf8");
+      await fs.writeFile(outsideFile, "outside root", "utf8");
+
+      const cfg: OpenClawConfig = {
+        tools: {
+          fs: {
+            workspaceOnly: true,
+            extraRoots: [
+              { path: readOnlyDir, mode: "ro" },
+              { path: readWriteDir, mode: "rw" },
+            ],
+          },
+        },
+      };
+      const tools = createOpenClawCodingTools({ workspaceDir, config: cfg });
+      const { readTool, writeTool, editTool } = expectReadWriteEditTools(tools);
+      const applyPatchTool = tools.find((tool) => tool.name === "apply_patch");
+      if (!applyPatchTool) {
+        throw new Error("expected apply_patch tool");
+      }
+
+      expect(getTextContent(await readTool.execute("read-ro", { path: readOnlyFile }))).toContain(
+        "read only root",
+      );
+      expect(getTextContent(await readTool.execute("read-rw", { path: readWriteFile }))).toContain(
+        "read write root",
+      );
+      await expect(readTool.execute("read-outside", { path: outsideFile })).rejects.toThrow(
+        /Path escapes sandbox root/i,
+      );
+
+      await expect(
+        writeTool.execute("write-ro", { path: readOnlyFile, content: "blocked" }),
+      ).rejects.toThrow(/Path escapes sandbox root|outside-workspace/i);
+      await writeTool.execute("write-rw", {
+        path: path.join(readWriteDir, "created.txt"),
+        content: "created in extra root",
+      });
+      await editTool.execute("edit-rw", {
+        path: readWriteFile,
+        edits: [{ oldText: "read write", newText: "edited" }],
+      });
+      await applyPatchTool.execute("patch-rw", {
+        input: [
+          "*** Begin Patch",
+          `*** Add File: ${path.join(readWriteDir, "patched.txt")}`,
+          "+patched in extra root",
+          "*** End Patch",
+        ].join("\n"),
+      });
+
+      expect(await fs.readFile(readOnlyFile, "utf8")).toBe("read only root");
+      expect(await fs.readFile(path.join(readWriteDir, "created.txt"), "utf8")).toBe(
+        "created in extra root",
+      );
+      expect(await fs.readFile(readWriteFile, "utf8")).toContain("edited root");
+      expect(await fs.readFile(path.join(readWriteDir, "patched.txt"), "utf8")).toBe(
+        "patched in extra root\n",
+      );
+    });
+  });
+
   it("rejects symlink escapes inside resolved skill roots", async () => {
     if (process.platform === "win32") {
       return;
