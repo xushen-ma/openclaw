@@ -55,26 +55,38 @@ Detailed guidance: [Browser troubleshooting](/tools/browser#cdp-startup-failure-
 ```bash
 openclaw browser status
 openclaw browser doctor
+openclaw browser doctor --deep
 openclaw browser start
+openclaw browser start --headless
 openclaw browser stop
 openclaw browser --browser-profile openclaw reset-profile
 ```
 
 Notes:
 
+- `doctor --deep` adds a live snapshot probe. It is useful when basic CDP
+  readiness is green but you want proof that the current tab can be inspected.
 - For `attachOnly` and remote CDP profiles, `openclaw browser stop` closes the
   active control session and clears temporary emulation overrides even when
   OpenClaw did not launch the browser process itself.
 - For local managed profiles, `openclaw browser stop` stops the spawned browser
   process.
+- `openclaw browser start --headless` applies only to that start request and
+  only when OpenClaw launches a local managed browser. It does not rewrite
+  `browser.headless` or profile config, and it is a no-op for an already-running
+  browser.
+- On Linux hosts without `DISPLAY` or `WAYLAND_DISPLAY`, local managed profiles
+  run headless automatically unless `OPENCLAW_BROWSER_HEADLESS=0`,
+  `browser.headless=false`, or `browser.profiles.<name>.headless=false`
+  explicitly requests a visible browser.
 
 ## If the command is missing
 
 If `openclaw browser` is an unknown command, check `plugins.allow` in
 `~/.openclaw/openclaw.json`.
 
-When `plugins.allow` is present, the bundled browser plugin must be listed
-explicitly:
+When `plugins.allow` is present, list the bundled browser plugin explicitly
+unless the config already has a root `browser` block:
 
 ```json5
 {
@@ -84,8 +96,9 @@ explicitly:
 }
 ```
 
-`browser.enabled=true` does not restore the CLI subcommand when the plugin
-allowlist excludes `browser`.
+An explicit root `browser` block, for example `browser.enabled=true` or
+`browser.profiles.<name>`, also activates the bundled browser plugin under a
+restrictive plugin allowlist.
 
 Related: [Browser tool](/tools/browser#missing-browser-command-or-tool)
 
@@ -129,6 +142,13 @@ the optional label, and the raw `targetId`. Agents should pass
 `suggestedTargetId` back into `focus`, `close`, snapshots, and actions. You can
 assign a label with `open --label`, `tab new --label`, or `tab label`; labels,
 tab ids, raw target ids, and unique target-id prefixes are all accepted.
+The request field is still named `targetId` for compatibility, but it accepts
+these tab references. Treat raw target ids as diagnostic handles, not durable
+agent memory.
+When Chromium replaces the underlying raw target during a navigation or form
+submit, OpenClaw keeps the stable `tabId`/label attached to the replacement tab
+when it can prove the match. Raw target ids remain volatile; prefer
+`suggestedTargetId`.
 
 ## Snapshot / screenshot / actions
 
@@ -154,7 +174,22 @@ Notes:
   or `--element`.
 - `existing-session` / `user` profiles support page screenshots and `--ref`
   screenshots from snapshot output, but not CSS `--element` screenshots.
-- `--labels` overlays current snapshot refs on the screenshot.
+- `--labels` overlays current snapshot refs on the screenshot. On
+  Playwright-backed profiles, it works with `--full-page` (full-page label
+  overlay), `--ref` (element-clip label overlay by ARIA ref), and `--element`
+  (element-clip label overlay by CSS selector); in element-clip modes, labels
+  are projected relative to the element. The response also includes an
+  `annotations` array with each ref's bounding box. Each item has `ref`,
+  `number`, `role`, optional `name`, and `box: {x, y, width, height}`;
+  coordinates are in the captured image's space (viewport / fullpage /
+  element-relative). The field is omitted when empty.
+  `existing-session` profiles render a chrome-mcp overlay on page screenshots
+  but do not use the Playwright projection helper and do not include
+  `annotations`; CSS `--element` screenshots are unsupported there. Without
+  Playwright or chrome-mcp, labeled screenshots are not available. Prior
+  releases ignored `--full-page`, `--ref`, and `--element` on labeled
+  Playwright screenshots and always returned a viewport capture; labeled
+  screenshots now honor those scopes.
 - `snapshot --urls` appends discovered link destinations to AI snapshots so
   agents can choose direct navigation targets instead of guessing from link
   text alone.
@@ -174,16 +209,42 @@ openclaw browser select <ref> OptionA OptionB
 openclaw browser fill --fields '[{"ref":"1","value":"Ada"}]'
 openclaw browser wait --text "Done"
 openclaw browser evaluate --fn '(el) => el.textContent' --ref <ref>
+openclaw browser evaluate --fn 'const title = document.title; return title;'
+openclaw browser evaluate --timeout-ms 30000 --fn 'async () => { await window.ready; return true; }'
 ```
+
+`evaluate --fn` accepts a function source, an expression, or a statement body.
+Statement bodies are wrapped as async functions, so use `return` for the value
+you want back. Use `evaluate --timeout-ms <ms>` when the page-side function may
+need longer than the default evaluate timeout.
+
+Action responses return the current raw `targetId` after action-triggered page
+replacement when OpenClaw can prove the replacement tab. Scripts should still
+store and pass `suggestedTargetId`/labels for long-lived workflows.
 
 File + dialog helpers:
 
 ```bash
 openclaw browser upload /tmp/openclaw/uploads/file.pdf --ref <ref>
+openclaw browser upload media://inbound/file.pdf --ref <ref>
 openclaw browser waitfordownload
 openclaw browser download <ref> report.pdf
 openclaw browser dialog --accept
+openclaw browser dialog --dismiss --dialog-id d1
 ```
+
+Managed Chrome profiles save ordinary click-triggered downloads into the OpenClaw
+downloads directory (`/tmp/openclaw/downloads` by default, or the configured temp
+root). Use `waitfordownload` or `download` when the agent needs to wait for a
+specific file and return its path; those explicit waiters own the next download.
+Uploads accept files from the OpenClaw temp uploads root and OpenClaw-managed
+inbound media, including `media://inbound/<id>` and sandbox-relative
+`media/inbound/<id>` references. Nested media refs, traversal, and arbitrary
+local paths remain rejected.
+When an action opens a modal dialog, the action response returns
+`blockedByDialog` with `browserState.dialogs.pending`; pass `--dialog-id` to
+answer it directly. Dialogs handled outside OpenClaw appear under
+`browserState.dialogs.recent`.
 
 ## State and storage
 
@@ -234,10 +295,14 @@ Use the built-in `user` profile, or create your own `existing-session` profile:
 openclaw browser --browser-profile user tabs
 openclaw browser create-profile --name chrome-live --driver existing-session
 openclaw browser create-profile --name brave-live --driver existing-session --user-data-dir "~/Library/Application Support/BraveSoftware/Brave-Browser"
+openclaw browser create-profile --name chrome-port --driver existing-session --cdp-url http://127.0.0.1:9222
 openclaw browser --browser-profile chrome-live tabs
 ```
 
-This path is host-only. For Docker, headless servers, Browserless, or other remote setups, use a CDP profile instead.
+The default existing-session path is host-only Chrome MCP auto-connect. If the browser is already
+running with a DevTools endpoint, pass `--cdp-url` so Chrome MCP attaches to that endpoint instead.
+For Docker, Browserless, or other remote setups where Chrome MCP semantics are not needed, use a
+CDP profile.
 
 Current existing-session limits:
 
@@ -250,7 +315,7 @@ Current existing-session limits:
 - `hover`, `scrollintoview`, `drag`, `select`, `fill`, and `evaluate` reject
   per-call timeout overrides
 - `select` supports one value only
-- `wait --load networkidle` is not supported
+- `wait --load networkidle` is not supported on existing-session profiles (works on managed and raw/remote CDP)
 - file uploads require `--ref` / `--input-ref`, do not support CSS
   `--element`, and currently support one file at a time
 - dialog hooks do not support `--timeout`

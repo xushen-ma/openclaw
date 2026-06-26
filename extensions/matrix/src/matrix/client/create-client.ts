@@ -1,3 +1,4 @@
+// Matrix plugin module implements create client behavior.
 import fs from "node:fs";
 import type { PinnedDispatcherPolicy } from "openclaw/plugin-sdk/ssrf-dispatcher";
 import {
@@ -18,15 +19,6 @@ type MatrixCreateClientRuntimeDeps = {
   ensureMatrixSdkLoggingConfigured: typeof import("./logging.js").ensureMatrixSdkLoggingConfigured;
 };
 
-const MATRIX_FLEET_MGMT_PROBE_ROOM_ID = "!bSZooEPKekiUuHRikF:home.jxs.com.au";
-const MATRIX_CLIENT_EMIT_PROBE_PATCHED = Symbol("matrixClientEmitProbePatched");
-
-type MatrixEmitterLike = {
-  emit: (eventName: string, ...args: unknown[]) => boolean;
-  listenerCount?: (eventName: string) => number;
-  [MATRIX_CLIENT_EMIT_PROBE_PATCHED]?: boolean;
-};
-
 let matrixCreateClientRuntimeDepsPromise: Promise<MatrixCreateClientRuntimeDeps> | undefined;
 
 async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRuntimeDeps> {
@@ -38,68 +30,6 @@ async function loadMatrixCreateClientRuntimeDeps(): Promise<MatrixCreateClientRu
     ensureMatrixSdkLoggingConfigured: loggingModule.ensureMatrixSdkLoggingConfigured,
   }));
   return await matrixCreateClientRuntimeDepsPromise;
-}
-
-function isMatrixEmitterLike(value: unknown): value is MatrixEmitterLike {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const maybeEmitter = value as { emit?: unknown };
-  return typeof maybeEmitter.emit === "function";
-}
-
-function extractProbeEvent(args: unknown[]): {
-  roomId: string | null;
-  event: Record<string, unknown> | null;
-} {
-  const roomId = typeof args[0] === "string" ? args[0] : null;
-  const event =
-    args.find(
-      (value): value is Record<string, unknown> =>
-        value != null &&
-        typeof value === "object" &&
-        ("event_id" in value || "type" in value || "room_id" in value),
-    ) ?? null;
-  return { roomId, event };
-}
-
-export function attachMatrixFleetMgmtEmitProbe(params: {
-  client: unknown;
-  accountId?: string | null;
-  userId: string;
-  log: (message: string) => void;
-}): void {
-  if (!isMatrixEmitterLike(params.client)) {
-    return;
-  }
-  const { client } = params;
-  if (client[MATRIX_CLIENT_EMIT_PROBE_PATCHED]) {
-    return;
-  }
-
-  const originalEmit = client.emit.bind(client);
-  client.emit = (eventName: string, ...args: unknown[]) => {
-    try {
-      const { roomId, event } = extractProbeEvent(args);
-      const eventRoomId = typeof event?.room_id === "string" ? event.room_id : null;
-      const resolvedRoomId = roomId ?? eventRoomId;
-      if (resolvedRoomId === MATRIX_FLEET_MGMT_PROBE_ROOM_ID) {
-        const eventType = typeof event?.type === "string" ? event.type : "unknown";
-        const eventId = typeof event?.event_id === "string" ? event.event_id : "unknown";
-        const listeners =
-          typeof client.listenerCount === "function"
-            ? String(client.listenerCount(eventName))
-            : "unknown";
-        params.log(
-          `matrix-probe: emit account=${params.accountId ?? "default"} user=${params.userId} event=${eventName} room=${resolvedRoomId} type=${eventType} id=${eventId} listeners=${listeners}`,
-        );
-      }
-    } catch {
-      // Never let probe logging interfere with Matrix event delivery.
-    }
-    return originalEmit(eventName, ...args);
-  };
-  client[MATRIX_CLIENT_EMIT_PROBE_PATCHED] = true;
 }
 
 export async function createMatrixClient(params: {
@@ -157,14 +87,14 @@ export async function createMatrixClient(params: {
     ? `openclaw-matrix-${storagePaths.accountKey}-${storagePaths.tokenHash}`
     : undefined;
 
-  const client = new MatrixClient(homeserver, params.accessToken, {
+  return new MatrixClient(homeserver, params.accessToken, {
     userId: matrixClientUserId,
     password: params.password,
     deviceId: params.deviceId,
     encryption: params.encryption,
     localTimeoutMs: params.localTimeoutMs,
     initialSyncLimit: params.initialSyncLimit,
-    storagePath: storagePaths?.storagePath,
+    storageRootDir: storagePaths?.rootDir,
     recoveryKeyPath: storagePaths?.recoveryKeyPath,
     idbSnapshotPath: storagePaths?.idbSnapshotPath,
     cryptoDatabasePrefix,
@@ -173,13 +103,4 @@ export async function createMatrixClient(params: {
       params.ssrfPolicy ?? ssrfPolicyFromDangerouslyAllowPrivateNetwork(params.allowPrivateNetwork),
     dispatcherPolicy: params.dispatcherPolicy,
   });
-
-  attachMatrixFleetMgmtEmitProbe({
-    client,
-    accountId: params.accountId,
-    userId,
-    log: (message) => console.info(message),
-  });
-
-  return client;
 }

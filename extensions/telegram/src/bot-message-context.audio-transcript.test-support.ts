@@ -1,3 +1,4 @@
+// Telegram plugin module implements bot message context.audio transcript support behavior.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const transcribeFirstAudioMock = vi.fn();
@@ -64,10 +65,12 @@ function expectTranscriptRendered(
   ctx: Awaited<ReturnType<typeof buildGroupVoiceContext>>,
   transcript: string,
 ) {
+  const framed = `[Audio transcript (machine-generated, untrusted)]: ${JSON.stringify(transcript)}`;
   expect(ctx).not.toBeNull();
-  expect(ctx?.ctxPayload?.BodyForAgent).toBe(transcript);
-  expect(ctx?.ctxPayload?.Body).toContain(transcript);
+  expect(ctx?.ctxPayload?.BodyForAgent).toBe(framed);
+  expect(ctx?.ctxPayload?.Body).toContain(framed);
   expect(ctx?.ctxPayload?.Body).not.toContain("<media:audio>");
+  expect(ctx?.ctxPayload?.MediaTranscribedIndexes).toEqual([0]);
 }
 
 function expectAudioPlaceholderRendered(ctx: Awaited<ReturnType<typeof buildGroupVoiceContext>>) {

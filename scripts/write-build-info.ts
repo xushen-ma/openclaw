@@ -1,3 +1,4 @@
+// Write Build Info script supports OpenClaw repository automation.
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,135 +35,71 @@ const resolveCommit = () => {
   }
 };
 
-const isReleaseVersionCandidate = (value: string | null | undefined): value is string => {
-  const trimmed = value?.trim();
-  if (!trimmed) {
-    return false;
-  }
-  const prefixed = trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
-  return STABLE_TAG_PATTERN.test(prefixed) || FORK_TAG_PATTERN.test(prefixed);
-};
+const STABLE_TAG_PATTERN = /^v\d{4}\.\d{1,2}\.\d{1,2}$/;
+const FORK_TAG_PATTERN = /^v\d{4}\.\d{1,2}\.\d{1,2}-x\.\d+$/;
 
-export const FORK_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:-\d+)?-x\.\d+$/;
-export const STABLE_TAG_PATTERN = /^v\d{4}\.\d+\.\d+(?:\.\d+)?$/;
-
-function normalizeReleaseCandidate(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  if (!trimmed) {
+const parseReleaseTag = (tag: string) => {
+  const match = /^v(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-x\.(\d+))?$/.exec(tag);
+  if (!match) {
     return null;
   }
-  const prefixed = trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
-  return STABLE_TAG_PATTERN.test(prefixed) || FORK_TAG_PATTERN.test(prefixed) ? prefixed : null;
-}
-
-function releaseCandidateRank(value: string): number[] {
-  const stable = value.match(/^v(\d{4})\.(\d+)\.(\d+)(?:\.(\d+))?$/);
-  if (stable) {
-    return [2, ...stable.slice(1).map((part) => Number(part ?? 0))];
-  }
-  const fork = value.match(/^v(\d{4})\.(\d+)\.(\d+)(?:-(\d+))?-x\.(\d+)$/);
-  if (fork) {
-    return [1, ...fork.slice(1).map((part) => Number(part ?? 0))];
-  }
-  return [0, 0, 0, 0, 0, 0];
-}
-
-export function compareReleaseCandidates(a: string, b: string): number {
-  const aRank = releaseCandidateRank(a);
-  const bRank = releaseCandidateRank(b);
-  const length = Math.max(aRank.length, bRank.length);
-  for (let index = 0; index < length; index += 1) {
-    const delta = (aRank[index] ?? 0) - (bRank[index] ?? 0);
-    if (delta !== 0) {
-      return delta;
-    }
-  }
-  return 0;
-}
-
-const normalizeCandidate = (value: string | null | undefined): string | null => {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : null;
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    patch: Number(match[3]),
+    fork: match[4] ? Number(match[4]) : 0,
+  };
 };
 
-export function resolveVersionTagFromEnv(): string | null {
-  const envCandidates = [
-    process.env.OPENCLAW_BUILD_VERSION,
-    process.env.OPENCLAW_VERSION,
-    process.env.GIT_TAG,
-    process.env.CI_COMMIT_TAG,
-    process.env.GITHUB_REF_NAME,
-  ];
-  for (const candidate of envCandidates) {
-    const normalized = normalizeCandidate(candidate);
-    if (isReleaseVersionCandidate(normalized)) {
-      return normalized;
-    }
+const compareReleaseCandidates = (left: string, right: string) => {
+  const parsedLeft = parseReleaseTag(left);
+  const parsedRight = parseReleaseTag(right);
+  if (!parsedLeft || !parsedRight) {
+    return left.localeCompare(right);
   }
-  return null;
-}
-
-export function resolveVersionTagFromTagList(tags: readonly string[]): string | null {
-  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
   return (
-    candidates.find((tag) => STABLE_TAG_PATTERN.test(tag)) ??
-    candidates.find((tag) => FORK_TAG_PATTERN.test(tag)) ??
-    null
+    parsedLeft.year - parsedRight.year ||
+    parsedLeft.month - parsedRight.month ||
+    parsedLeft.patch - parsedRight.patch ||
+    parsedLeft.fork - parsedRight.fork
   );
-}
+};
 
-export function resolveVersionTagFromMergedHeadTagOutput(raw: string): string | null {
-  return resolveVersionTagFromTagList(
+export const resolveVersionTagFromHeadTagList = (tags: readonly string[]) => {
+  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
+  const latest = (matcher: RegExp) =>
+    candidates
+      .filter((tag) => matcher.test(tag))
+      .toSorted(compareReleaseCandidates)
+      .at(-1) ?? null;
+  return latest(FORK_TAG_PATTERN) ?? latest(STABLE_TAG_PATTERN);
+};
+
+export const resolveVersionTagFromHeadTagOutput = (raw: string) =>
+  resolveVersionTagFromHeadTagList(
     raw
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean),
   );
-}
 
-export function resolveVersionTagFromMergedHeadTags(): string | null {
+const resolveVersionTagFromHeadTags = () => {
   try {
-    const raw = execSync("git tag --merged HEAD --sort=-version:refname", {
+    const raw = execSync("git tag --points-at HEAD", {
       cwd: rootDir,
       stdio: ["ignore", "pipe", "ignore"],
     }).toString();
-
-    return resolveVersionTagFromMergedHeadTagOutput(raw);
+    return resolveVersionTagFromHeadTagOutput(raw);
   } catch {
     return null;
   }
-}
+};
 
-export function resolvePreferredBuildInfoVersion(
-  tagVersion: string | null,
-  packageVersion: string | null,
-): string | null {
-  const normalizedPackageVersion = normalizeReleaseCandidate(packageVersion);
-  if (tagVersion && normalizedPackageVersion) {
-    return compareReleaseCandidates(normalizedPackageVersion, tagVersion) > 0
-      ? normalizedPackageVersion
-      : tagVersion;
-  }
-  return tagVersion ?? normalizedPackageVersion ?? packageVersion;
-}
-
-function resolveBuildInfoVersion(): string | null {
-  const explicitTagVersion = resolveVersionTagFromEnv();
-  if (explicitTagVersion) {
-    return explicitTagVersion;
-  }
-  return resolvePreferredBuildInfoVersion(
-    resolveVersionTagFromMergedHeadTags(),
-    readPackageVersion(),
-  );
-}
-
-const version = resolveBuildInfoVersion();
+const version = readPackageVersion();
 const commit = resolveCommit();
 
 const buildInfo = {
-  version,
-  packageVersion: readPackageVersion(),
+  version: resolveVersionTagFromHeadTags() ?? version,
   commit,
   builtAt: new Date().toISOString(),
 };

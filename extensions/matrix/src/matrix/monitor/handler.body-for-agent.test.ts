@@ -1,3 +1,4 @@
+// Matrix tests cover handler.body for agent plugin behavior.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { installMatrixMonitorTestRuntime } from "../../test-runtime.js";
 import type { MatrixClient } from "../sdk.js";
@@ -10,6 +11,9 @@ import type { MatrixRawEvent } from "./types.js";
 describe("createMatrixRoomMessageHandler inbound body formatting", () => {
   type MatrixHandlerHarness = ReturnType<typeof createMatrixHandlerTestHarness>;
   type FinalizedReplyContext = {
+    MessageThreadId?: string;
+    RawBody?: string;
+    ReplyToId?: string;
     ReplyToBody?: string;
     ReplyToSender?: string;
     ThreadStarterBody?: string;
@@ -61,7 +65,33 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
   function latestFinalizedReplyContext(
     finalizeInboundContext: MatrixHandlerHarness["finalizeInboundContext"],
   ) {
-    return vi.mocked(finalizeInboundContext).mock.calls.at(-1)?.[0] as FinalizedReplyContext;
+    const calls = vi.mocked(finalizeInboundContext).mock.calls;
+    const call = calls[calls.length - 1];
+    if (!call) {
+      throw new Error("expected finalizeInboundContext call");
+    }
+    return call[0] as FinalizedReplyContext;
+  }
+
+  function latestSessionKey(recordInboundSession: MatrixHandlerHarness["recordInboundSession"]) {
+    const calls = vi.mocked(recordInboundSession).mock.calls;
+    const call = calls[calls.length - 1];
+    if (!call) {
+      throw new Error("expected recordInboundSession call");
+    }
+    const context = call[0] as { sessionKey?: string };
+    return context?.sessionKey;
+  }
+
+  function latestRecordInboundSessionCall(
+    recordInboundSession: MatrixHandlerHarness["recordInboundSession"],
+  ) {
+    const calls = vi.mocked(recordInboundSession).mock.calls;
+    const call = calls[calls.length - 1];
+    if (!call) {
+      throw new Error("expected recordInboundSession call");
+    }
+    return call[0] as { sessionKey?: string; updateLastRoute?: unknown };
   }
 
   beforeEach(() => {
@@ -69,37 +99,6 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       matchesMentionPatterns: () => false,
       saveMediaBuffer: vi.fn(),
     });
-  });
-
-  it("does not overwrite lastRoute to main for room-scoped DM sessions", async () => {
-    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
-      accountId: "uri",
-      isDirectMessage: true,
-      resolveAgentRoute: () => ({
-        agentId: "uri",
-        channel: "matrix",
-        accountId: "uri",
-        sessionKey: "agent:uri:matrix:channel:!dmroom:example.org",
-        mainSessionKey: "agent:uri:main",
-        matchedBy: "binding.account",
-      }),
-    });
-
-    await handler(
-      "!dmroom:example.org",
-      createMatrixTextMessageEvent({
-        eventId: "$event-dm-parent-peer",
-        sender: "@xushen:matrix.example.org",
-        body: "hello",
-      }),
-    );
-
-    expect(recordInboundSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: "agent:uri:matrix:channel:!dmroom:example.org",
-        updateLastRoute: undefined,
-      }),
-    );
   });
 
   it("records thread metadata for group thread messages", async () => {
@@ -132,18 +131,13 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       }),
     );
 
-    expect(finalizeInboundContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        MessageThreadId: "$thread-root",
-        ThreadStarterBody: "Matrix thread root $thread-root from Alice:\nRoot topic",
-      }),
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
+    expect(finalized.MessageThreadId).toBe("$thread-root");
+    expect(finalized.ThreadStarterBody).toBe(
+      "Matrix thread root $thread-root from Alice:\nRoot topic",
     );
     // Thread messages get thread-scoped session keys (thread isolation feature).
-    expect(recordInboundSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: "agent:ops:main:thread:$thread-root",
-      }),
-    );
+    expect(latestSessionKey(recordInboundSession)).toBe("agent:ops:main:thread:$thread-root");
   });
 
   it("starts the thread-scoped session from the triggering message when threadReplies is always", async () => {
@@ -162,17 +156,10 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       }),
     );
 
-    expect(finalizeInboundContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        MessageThreadId: "$thread-root",
-        ReplyToId: undefined,
-      }),
-    );
-    expect(recordInboundSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionKey: "agent:ops:main:thread:$thread-root",
-      }),
-    );
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
+    expect(finalized.MessageThreadId).toBe("$thread-root");
+    expect(finalized.ReplyToId).toBeUndefined();
+    expect(latestSessionKey(recordInboundSession)).toBe("agent:ops:main:thread:$thread-root");
   });
 
   it("records formatted poll results for inbound poll response events", async () => {
@@ -229,14 +216,38 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       },
     } as MatrixRawEvent);
 
-    expect(finalizeInboundContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        RawBody: expect.stringMatching(/1\. Pizza \(1 vote\)[\s\S]*Total voters: 1/),
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
+    expect(finalized.RawBody).toContain("1. Pizza (1 vote)");
+    expect(finalized.RawBody).toContain("Total voters: 1");
+    expect(latestSessionKey(recordInboundSession)).toBe("agent:ops:main");
+  });
+
+  it("does not overwrite main last route for room-scoped DM sessions", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: true,
+      resolveAgentRoute: () => ({
+        agentId: "ops",
+        channel: "matrix",
+        accountId: "ops",
+        sessionKey: "agent:ops:matrix:channel:!dmroom:example.org",
+        mainSessionKey: "agent:ops:main",
+        matchedBy: "binding.account" as const,
+      }),
+    });
+
+    await handler(
+      "!dmroom:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$dm-room-scoped",
+        sender: "@alice:example.org",
+        body: "hello",
       }),
     );
-    expect(recordInboundSession).toHaveBeenCalledWith(
+
+    expect(latestRecordInboundSessionCall(recordInboundSession)).toEqual(
       expect.objectContaining({
-        sessionKey: "agent:ops:main",
+        sessionKey: "agent:ops:matrix:channel:!dmroom:example.org",
+        updateLastRoute: undefined,
       }),
     );
   });
@@ -299,14 +310,13 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       }),
     );
 
-    expect(finalizeInboundContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        MessageThreadId: "$thread-root",
-        ReplyToId: undefined,
-        ReplyToSender: "Alice",
-        ReplyToBody: "[Poll]\nLunch?\n\n1. Pizza\n2. Sushi",
-        ThreadStarterBody: "Matrix thread root $thread-root from Bob:\nRoot topic",
-      }),
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
+    expect(finalized.MessageThreadId).toBe("$thread-root");
+    expect(finalized.ReplyToId).toBeUndefined();
+    expect(finalized.ReplyToSender).toBe("Alice");
+    expect(finalized.ReplyToBody).toBe("[Poll]\nLunch?\n\n1. Pizza\n2. Sushi");
+    expect(finalized.ThreadStarterBody).toBe(
+      "Matrix thread root $thread-root from Bob:\nRoot topic",
     );
   });
 
@@ -342,14 +352,13 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       }),
     );
 
-    expect(finalizeInboundContext).toHaveBeenCalledWith(
-      expect.objectContaining({
-        MessageThreadId: "$thread-root",
-        ReplyToId: undefined,
-        ReplyToSender: "Alice",
-        ReplyToBody: "Root topic",
-        ThreadStarterBody: "Matrix thread root $thread-root from Alice:\nRoot topic",
-      }),
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
+    expect(finalized.MessageThreadId).toBe("$thread-root");
+    expect(finalized.ReplyToId).toBeUndefined();
+    expect(finalized.ReplyToSender).toBe("Alice");
+    expect(finalized.ReplyToBody).toBe("Root topic");
+    expect(finalized.ThreadStarterBody).toBe(
+      "Matrix thread root $thread-root from Alice:\nRoot topic",
     );
     expect(getEvent).toHaveBeenCalledTimes(1);
     expect(getMemberDisplayName).toHaveBeenCalledTimes(2);
@@ -396,11 +405,7 @@ describe("createMatrixRoomMessageHandler inbound body formatting", () => {
       }),
     );
 
-    const finalized = vi.mocked(finalizeInboundContext).mock.calls.at(-1)?.[0] as {
-      ReplyToBody?: string;
-      ReplyToSender?: string;
-      ThreadStarterBody?: string;
-    };
+    const finalized = latestFinalizedReplyContext(finalizeInboundContext);
     expect(finalized.ThreadStarterBody).toBeUndefined();
     expect(finalized.ReplyToBody).toBeUndefined();
     expect(finalized.ReplyToSender).toBeUndefined();

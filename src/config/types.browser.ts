@@ -1,10 +1,15 @@
+// Defines browser profile configuration types.
 export type BrowserProfileConfig = {
   /** CDP port for this profile. Allocated once at creation, persisted permanently. */
   cdpPort?: number;
-  /** CDP URL for this profile (use for remote Chrome). */
+  /** CDP/DevTools endpoint URL for this profile (remote CDP or existing-session endpoint attach). */
   cdpUrl?: string;
   /** Explicit user data directory for existing-session Chrome MCP attachment. */
   userDataDir?: string;
+  /** Override the Chrome MCP command for existing-session profiles. */
+  mcpCommand?: string;
+  /** Extra Chrome MCP arguments for existing-session profiles. */
+  mcpArgs?: string[];
   /** Profile driver (default: openclaw). */
   driver?: "openclaw" | "clawd" | "existing-session";
   /** If true, launch this profile in headless mode. Falls back to browser.headless. */
@@ -54,6 +59,10 @@ export type BrowserConfig = {
   remoteCdpTimeoutMs?: number;
   /** Remote CDP WebSocket handshake timeout (ms). Default: max(remoteCdpTimeoutMs * 2, 2000). */
   remoteCdpHandshakeTimeoutMs?: number;
+  /** Local managed browser launch discovery timeout (ms). Default: 15000. */
+  localLaunchTimeoutMs?: number;
+  /** Local managed browser post-launch CDP readiness timeout (ms). Default: 8000. */
+  localCdpReadyTimeoutMs?: number;
   /** Default browser act timeout (ms). Default: 60000. */
   actionTimeoutMs?: number;
   /** Accent color for the openclaw browser profile (hex). Default: #FF4500 */

@@ -1,65 +1,18 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
-import {
-  fetchOvRequest,
-  normalizeOvSearchResult,
-  resolveOvRequest,
-  truncateEmbeddingInput,
-  type OvHttpConfig,
-} from "./ov-http-client.js";
+import type { AnyAgentTool } from "openclaw/plugin-sdk";
 
-type SearchResponse = {
-  total?: unknown;
-  items?: unknown;
-  error?: unknown;
-};
-
-type SearchItem = {
-  uri?: unknown;
-  score?: unknown;
-  abstract?: unknown;
-  overview?: unknown;
-  text?: unknown;
-  content?: unknown;
-};
-
-function json(payload: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-    details: payload,
-  };
+function json(payload: unknown): any {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
 }
 function str(params: unknown, key: string): string | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const value = (params as Record<string, unknown>)[key];
-  return typeof value === "string" ? value.trim() : undefined;
+  return typeof (params as any)?.[key] === "string" ? (params as any)[key].trim() : undefined;
 }
 function num(params: unknown, key: string): number | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const v = (params as Record<string, unknown>)[key];
+  const v = (params as any)?.[key];
   return typeof v === "number" ? v : undefined;
 }
-
-function snippetFromSearchItem(searchItem: SearchItem): string {
-  if (typeof searchItem.abstract === "string") {
-    return searchItem.abstract;
-  }
-  if (typeof searchItem.overview === "string") {
-    return searchItem.overview;
-  }
-  if (typeof searchItem.text === "string") {
-    return searchItem.text;
-  }
-  if (typeof searchItem.content === "string") {
-    return searchItem.content;
-  }
-  return "(no abstract)";
-}
+import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -83,7 +36,7 @@ async function searchLocalStore(
   storePath: string,
   query: string,
   limit: number,
-): Promise<{ total: number; items: unknown[]; error?: string }> {
+): Promise<{ total: number; items: any[]; error?: string }> {
   const script = `
 import sys, json, time
 import openviking
@@ -127,12 +80,7 @@ for attempt in range(MAX_RETRIES + 1):
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
       },
     );
-    const parsed = JSON.parse(stdout.trim()) as SearchResponse;
-    return {
-      total: typeof parsed.total === "number" ? parsed.total : 0,
-      items: Array.isArray(parsed.items) ? parsed.items : [],
-      ...(typeof parsed.error === "string" ? { error: parsed.error } : {}),
-    };
+    return JSON.parse(stdout.trim());
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { total: 0, items: [], error: message.slice(0, 200) };
@@ -149,53 +97,46 @@ export function createQuickSessionSearchTool(
     description:
       "Search your past conversations and session history semantically. " +
       "Uses per-agent OV HTTP when configured, with local per-agent session-store fallback.",
-    parameters: QuickSessionSearchSchema as unknown as Record<string, unknown>,
+    parameters: QuickSessionSearchSchema as any,
     execute: async (_toolCallId: string, params: unknown, _signal?: AbortSignal) => {
       const query = str(params, "query");
       const maxResults = num(params, "maxResults") ?? 5;
       if (!query || !query.trim()) {
         return json({ results: [], error: "query is required" });
       }
-      const safeQuery = truncateEmbeddingInput(query);
 
       // HTTP first (per-agent). If unavailable/failing, fallback to local store.
       const httpAttempts = resolveOvRequest({
         config: httpConfig,
         scope: "sessions",
         agentId,
-        body: { query: safeQuery.text, limit: maxResults },
+        body: { query: query.trim(), limit: maxResults },
       }).filter((x) => x.mode === "per-agent");
 
       for (const attempt of httpAttempts) {
         try {
-          const response = await fetchOvRequest(attempt);
-          if (!response.ok) {
-            continue;
-          }
+          const response = await fetch(attempt.url, attempt.init);
+          if (!response.ok) continue;
           const data = await response.json();
-          const { items, totalHits } = normalizeOvSearchResult(data);
+          const result = data?.result ?? data;
+          const items: any[] = [];
+          for (const key of ["resources", "memories", "skills", "instructions"]) {
+            if (Array.isArray(result?.[key])) items.push(...result[key]);
+          }
 
-          const results = items.slice(0, maxResults).map((item: unknown, idx: number) => {
-            const searchItem =
-              typeof item === "object" && item !== null ? (item as SearchItem) : {};
-            return {
-              path: searchItem.uri ?? `session-${idx}`,
-              score:
-                typeof searchItem.score === "number"
-                  ? Math.round(searchItem.score * 1000) / 1000
-                  : 0,
-              snippet: snippetFromSearchItem(searchItem),
-              source: "openviking-sessions-agent-http",
-              citation: searchItem.uri ?? "",
-            };
-          });
+          const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
+            path: item.uri ?? `session-${idx}`,
+            score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
+            snippet: item.abstract ?? "(no abstract)",
+            source: "openviking-sessions-agent-http",
+            citation: item.uri ?? "",
+          }));
 
           return json({
             results,
             provider: "openviking-sessions-agent-http",
             agentId,
-            totalHits,
-            queryTruncated: safeQuery.truncated,
+            totalHits: result?.total ?? results.length,
           });
         } catch {
           // continue to local fallback
@@ -204,7 +145,7 @@ export function createQuickSessionSearchTool(
 
       const sessionStorePath = `${OV_LOCAL_ROOT}/${agentId}-sessions`;
       try {
-        const data = await searchLocalStore(sessionStorePath, safeQuery.text, maxResults);
+        const data = await searchLocalStore(sessionStorePath, query.trim(), maxResults);
 
         if (data.error) {
           return json({
@@ -214,24 +155,19 @@ export function createQuickSessionSearchTool(
           });
         }
 
-        const results = data.items.map((item: unknown, idx: number) => {
-          const searchItem = typeof item === "object" && item !== null ? (item as SearchItem) : {};
-          return {
-            path: searchItem.uri ?? `session-${idx}`,
-            score:
-              typeof searchItem.score === "number" ? Math.round(searchItem.score * 1000) / 1000 : 0,
-            snippet: snippetFromSearchItem(searchItem),
-            source: "openviking-sessions-local",
-            citation: searchItem.uri ?? "",
-          };
-        });
+        const results = (data.items || []).map((item: any, idx: number) => ({
+          path: item.uri ?? `session-${idx}`,
+          score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
+          snippet: item.abstract ?? "(no abstract)",
+          source: "openviking-sessions-local",
+          citation: item.uri ?? "",
+        }));
 
         return json({
           results,
           provider: "openviking-sessions-local",
           agentId,
           totalHits: data.total ?? results.length,
-          queryTruncated: safeQuery.truncated,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

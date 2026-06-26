@@ -1,11 +1,38 @@
+// Vitest Local Scheduling tests cover vitest local scheduling script behavior.
 import { describe, expect, it } from "vitest";
 import {
+  resolveLocalVitestEnv,
   resolveLocalFullSuiteProfile,
   resolveLocalVitestScheduling,
   shouldUseLargeLocalFullSuiteProfile,
 } from "../../scripts/lib/vitest-local-scheduling.mjs";
 
 describe("vitest local full-suite profile", () => {
+  it("forces local Vitest runs back onto local-check policy", () => {
+    expect(resolveLocalVitestEnv({ OPENCLAW_LOCAL_CHECK: "0", PATH: "/usr/bin" })).toEqual({
+      OPENCLAW_LOCAL_CHECK: "1",
+      PATH: "/usr/bin",
+    });
+    expect(resolveLocalVitestEnv({ OPENCLAW_LOCAL_CHECK: "false", PATH: "/usr/bin" })).toEqual({
+      OPENCLAW_LOCAL_CHECK: "1",
+      PATH: "/usr/bin",
+    });
+  });
+
+  it("keeps local-check disablement for CI Vitest runs", () => {
+    expect(
+      resolveLocalVitestEnv({
+        CI: "true",
+        OPENCLAW_LOCAL_CHECK: "0",
+        PATH: "/usr/bin",
+      }),
+    ).toEqual({
+      CI: "true",
+      OPENCLAW_LOCAL_CHECK: "0",
+      PATH: "/usr/bin",
+    });
+  });
+
   it("selects the large local profile on roomy hosts that are not throttled", () => {
     const env = {};
     const hostInfo = {
@@ -111,5 +138,21 @@ describe("vitest local full-suite profile", () => {
       shardParallelism: 4,
       vitestMaxWorkers: 1,
     });
+  });
+
+  it("rejects malformed explicit worker limits", () => {
+    const hostInfo = {
+      cpuCount: 10,
+      loadAverage1m: 0,
+      totalMemoryBytes: 24 * 1024 ** 3,
+      freeMemoryBytes: 12 * 1024 ** 3,
+    };
+
+    expect(() =>
+      resolveLocalVitestScheduling({ OPENCLAW_VITEST_MAX_WORKERS: "8x" }, hostInfo, "threads"),
+    ).toThrow("OPENCLAW_VITEST_MAX_WORKERS must be a positive integer; got: 8x");
+    expect(() =>
+      resolveLocalVitestScheduling({ OPENCLAW_TEST_WORKERS: "1e0" }, hostInfo, "threads"),
+    ).toThrow("OPENCLAW_TEST_WORKERS must be a positive integer; got: 1e0");
   });
 });

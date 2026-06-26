@@ -1,3 +1,4 @@
+// Matrix helper module supports account config behavior.
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
 import {
@@ -121,13 +122,13 @@ export function resolveMatrixAccountConfig(params: {
       | undefined,
     accountId,
     normalizeAccountId,
-    nestedObjectKeys: ["dm", "actions", "execApprovals"],
+    nestedObjectKeys: ["dm", "actions", "execApprovals", "botLoopProtection"],
   });
+  const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
   const defaultAccountConfig =
     accountId === DEFAULT_ACCOUNT_ID
       ? undefined
       : findMatrixAccountConfig(params.cfg, DEFAULT_ACCOUNT_ID);
-  const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
   const inheritedGroups = mergeMatrixRoomEntries(
     selectInheritedMatrixRoomEntries({
       entries: base.groups,
