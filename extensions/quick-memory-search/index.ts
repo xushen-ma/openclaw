@@ -1,55 +1,19 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import {
-  fetchOvRequest,
-  normalizeOvSearchResult,
-  resolveOvRequest,
-  truncateEmbeddingInput,
-  type OvHttpConfig,
-} from "./ov-http-client.js";
-import { createQuickSessionSearchTool } from "./session-search.js";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
 
-type PluginConfig = {
-  perAgentOvBaseUrl?: unknown;
-  ovBaseUrl?: unknown;
-  agentRouting?: unknown;
-  agentHeaderName?: unknown;
-};
-
-function resolveAgentRouting(value: unknown): OvHttpConfig["agentRouting"] {
-  return value === "header" || value === "path" || value === "query" ? value : "header";
-}
-
-type SearchResultItem = {
-  uri?: unknown;
-  score?: unknown;
-  abstract?: unknown;
-  overview?: unknown;
-  text?: unknown;
-  content?: unknown;
-};
-
-function json(payload: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-    details: payload,
-  };
+function json(payload: unknown): any {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
 }
 function str(params: unknown, key: string): string | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const value = (params as Record<string, unknown>)[key];
-  return typeof value === "string" ? value.trim() : undefined;
+  return typeof (params as any)?.[key] === "string" ? (params as any)[key].trim() : undefined;
 }
 function num(params: unknown, key: string): number | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const v = (params as Record<string, unknown>)[key];
+  const v = (params as any)?.[key];
   return typeof v === "number" ? v : undefined;
 }
+import { resolveOvRequest, type OvHttpConfig } from "./ov-http-client.js";
+import { createQuickSessionSearchTool } from "./session-search.js";
 
 const QuickMemorySearchSchema = {
   type: "object" as const,
@@ -68,20 +32,16 @@ async function appendOvFastPassStat(entry: {
   maxResults: number;
   totalHits: number;
   resultCount: number;
-  status: "ok" | "error";
-  error?: string;
-  queryTruncated?: boolean;
 }) {
   const statsPath = process.env.OV_STATS_LOG_PATH?.trim();
   if (!statsPath) {
     return;
   }
-  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry });
   try {
     await mkdir(dirname(statsPath), { recursive: true });
-    await appendFile(statsPath, `${line}\n`, "utf8");
+    await appendFile(statsPath, `${JSON.stringify({ ts: new Date().toISOString(), ...entry })}\n`);
   } catch {
-    // best-effort diagnostics only
+    // Best-effort diagnostics only.
   }
 }
 
@@ -93,7 +53,7 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
       "Fast semantic search across workspace knowledge. Use as FIRST-choice recall tool. " +
       "Primary path is per-agent OV HTTP (aligned with per-agent memory stores); " +
       "legacy shared OV HTTP is optional transitional fallback.",
-    parameters: QuickMemorySearchSchema as unknown as Record<string, unknown>,
+    parameters: QuickMemorySearchSchema as any,
     execute: async (_toolCallId: string, params: unknown) => {
       const query = str(params, "query");
       const maxResults = num(params, "maxResults") ?? 5;
@@ -101,8 +61,7 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
         return json({ results: [], error: "query is required" });
       }
 
-      const safeQuery = truncateEmbeddingInput(query);
-      const requestBody = { query: safeQuery.text, limit: maxResults };
+      const requestBody = { query: query.trim(), limit: maxResults };
       const attempts = resolveOvRequest({
         config: httpConfig,
         scope: "memory",
@@ -121,90 +80,50 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
       const errors: string[] = [];
       for (const attempt of attempts) {
         try {
-          const response = await fetchOvRequest(attempt);
+          const response = await fetch(attempt.url, attempt.init);
           if (!response.ok) {
             const text = await response.text().catch(() => "");
-            const error = `${response.status} ${text.slice(0, 120)}`;
-            errors.push(`${attempt.mode}:${error}`);
-            await appendOvFastPassStat({
-              layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
-              routing: attempt.mode,
-              agentId,
-              query: safeQuery.text,
-              maxResults,
-              totalHits: 0,
-              resultCount: 0,
-              status: "error",
-              error,
-              queryTruncated: safeQuery.truncated,
-            });
+            errors.push(`${attempt.mode}:${response.status} ${text.slice(0, 120)}`);
             continue;
           }
 
           const data = await response.json();
-          const { items, totalHits } = normalizeOvSearchResult(data);
+          const result = data?.result ?? data;
+          const items: any[] = [];
+          for (const key of ["resources", "memories", "skills", "instructions"]) {
+            if (Array.isArray(result?.[key])) items.push(...result[key]);
+          }
 
-          const results = items.slice(0, maxResults).map((item: unknown, idx: number) => {
-            const searchItem =
-              typeof item === "object" && item !== null ? (item as SearchResultItem) : {};
-            const snippet =
-              typeof searchItem.abstract === "string"
-                ? searchItem.abstract
-                : typeof searchItem.overview === "string"
-                  ? searchItem.overview
-                  : typeof searchItem.text === "string"
-                    ? searchItem.text
-                    : typeof searchItem.content === "string"
-                      ? searchItem.content
-                  : "(no abstract)";
-            const score =
-              typeof searchItem.score === "number" ? Math.round(searchItem.score * 1000) / 1000 : 0;
-            return {
-              path: searchItem.uri ?? `result-${idx}`,
-              score,
-              snippet,
-              source:
-                attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
-              citation: searchItem.uri ?? "",
-            };
-          });
+          const results = items.slice(0, maxResults).map((item: any, idx: number) => ({
+            path: item.uri ?? `result-${idx}`,
+            score: typeof item.score === "number" ? Math.round(item.score * 1000) / 1000 : 0,
+            snippet: item.abstract ?? item.overview ?? "(no abstract)",
+            source:
+              attempt.mode === "per-agent" ? "openviking-agent-http" : "openviking-legacy-http",
+            citation: item.uri ?? "",
+          }));
 
           await appendOvFastPassStat({
             layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
             routing: attempt.mode,
             agentId,
-            query: safeQuery.text,
+            query: query.trim(),
             maxResults,
-            totalHits,
+            totalHits: result?.total ?? items.length,
             resultCount: results.length,
-            status: "ok",
-            queryTruncated: safeQuery.truncated,
           });
 
           return json({
             results,
             provider: results.length > 0 ? results[0].source : "openviking",
             model: "openviking-local",
-            totalHits,
+            totalHits: result?.total ?? items.length,
             routing: attempt.mode,
             agentId,
-            queryTruncated: safeQuery.truncated,
           });
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           errors.push(`${attempt.mode}:${message}`);
-          await appendOvFastPassStat({
-            layer: attempt.mode === "per-agent" ? "fast-pass" : "fast-pass-shared",
-            routing: attempt.mode,
-            agentId,
-            query: safeQuery.text,
-            maxResults,
-            totalHits: 0,
-            resultCount: 0,
-            status: "error",
-            error: message,
-            queryTruncated: safeQuery.truncated,
-          });
         }
       }
 
@@ -218,21 +137,13 @@ function createQuickMemorySearchTool(httpConfig: OvHttpConfig, agentId: string):
 }
 
 export default function register(api: OpenClawPluginApi) {
-  const cfg =
-    typeof api.pluginConfig === "object" && api.pluginConfig !== null
-      ? (api.pluginConfig as PluginConfig)
-      : {};
+  const cfg = (api.pluginConfig as any) || {};
   const httpConfig: OvHttpConfig = {
     perAgentBaseUrl:
-      (typeof cfg.perAgentOvBaseUrl === "string" ? cfg.perAgentOvBaseUrl.trim() : "") ||
-      process.env.OV_PER_AGENT_HTTP_BASE?.trim() ||
-      "",
-    legacyBaseUrl:
-      (typeof cfg.ovBaseUrl === "string" ? cfg.ovBaseUrl.trim() : "") ||
-      process.env.OV_LEGACY_HTTP_BASE?.trim() ||
-      "",
-    agentRouting: resolveAgentRouting(cfg.agentRouting),
-    agentHeaderName: typeof cfg.agentHeaderName === "string" ? cfg.agentHeaderName : undefined,
+      cfg.perAgentOvBaseUrl?.trim() || process.env.OV_PER_AGENT_HTTP_BASE?.trim() || "",
+    legacyBaseUrl: cfg.ovBaseUrl?.trim() || process.env.OV_LEGACY_HTTP_BASE?.trim() || "",
+    agentRouting: cfg.agentRouting || "header",
+    agentHeaderName: cfg.agentHeaderName,
   };
 
   // Use factory pattern so each agent's tool instance captures the correct agentId
@@ -248,7 +159,7 @@ export default function register(api: OpenClawPluginApi) {
     stop: () => {},
   });
 
-  api.registerGatewayMethod("quick-memory-search.status", async ({ respond }) => {
+  api.registerGatewayMethod("quick-memory-search.status", async ({ respond }: any) => {
     respond(true, {
       ok: true,
       perAgentBaseUrl: httpConfig.perAgentBaseUrl || null,

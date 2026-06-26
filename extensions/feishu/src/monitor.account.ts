@@ -1,6 +1,7 @@
+// Feishu plugin module implements monitor.account behavior.
 import * as crypto from "node:crypto";
 import type * as Lark from "@larksuiteoapi/node-sdk";
-import type { ClawdbotConfig, RuntimeEnv, HistoryEntry } from "../runtime-api.js";
+import type { ClawdbotConfig, PluginRuntime, RuntimeEnv, HistoryEntry } from "../runtime-api.js";
 import { raceWithTimeoutAndAbort } from "./async.js";
 import {
   handleFeishuMessage,
@@ -14,7 +15,7 @@ import { isRecord, readString } from "./comment-shared.js";
 import {
   hasProcessedFeishuMessage,
   recordProcessedFeishuMessage,
-  warmupDedupFromDisk,
+  warmupDedupFromPluginState,
 } from "./dedup.js";
 import { applyBotIdentityState, startBotIdentityRecovery } from "./monitor.bot-identity.js";
 import { createFeishuBotMenuHandler } from "./monitor.bot-menu-handler.js";
@@ -142,6 +143,7 @@ export async function resolveReactionSyntheticEvent(
     },
     message: {
       message_id: `${messageId}:reaction:${emoji}:${uuid()}`,
+      typing_target_message_id: messageId,
       chat_id: syntheticChatId,
       chat_type: syntheticChatType,
       message_type: "text",
@@ -164,6 +166,7 @@ function normalizeFeishuChatType(value: unknown): FeishuChatType | undefined {
 type RegisterEventHandlersContext = {
   cfg: ClawdbotConfig;
   accountId: string;
+  channelRuntime: PluginRuntime["channel"];
   runtime?: RuntimeEnv;
   chatHistories: Map<string, HistoryEntry[]>;
   fireAndForget?: boolean;
@@ -183,53 +186,83 @@ function parseFeishuBotRemovedChatId(value: unknown): string | null {
   return readString(value.chat_id) ?? null;
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const stringValue = readString(value);
+    const trimmed = stringValue?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function readFeishuIdentityField(
+  value: unknown,
+  field: "open_id" | "user_id" | "union_id",
+): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  return firstString(value[field]);
+}
+
 function parseFeishuCardActionEventPayload(value: unknown): FeishuCardActionEvent | null {
   if (!isRecord(value)) {
     return null;
   }
-  const operator = value.operator;
+  const operator = isRecord(value.operator) ? value.operator : {};
   const action = value.action;
-  const context = value.context;
-  if (!isRecord(operator) || !isRecord(action) || !isRecord(context)) {
+  const context = isRecord(value.context) ? value.context : {};
+  if (!isRecord(action)) {
     return null;
   }
+  const operatorUserId = operator.user_id;
   const token = readString(value.token);
-  const openId = readString(operator.open_id);
-  const userId = readString(operator.user_id);
-  const unionId = readString(operator.union_id);
+  const openId = firstString(
+    operator.open_id,
+    readFeishuIdentityField(operatorUserId, "open_id"),
+    value.open_id,
+    context.open_id,
+  );
+  const userId = firstString(
+    operator.user_id,
+    readFeishuIdentityField(operatorUserId, "user_id"),
+    value.user_id,
+    context.user_id,
+  );
+  const unionId = firstString(
+    operator.union_id,
+    readFeishuIdentityField(operatorUserId, "union_id"),
+  );
   const tag = readString(action.tag);
   const actionValue = action.value;
-  const contextOpenId = readString(context.open_id);
-  const contextUserId = readString(context.user_id);
-  const chatId = readString(context.chat_id);
-  if (
-    !token ||
-    !openId ||
-    !userId ||
-    !unionId ||
-    !tag ||
-    !isRecord(actionValue) ||
-    !contextOpenId ||
-    !contextUserId ||
-    !chatId
-  ) {
+  // Prefer context.open_message_id (original card message) over value.open_message_id
+  // which may be a temporary card-action-c-* ID that is not a valid Feishu message ID.
+  const openMessageId = firstString(context.open_message_id, value.open_message_id);
+  const contextOpenId = firstString(context.open_id, openId);
+  const contextUserId = firstString(context.user_id, userId);
+  const chatId = firstString(context.chat_id, context.open_chat_id);
+  if (!token || !openId || !tag || !isRecord(actionValue)) {
     return null;
   }
   return {
     operator: {
       open_id: openId,
-      user_id: userId,
-      union_id: unionId,
+      ...(userId ? { user_id: userId } : {}),
+      ...(unionId ? { union_id: unionId } : {}),
     },
     token,
     action: {
       value: actionValue,
       tag,
     },
+    ...(openMessageId ? { open_message_id: openMessageId } : {}),
     context: {
-      open_id: contextOpenId,
-      user_id: contextUserId,
-      chat_id: chatId,
+      ...(openMessageId ? { open_message_id: openMessageId } : {}),
+      ...(contextOpenId ? { open_id: contextOpenId } : {}),
+      ...(contextUserId ? { user_id: contextUserId } : {}),
+      ...(chatId ? { chat_id: chatId } : {}),
     },
   };
 }
@@ -238,12 +271,12 @@ function registerEventHandlers(
   eventDispatcher: Lark.EventDispatcher,
   context: RegisterEventHandlersContext,
 ): void {
-  const { cfg, accountId, runtime, chatHistories, fireAndForget } = context;
+  const { cfg, accountId, channelRuntime, runtime, chatHistories, fireAndForget } = context;
   const log = runtime?.log ?? console.log;
   const error = runtime?.error ?? console.error;
   const runFeishuHandler = async (params: { task: () => Promise<void>; errorMessage: string }) => {
     if (fireAndForget) {
-      void params.task().catch((err) => {
+      void params.task().catch((err: unknown) => {
         error(`${params.errorMessage}: ${String(err)}`);
       });
       return;
@@ -258,7 +291,7 @@ function registerEventHandlers(
   eventDispatcher.register({
     "im.message.receive_v1": createFeishuMessageReceiveHandler({
       cfg,
-      core: getFeishuRuntime(),
+      channelRuntime,
       accountId,
       runtime,
       chatHistories,
@@ -274,6 +307,9 @@ function registerEventHandlers(
     }),
     "im.message.message_read_v1": async () => {
       // Ignore read receipts
+    },
+    "im.chat.access_event.bot_p2p_chat_entered_v1": async () => {
+      // Ignore p2p chat entry notifications — no action needed
     },
     "im.chat.member.bot.added_v1": async (data) => {
       try {
@@ -325,6 +361,7 @@ function registerEventHandlers(
             botOpenId: myBotId,
             botName: botNames.get(accountId),
             runtime,
+            channelRuntime,
             chatHistories,
             accountId,
           });
@@ -355,6 +392,7 @@ function registerEventHandlers(
             botOpenId: myBotId,
             botName: botNames.get(accountId),
             runtime,
+            channelRuntime,
             chatHistories,
             accountId,
           });
@@ -368,6 +406,7 @@ function registerEventHandlers(
       runtime,
       chatHistories,
       fireAndForget,
+      channelRuntime,
     }),
     "card.action.trigger": async (data: unknown) => {
       try {
@@ -381,10 +420,11 @@ function registerEventHandlers(
           event,
           botOpenId: botOpenIds.get(accountId),
           runtime,
+          channelRuntime,
           accountId,
         });
         if (fireAndForget) {
-          promise.catch((err) => {
+          promise.catch((err: unknown) => {
             error(`feishu[${accountId}]: error handling card action: ${String(err)}`);
           });
         } else {
@@ -404,6 +444,7 @@ export type BotOpenIdSource =
 export type MonitorSingleAccountParams = {
   cfg: ClawdbotConfig;
   account: ResolvedFeishuAccount;
+  channelRuntime?: PluginRuntime["channel"];
   runtime?: RuntimeEnv;
   abortSignal?: AbortSignal;
   botOpenIdSource?: BotOpenIdSource;
@@ -435,20 +476,22 @@ export async function monitorSingleAccount(params: MonitorSingleAccountParams): 
     throw new Error(`Feishu account "${accountId}" webhook mode requires encryptKey`);
   }
 
-  const warmupCount = await warmupDedupFromDisk(accountId, log);
+  const warmupCount = await warmupDedupFromPluginState(accountId, log);
   if (warmupCount > 0) {
-    log(`feishu[${accountId}]: dedup warmup loaded ${warmupCount} entries from disk`);
+    log(`feishu[${accountId}]: dedup warmup loaded ${warmupCount} entries from plugin state`);
   }
 
-  let threadBindingManager: ReturnType<typeof createFeishuThreadBindingManager> | null = null;
+  let threadBindingManager: ReturnType<typeof createFeishuThreadBindingManager> | null | undefined;
   try {
     const eventDispatcher = createEventDispatcher(account);
     const chatHistories = new Map<string, HistoryEntry[]>();
     threadBindingManager = createFeishuThreadBindingManager({ accountId, cfg });
+    const channelRuntime = params.channelRuntime ?? getFeishuRuntime().channel;
 
     registerEventHandlers(eventDispatcher, {
       cfg,
       accountId,
+      channelRuntime,
       runtime,
       chatHistories,
       fireAndForget: params.fireAndForget ?? true,

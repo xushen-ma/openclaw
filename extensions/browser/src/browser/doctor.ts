@@ -1,7 +1,14 @@
+/**
+ * Browser doctor report builder.
+ *
+ * Turns BrowserStatus into profile-aware diagnostic checks and fix hints for
+ * CLI, tool, and HTTP doctor responses.
+ */
 import type { BrowserStatus, BrowserTransport } from "./client.types.js";
 
-export type BrowserDoctorCheckStatus = "pass" | "warn" | "fail" | "info";
+type BrowserDoctorCheckStatus = "pass" | "warn" | "fail" | "info";
 
+/** One browser doctor check result. */
 export type BrowserDoctorCheck = {
   id: string;
   label: string;
@@ -10,6 +17,7 @@ export type BrowserDoctorCheck = {
   fixHint?: string;
 };
 
+/** Browser doctor report returned by browser-control clients. */
 export type BrowserDoctorReport = {
   ok: boolean;
   profile: string;
@@ -18,6 +26,7 @@ export type BrowserDoctorReport = {
   status: BrowserStatus;
 };
 
+/** Build a browser doctor report from a status response and environment facts. */
 export function buildBrowserDoctorReport(params: {
   status: BrowserStatus;
   platform?: NodeJS.Platform;
@@ -78,13 +87,22 @@ export function buildBrowserDoctorReport(params: {
     const uid = params.uid ?? process.getuid?.();
     const missingDisplay =
       platform === "linux" && !status.headless && !env.DISPLAY && !env.WAYLAND_DISPLAY;
+    if (status.headlessSource === "linux-display-fallback") {
+      checks.push({
+        id: "headless-mode",
+        label: "Headless mode",
+        status: "pass",
+        summary: "Linux no-display fallback selected headless mode",
+      });
+    }
     if (missingDisplay) {
       checks.push({
         id: "display",
         label: "Display",
         status: "warn",
-        summary: "No DISPLAY or WAYLAND_DISPLAY is set while browser.headless is false",
-        fixHint: "Use a desktop session, Xvfb, or set browser.headless: true.",
+        summary: `No DISPLAY or WAYLAND_DISPLAY is set while headed mode is selected (${status.headlessSource ?? "unknown"})`,
+        fixHint:
+          "Use a desktop session, Xvfb, set OPENCLAW_BROWSER_HEADLESS=1, or remove the headed override.",
       });
     }
     if (platform === "linux" && uid === 0 && !status.noSandbox) {

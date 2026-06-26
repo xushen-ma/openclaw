@@ -1,5 +1,13 @@
+// Agent job tracking caches terminal run snapshots so `agent.wait` can observe
+// recent run outcomes even after the live event stream has moved on.
+import {
+  buildAgentRunTerminalOutcome,
+  mergeAgentRunTerminalOutcome,
+  type AgentRunTerminalOutcome,
+} from "../../agents/agent-run-terminal-outcome.js";
 import { onAgentEvent } from "../../infra/agent-events.js";
 import { setSafeTimeout } from "../../utils/timer-delay.js";
+import type { AgentWaitTerminalSnapshot } from "./agent-wait-dedupe.js";
 
 const AGENT_RUN_CACHE_TTL_MS = 10 * 60_000;
 /**
@@ -20,14 +28,11 @@ const agentRunCache = new Map<string, AgentRunSnapshot>();
 const agentRunStarts = new Map<string, number>();
 const pendingAgentRunErrors = new Map<string, PendingAgentRunError>();
 const pendingAgentRunTimeouts = new Map<string, PendingAgentRunTerminal>();
+const agentRunWaiterCounts = new Map<string, number>();
 let agentRunListenerStarted = false;
 
-type AgentRunSnapshot = {
+type AgentRunSnapshot = AgentWaitTerminalSnapshot & {
   runId: string;
-  status: "ok" | "error" | "timeout";
-  startedAt?: number;
-  endedAt?: number;
-  error?: string;
   ts: number;
 };
 
@@ -49,7 +54,42 @@ function pruneAgentRunCache(now = Date.now()) {
 
 function recordAgentRunSnapshot(entry: AgentRunSnapshot) {
   pruneAgentRunCache(entry.ts);
+  const existing = agentRunCache.get(entry.runId);
+  if (existing && shouldPreserveTerminalSnapshot(existing, entry)) {
+    agentRunCache.set(entry.runId, {
+      ...existing,
+      ts: entry.ts,
+    });
+    return;
+  }
   agentRunCache.set(entry.runId, entry);
+}
+
+function shouldPreserveTerminalSnapshot(
+  existing: AgentRunSnapshot,
+  incoming: AgentRunSnapshot,
+): boolean {
+  const existingOutcome = terminalOutcomeFromSnapshot(existing);
+  const incomingOutcome = terminalOutcomeFromSnapshot(incoming);
+  if (!existingOutcome) {
+    return false;
+  }
+  if (!incomingOutcome) {
+    return false;
+  }
+  const terminalOutcome = mergeAgentRunTerminalOutcome(existingOutcome, incomingOutcome);
+  return terminalOutcome === existingOutcome;
+}
+
+function terminalOutcomeFromSnapshot(
+  snapshot: AgentRunSnapshot,
+): AgentRunTerminalOutcome | undefined {
+  if (snapshot.pendingError) {
+    // Pending errors are still inside retry grace; a lifecycle start can cancel
+    // them, so they must not participate in sticky terminal precedence.
+    return undefined;
+  }
+  return buildAgentRunTerminalOutcome(snapshot);
 }
 
 function clearPendingAgentRunError(runId: string) {
@@ -71,6 +111,12 @@ function clearPendingAgentRunTimeout(runId: string) {
 }
 
 function schedulePendingAgentRunError(snapshot: AgentRunSnapshot) {
+  const pendingTimeout = pendingAgentRunTimeouts.get(snapshot.runId);
+  if (pendingTimeout && shouldPreserveTerminalSnapshot(pendingTimeout.snapshot, snapshot)) {
+    // A late rejection can race in before the timeout grace publishes. Keep the
+    // pending hard timeout so waiters observe the original terminal cause.
+    return;
+  }
   clearPendingAgentRunTimeout(snapshot.runId);
   clearPendingAgentRunError(snapshot.runId);
   const dueAt = Date.now() + AGENT_RUN_ERROR_RETRY_GRACE_MS;
@@ -87,6 +133,12 @@ function schedulePendingAgentRunError(snapshot: AgentRunSnapshot) {
 }
 
 function schedulePendingAgentRunTimeout(snapshot: AgentRunSnapshot) {
+  const pendingTimeout = pendingAgentRunTimeouts.get(snapshot.runId);
+  if (pendingTimeout && shouldPreserveTerminalSnapshot(pendingTimeout.snapshot, snapshot)) {
+    // Keep the first hard timeout through retry grace; later timeout-shaped
+    // cleanup events may lose provider attribution before the cache publishes.
+    return;
+  }
   clearPendingAgentRunError(snapshot.runId);
   clearPendingAgentRunTimeout(snapshot.runId);
   const dueAt = Date.now() + AGENT_RUN_TIMEOUT_RETRY_GRACE_MS;
@@ -124,6 +176,22 @@ function getPendingAgentRunTimeout(runId: string) {
   };
 }
 
+function createPendingErrorTimeoutSnapshot(snapshot: AgentRunSnapshot): AgentRunSnapshot {
+  // Keep this non-terminal: the retry grace can still be canceled by a later
+  // lifecycle start, so omit terminal fields such as endedAt and stopReason.
+  return {
+    runId: snapshot.runId,
+    status: "timeout",
+    startedAt: snapshot.startedAt,
+    error: snapshot.error,
+    pendingError: true,
+    ...(snapshot.providerStarted !== undefined
+      ? { providerStarted: snapshot.providerStarted }
+      : {}),
+    ts: Date.now(),
+  };
+}
+
 function createSnapshotFromLifecycleEvent(params: {
   runId: string;
   phase: "end" | "error";
@@ -134,12 +202,32 @@ function createSnapshotFromLifecycleEvent(params: {
     typeof data?.startedAt === "number" ? data.startedAt : agentRunStarts.get(runId);
   const endedAt = typeof data?.endedAt === "number" ? data.endedAt : undefined;
   const error = typeof data?.error === "string" ? data.error : undefined;
-  return {
-    runId,
-    status: phase === "error" ? "error" : data?.aborted ? "timeout" : "ok",
+  const stopReason = typeof data?.stopReason === "string" ? data.stopReason : undefined;
+  const livenessState = typeof data?.livenessState === "string" ? data.livenessState : undefined;
+  const status = phase === "error" ? "error" : data?.aborted ? "timeout" : "ok";
+  const terminalOutcome = buildAgentRunTerminalOutcome({
+    status,
+    error,
+    stopReason,
+    livenessState,
+    timeoutPhase: data?.timeoutPhase,
+    providerStarted: data?.providerStarted,
     startedAt,
     endedAt,
-    error,
+  });
+  return {
+    runId,
+    status: terminalOutcome.status,
+    startedAt,
+    endedAt,
+    error: terminalOutcome.error,
+    stopReason,
+    livenessState,
+    ...(data?.yielded === true ? { yielded: true } : {}),
+    ...(terminalOutcome.timeoutPhase ? { timeoutPhase: terminalOutcome.timeoutPhase } : {}),
+    ...(terminalOutcome.providerStarted !== undefined
+      ? { providerStarted: terminalOutcome.providerStarted }
+      : {}),
     ts: Date.now(),
   };
 }
@@ -184,6 +272,10 @@ function ensureAgentRunListener() {
       schedulePendingAgentRunTimeout(snapshot);
       return;
     }
+    const pendingTimeout = pendingAgentRunTimeouts.get(evt.runId);
+    if (pendingTimeout && shouldPreserveTerminalSnapshot(pendingTimeout.snapshot, snapshot)) {
+      return;
+    }
     clearPendingAgentRunError(evt.runId);
     clearPendingAgentRunTimeout(evt.runId);
     recordAgentRunSnapshot(snapshot);
@@ -193,6 +285,23 @@ function ensureAgentRunListener() {
 function getCachedAgentRun(runId: string) {
   pruneAgentRunCache();
   return agentRunCache.get(runId);
+}
+
+function addAgentRunWaiter(runId: string): () => void {
+  agentRunWaiterCounts.set(runId, (agentRunWaiterCounts.get(runId) ?? 0) + 1);
+  let removed = false;
+  return () => {
+    if (removed) {
+      return;
+    }
+    removed = true;
+    const nextCount = (agentRunWaiterCounts.get(runId) ?? 1) - 1;
+    if (nextCount <= 0) {
+      agentRunWaiterCounts.delete(runId);
+      return;
+    }
+    agentRunWaiterCounts.set(runId, nextCount);
+  };
 }
 
 export async function waitForAgentJob(params: {
@@ -215,7 +324,8 @@ export async function waitForAgentJob(params: {
     let settled = false;
     let pendingErrorTimer: NodeJS.Timeout | undefined;
     let pendingTimeoutTimer: NodeJS.Timeout | undefined;
-    let onAbort: (() => void) | undefined;
+    let pendingTimeoutSnapshot: AgentRunSnapshot | undefined;
+    let removeWaiter = () => {};
 
     const clearPendingErrorTimer = () => {
       if (!pendingErrorTimer) {
@@ -231,6 +341,7 @@ export async function waitForAgentJob(params: {
       }
       clearTimeout(pendingTimeoutTimer);
       pendingTimeoutTimer = undefined;
+      pendingTimeoutSnapshot = undefined;
     };
 
     const finish = (entry: AgentRunSnapshot | null) => {
@@ -242,6 +353,7 @@ export async function waitForAgentJob(params: {
       clearPendingErrorTimer();
       clearPendingTimeoutTimer();
       unsubscribe();
+      removeWaiter();
       if (onAbort) {
         signal?.removeEventListener("abort", onAbort);
       }
@@ -253,6 +365,14 @@ export async function waitForAgentJob(params: {
       snapshot: AgentRunSnapshot,
       delayMs: number,
     ) => {
+      if (
+        pendingTimeoutSnapshot &&
+        shouldPreserveTerminalSnapshot(pendingTimeoutSnapshot, snapshot)
+      ) {
+        // Mirror the shared pending map: while this waiter holds a hard timeout
+        // in grace, late terminal events must not replace the original cause.
+        return;
+      }
       clearPendingErrorTimer();
       clearPendingTimeoutTimer();
       const timerRef = setSafeTimeout(() => {
@@ -269,6 +389,7 @@ export async function waitForAgentJob(params: {
         pendingErrorTimer = timerRef;
       } else {
         pendingTimeoutTimer = timerRef;
+        pendingTimeoutSnapshot = snapshot;
       }
     };
 
@@ -315,6 +436,12 @@ export async function waitForAgentJob(params: {
       }
       const latest = ignoreCachedSnapshot ? undefined : getCachedAgentRun(runId);
       if (latest) {
+        if (
+          pendingTimeoutSnapshot &&
+          shouldPreserveTerminalSnapshot(pendingTimeoutSnapshot, latest)
+        ) {
+          return;
+        }
         finish(latest);
         return;
       }
@@ -331,14 +458,41 @@ export async function waitForAgentJob(params: {
         scheduleTimeoutFinish(snapshot);
         return;
       }
+      if (
+        pendingTimeoutSnapshot &&
+        shouldPreserveTerminalSnapshot(pendingTimeoutSnapshot, snapshot)
+      ) {
+        return;
+      }
       recordAgentRunSnapshot(snapshot);
       finish(snapshot);
     });
+    removeWaiter = addAgentRunWaiter(runId);
 
-    const timer = setSafeTimeout(() => finish(null), timeoutMs);
-    onAbort = () => finish(null);
+    const timer = setSafeTimeout(() => {
+      const pendingError = getPendingAgentRunError(runId);
+      finish(pendingError ? createPendingErrorTimeoutSnapshot(pendingError.snapshot) : null);
+    }, timeoutMs);
+    const onAbort: (() => void) | undefined = () => finish(null);
     signal?.addEventListener("abort", onAbort, { once: true });
   });
 }
 
 ensureAgentRunListener();
+
+export const testing = {
+  getWaiterCount(runId?: string): number {
+    if (runId) {
+      return agentRunWaiterCounts.get(runId) ?? 0;
+    }
+    let total = 0;
+    for (const count of agentRunWaiterCounts.values()) {
+      total += count;
+    }
+    return total;
+  },
+  resetWaiters(): void {
+    agentRunWaiterCounts.clear();
+  },
+};
+export { testing as __testing };

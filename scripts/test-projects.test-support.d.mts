@@ -14,7 +14,20 @@ export type VitestRunSpec = {
   watchMode: boolean;
 };
 
+export type ChangedTestTargetOptions = {
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+  broad?: boolean;
+};
+
+export type ChangedTestTargetPlan = {
+  mode: "none" | "broad" | "targets";
+  targets: string[];
+  skippedBroadFallbackPaths?: string[];
+};
+
 export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_TIMEOUT_MS: string;
+export const DEFAULT_TEST_PROJECTS_VITEST_NO_OUTPUT_HEARTBEAT_MS: string;
 
 export function parseTestProjectsArgs(
   args: string[],
@@ -29,18 +42,27 @@ export function buildVitestRunPlans(
   args: string[],
   cwd?: string,
   listChangedPaths?: (baseRef: string, cwd: string) => string[],
+  options?: ChangedTestTargetOptions,
 ): VitestRunPlan[];
 
 export function resolveChangedTargetArgs(
   args: string[],
   cwd?: string,
   listChangedPaths?: (baseRef: string, cwd: string) => string[],
+  options?: ChangedTestTargetOptions,
 ): string[] | null;
 
-export function resolveChangedTestTargetPlan(changedPaths: string[]): {
-  mode: "none" | "broad" | "targets";
-  targets: string[];
-};
+export function resolveChangedTestTargetPlan(
+  changedPaths: string[],
+  options?: ChangedTestTargetOptions,
+): ChangedTestTargetPlan;
+
+export function resolveChangedTestTargetPlanForArgs(
+  args: string[],
+  cwd?: string,
+  listChangedPaths?: (baseRef: string, cwd: string) => string[],
+  options?: ChangedTestTargetOptions,
+): ChangedTestTargetPlan | null;
 
 export function listFullExtensionVitestProjectConfigs(): string[];
 
@@ -52,6 +74,15 @@ export function createVitestRunSpecs(
     tempDir?: string;
   },
 ): VitestRunSpec[];
+
+export function findUnmatchedExplicitTestTargets(
+  args: string[],
+  cwd?: string,
+): Array<{
+  target: string;
+  reason: "glob-matched-no-files" | "path-does-not-exist" | "target-matched-no-test-files";
+  includePattern?: string;
+}>;
 
 export function applyDefaultVitestNoOutputTimeout(
   specs: VitestRunSpec[],

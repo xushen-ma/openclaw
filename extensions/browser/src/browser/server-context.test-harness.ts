@@ -1,9 +1,13 @@
+/**
+ * Test factories for Browser profile/runtime state and launched Chrome mocks.
+ */
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { RunningChrome } from "./chrome.js";
 import type { ResolvedBrowserProfile } from "./config.js";
 import type { BrowserServerState } from "./server-context.js";
 
+/** Creates a resolved Browser profile for unit tests. */
 export function makeBrowserProfile(
   overrides: Partial<ResolvedBrowserProfile> = {},
 ): ResolvedBrowserProfile {
@@ -21,6 +25,7 @@ export function makeBrowserProfile(
   };
 }
 
+/** Creates Browser server state around a test profile. */
 export function makeBrowserServerState(params?: {
   profile?: ResolvedBrowserProfile;
   resolvedOverrides?: Partial<BrowserServerState["resolved"]>;
@@ -37,6 +42,8 @@ export function makeBrowserServerState(params?: {
     evaluateEnabled: false,
     remoteCdpTimeoutMs: 1500,
     remoteCdpHandshakeTimeoutMs: 3000,
+    localLaunchTimeoutMs: 15_000,
+    localCdpReadyTimeoutMs: 8_000,
     actionTimeoutMs: 60_000,
     extraArgs: [],
     color: profile.color,
@@ -67,6 +74,7 @@ export function makeBrowserServerState(params?: {
   };
 }
 
+/** Mocks a launched OpenClaw Chrome process with the supplied pid. */
 export function mockLaunchedChrome(
   launchOpenClawChrome: { mockResolvedValue: (value: RunningChrome) => unknown },
   pid: number,

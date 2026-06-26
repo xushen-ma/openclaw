@@ -1,9 +1,12 @@
+// Control UI tests cover agents utils behavior.
 import { describe, expect, it } from "vitest";
 import {
   agentLogoUrl,
+  assistantAvatarFallbackUrl,
   buildAgentContext,
   resolveConfiguredCronModelSuggestions,
   resolveAgentAvatarUrl,
+  resolveAssistantTextAvatar,
   resolveChatAvatarRenderUrl,
   resolveEffectiveModelFallbacks,
   sortLocaleStrings,
@@ -45,7 +48,7 @@ describe("resolveEffectiveModelFallbacks", () => {
       fallbacks: ["google/gemini-2.0-flash"],
     };
 
-    expect(resolveEffectiveModelFallbacks(entryModel, defaultModel)).toEqual([]);
+    expect(resolveEffectiveModelFallbacks(entryModel, defaultModel)).toStrictEqual([]);
   });
 });
 
@@ -85,11 +88,11 @@ describe("resolveConfiguredCronModelSuggestions", () => {
   });
 
   it("returns empty array for invalid or missing config shape", () => {
-    expect(resolveConfiguredCronModelSuggestions(null)).toEqual([]);
-    expect(resolveConfiguredCronModelSuggestions({})).toEqual([]);
-    expect(resolveConfiguredCronModelSuggestions({ agents: { defaults: { model: "" } } })).toEqual(
-      [],
-    );
+    expect(resolveConfiguredCronModelSuggestions(null)).toStrictEqual([]);
+    expect(resolveConfiguredCronModelSuggestions({})).toStrictEqual([]);
+    expect(
+      resolveConfiguredCronModelSuggestions({ agents: { defaults: { model: "" } } }),
+    ).toStrictEqual([]);
   });
 });
 
@@ -109,8 +112,24 @@ describe("agentLogoUrl", () => {
     expect(agentLogoUrl("/apps/openclaw/")).toBe("/apps/openclaw/favicon.svg");
   });
 
-  it("uses a route-relative fallback before basePath bootstrap finishes", () => {
-    expect(agentLogoUrl("")).toBe("favicon.svg");
+  it("uses a root-relative fallback when no basePath is configured", () => {
+    expect(agentLogoUrl("")).toBe("/favicon.svg");
+  });
+});
+
+describe("assistantAvatarFallbackUrl", () => {
+  it("uses the bundled Molty png for assistant profile fallbacks", () => {
+    expect(assistantAvatarFallbackUrl("/ui")).toBe("/ui/apple-touch-icon.png");
+    expect(assistantAvatarFallbackUrl("")).toBe("/apple-touch-icon.png");
+  });
+});
+
+describe("resolveAssistantTextAvatar", () => {
+  it("rejects unsafe invisible controls in assistant text avatars", () => {
+    expect(resolveAssistantTextAvatar("VC")).toBe("VC");
+    expect(resolveAssistantTextAvatar("\u{1F43E}")).toBe("\u{1F43E}");
+    expect(resolveAssistantTextAvatar("V\u202eC")).toBeNull();
+    expect(resolveAssistantTextAvatar("V\u200bC")).toBeNull();
   });
 });
 
@@ -184,8 +203,9 @@ describe("buildAgentContext", () => {
         workspace: "/tmp/agent-workspace",
         model: {
           primary: "openai/gpt-5.5",
-          fallbacks: ["openai-codex/gpt-5.2-codex"],
+          fallbacks: ["openai/gpt-5.2-codex"],
         },
+        agentRuntime: { id: "claude-cli", fallback: "none", source: "agent" },
       },
       null,
       null,
@@ -195,6 +215,7 @@ describe("buildAgentContext", () => {
 
     expect(context.workspace).toBe("/tmp/agent-workspace");
     expect(context.model).toBe("openai/gpt-5.5 (+1 fallback)");
+    expect(context.runtime).toBe("claude-cli (fallback none)");
     expect(context.isDefault).toBe(true);
   });
 
@@ -207,7 +228,7 @@ describe("buildAgentContext", () => {
             workspace: "/tmp/default-workspace",
             model: {
               primary: "openai/gpt-5.5",
-              fallbacks: ["openai-codex/gpt-5.2-codex"],
+              fallbacks: ["openai/gpt-5.2-codex"],
             },
           },
           list: [{ id: "main" }],
@@ -220,5 +241,27 @@ describe("buildAgentContext", () => {
 
     expect(context.workspace).toBe("/tmp/default-workspace");
     expect(context.model).toBe("openai/gpt-5.5 (+1 fallback)");
+  });
+
+  it("prefers per-agent configured identity over runtime global identity in agent panels", () => {
+    const context = buildAgentContext(
+      {
+        id: "fs-daying",
+        name: "File-system agent",
+        identity: { name: "大颖", emoji: "⚙️" },
+      },
+      null,
+      null,
+      "main",
+      {
+        agentId: "fs-daying",
+        name: "AI大管家",
+        avatar: "M",
+        emoji: "🤖",
+      },
+    );
+
+    expect(context.identityName).toBe("大颖");
+    expect(context.identityAvatar).toBe("⚙️");
   });
 });

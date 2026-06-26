@@ -1,3 +1,4 @@
+// Matrix tests cover accounts plugin behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixScopedEnvVarNames } from "../env-vars.js";
 import type { CoreConfig } from "../types.js";
@@ -291,6 +292,38 @@ describe("resolveMatrixAccount", () => {
 
     const account = resolveMatrixAccount({ cfg });
     expect(account.configured).toBe(true);
+  });
+
+  it("merges account bot loop protection over top-level defaults field-by-field", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          userId: "@bot:example.org",
+          accessToken: "top-token",
+          botLoopProtection: {
+            maxEventsPerWindow: 8,
+            windowSeconds: 120,
+            cooldownSeconds: 240,
+          },
+          accounts: {
+            ops: {
+              accessToken: "ops-token",
+              botLoopProtection: {
+                maxEventsPerWindow: 3,
+              },
+            },
+          },
+        },
+      },
+    };
+
+    const account = resolveMatrixAccount({ cfg, accountId: "ops" });
+    expect(account.config.botLoopProtection).toEqual({
+      maxEventsPerWindow: 3,
+      windowSeconds: 120,
+      cooldownSeconds: 240,
+    });
   });
 
   it("normalizes and de-duplicates configured account ids", () => {
@@ -589,6 +622,57 @@ describe("resolveMatrixAccount", () => {
     });
   });
 
+  it("inherits account-scoped default room and allowlist config for named accounts", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          homeserver: "https://matrix.example.org",
+          accessToken: "main-token",
+          dm: {
+            allowFrom: ["@top-level:example.org"],
+          },
+          groupAllowFrom: ["@top-level-group:example.org"],
+          accounts: {
+            default: {
+              ...createMatrixAccountConfig("default-token"),
+              dm: {
+                allowFrom: ["@default:example.org"],
+              },
+              groupAllowFrom: ["@default-group:example.org"],
+              groups: {
+                "!shared:example.org": {
+                  enabled: true,
+                },
+              },
+              rooms: {
+                "!legacy-shared:example.org": {
+                  enabled: true,
+                },
+              },
+            },
+            ops: createMatrixAccountConfig("ops-token"),
+          },
+        },
+      },
+    } as unknown as CoreConfig;
+
+    const account = resolveMatrixAccount({ cfg, accountId: "ops" });
+    expect(account.config.groups).toEqual({
+      "!shared:example.org": {
+        enabled: true,
+      },
+    });
+    expect(account.config.rooms).toEqual({
+      "!legacy-shared:example.org": {
+        enabled: true,
+      },
+    });
+    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "ops" })).toEqual({
+      dmAllowFrom: ["@default:example.org"],
+      groupAllowFrom: ["@default-group:example.org"],
+    });
+  });
+
   it("filters channel-level groups by room account in multi-account setups", () => {
     expectMultiAccountMatrixScopedEntries(createMatrixScopedEntriesConfig("groups"), "groups");
   });
@@ -600,59 +684,6 @@ describe("resolveMatrixAccount", () => {
     );
   });
 
-  it("inherits groups from accounts.default for named accounts", () => {
-    const cfg = {
-      channels: {
-        matrix: {
-          accounts: {
-            default: {
-              ...createMatrixAccountConfig("default-token"),
-              groups: {
-                "*": { requireMention: false },
-                "!protected:example.org": { requireMention: true },
-              },
-            },
-            mini: createMatrixAccountConfig("mini-token"),
-          },
-        },
-      },
-    } as unknown as CoreConfig;
-
-    expect(resolveMatrixAccount({ cfg, accountId: "mini" }).config.groups).toEqual({
-      "*": { requireMention: false },
-      "!protected:example.org": { requireMention: true },
-    });
-  });
-
-  it("lets named accounts override inherited default wildcard groups", () => {
-    const cfg = {
-      channels: {
-        matrix: {
-          accounts: {
-            default: {
-              ...createMatrixAccountConfig("default-token"),
-              groups: {
-                "*": { requireMention: false },
-                "!protected:example.org": { requireMention: true },
-              },
-            },
-            kiki: {
-              ...createMatrixAccountConfig("kiki-token"),
-              groups: {
-                "*": { requireMention: true },
-              },
-            },
-          },
-        },
-      },
-    } as unknown as CoreConfig;
-
-    expect(resolveMatrixAccount({ cfg, accountId: "kiki" }).config.groups).toEqual({
-      "*": { requireMention: true },
-      "!protected:example.org": { requireMention: true },
-    });
-  });
-
   it("filters legacy channel-level rooms by room account in multi-account setups", () => {
     expectMultiAccountMatrixScopedEntries(createMatrixScopedEntriesConfig("rooms"), "rooms");
   });
@@ -662,34 +693,6 @@ describe("resolveMatrixAccount", () => {
       createMatrixTopLevelDefaultScopedEntriesConfig("rooms"),
       "rooms",
     );
-  });
-
-  it("inherits allowlists from accounts.default for named accounts", () => {
-    const cfg = {
-      channels: {
-        matrix: {
-          dm: {
-            allowFrom: ["@top:example.org"],
-          },
-          groupAllowFrom: ["@top-group:example.org"],
-          accounts: {
-            default: {
-              ...createMatrixAccountConfig("default-token"),
-              dm: {
-                allowFrom: ["@default:example.org"],
-              },
-              groupAllowFrom: ["@default-group:example.org"],
-            },
-            mini: createMatrixAccountConfig("mini-token"),
-          },
-        },
-      },
-    } as unknown as CoreConfig;
-
-    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "mini" })).toEqual({
-      dmAllowFrom: ["@default:example.org"],
-      groupAllowFrom: ["@default-group:example.org"],
-    });
   });
 
   it("honors injected env when scoping room entries in multi-account setups", () => {

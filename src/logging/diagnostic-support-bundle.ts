@@ -1,23 +1,27 @@
-import fs from "node:fs";
+// Diagnostic support bundle helpers collect logs and metadata for support exports.
+import fsp from "node:fs/promises";
 import path from "node:path";
-import JSZip from "jszip";
+import { isPathInside } from "../infra/path-guards.js";
 
+// File builders and writers for redacted diagnostic support bundles.
 export type DiagnosticSupportBundleFile = {
   path: string;
   mediaType: string;
   content: string;
 };
 
+/** Manifest entry for one written support bundle file. */
 export type DiagnosticSupportBundleContent = {
   path: string;
   mediaType: string;
   bytes: number;
 };
 
-export function supportBundleByteLength(content: string): number {
+function supportBundleByteLength(content: string): number {
   return Buffer.byteLength(content, "utf8");
 }
 
+/** Creates a JSON support-bundle file with a safe relative path. */
 export function jsonSupportBundleFile(
   pathName: string,
   value: unknown,
@@ -29,6 +33,7 @@ export function jsonSupportBundleFile(
   };
 }
 
+/** Creates an NDJSON support-bundle file with a safe relative path. */
 export function jsonlSupportBundleFile(
   pathName: string,
   lines: readonly string[],
@@ -40,6 +45,7 @@ export function jsonlSupportBundleFile(
   };
 }
 
+/** Creates a UTF-8 text support-bundle file with a safe relative path. */
 export function textSupportBundleFile(
   pathName: string,
   content: string,
@@ -51,6 +57,7 @@ export function textSupportBundleFile(
   };
 }
 
+/** Summarizes support-bundle files for the bundle manifest. */
 export function supportBundleContents(
   files: readonly DiagnosticSupportBundleFile[],
 ): DiagnosticSupportBundleContent[] {
@@ -61,7 +68,7 @@ export function supportBundleContents(
   }));
 }
 
-export function assertSafeBundleRelativePath(pathName: string): string {
+function assertSafeBundleRelativePath(pathName: string): string {
   const normalized = pathName.replaceAll("\\", "/");
   if (
     !normalized ||
@@ -73,65 +80,54 @@ export function assertSafeBundleRelativePath(pathName: string): string {
   return normalized;
 }
 
-export function prepareSupportBundleDirectory(outputDir: string): void {
-  fs.mkdirSync(path.dirname(outputDir), { recursive: true, mode: 0o700 });
-  fs.mkdirSync(outputDir, { mode: 0o700 });
+async function prepareSupportBundleDirectory(outputDir: string): Promise<void> {
+  await fsp.mkdir(path.dirname(outputDir), { recursive: true, mode: 0o700 });
+  await fsp.mkdir(outputDir, { mode: 0o700 });
 }
 
-export function resolveSupportBundleFilePath(outputDir: string, pathName: string): string {
+function resolveSupportBundleFilePath(outputDir: string, pathName: string): string {
   const safePath = assertSafeBundleRelativePath(pathName);
   const resolvedBase = path.resolve(outputDir);
   const resolvedFile = path.resolve(resolvedBase, safePath);
-  const relative = path.relative(resolvedBase, resolvedFile);
-  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+  // Re-check after path.resolve so crafted relative paths cannot escape the output directory.
+  if (resolvedFile === resolvedBase || !isPathInside(resolvedBase, resolvedFile)) {
     throw new Error(`Bundle file path escaped output directory: ${pathName}`);
   }
   return resolvedFile;
 }
 
-export function writeSupportBundleFile(outputDir: string, file: DiagnosticSupportBundleFile): void {
+async function writeSupportBundleFile(
+  outputDir: string,
+  file: DiagnosticSupportBundleFile,
+): Promise<void> {
   const filePath = resolveSupportBundleFilePath(outputDir, file.path);
-  fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(filePath, file.content, {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  await fsp.writeFile(filePath, file.content, {
     encoding: "utf8",
     flag: "wx",
     mode: 0o600,
   });
 }
 
-export function copySupportBundleFile(params: {
-  outputDir: string;
-  sourceFile: string;
-  path: string;
-}): DiagnosticSupportBundleContent {
-  const outputPath = resolveSupportBundleFilePath(params.outputDir, params.path);
-  fs.mkdirSync(path.dirname(outputPath), { recursive: true, mode: 0o700 });
-  fs.copyFileSync(params.sourceFile, outputPath, fs.constants.COPYFILE_EXCL);
-  fs.chmodSync(outputPath, 0o600);
-  const stat = fs.statSync(outputPath);
-  return {
-    path: assertSafeBundleRelativePath(params.path),
-    mediaType: "application/x-ndjson",
-    bytes: stat.size,
-  };
-}
-
-export function writeSupportBundleDirectory(params: {
+/** Writes support-bundle files to a new private directory. */
+export async function writeSupportBundleDirectory(params: {
   outputDir: string;
   files: readonly DiagnosticSupportBundleFile[];
-}): DiagnosticSupportBundleContent[] {
-  prepareSupportBundleDirectory(params.outputDir);
+}): Promise<DiagnosticSupportBundleContent[]> {
+  await prepareSupportBundleDirectory(params.outputDir);
   for (const file of params.files) {
-    writeSupportBundleFile(params.outputDir, file);
+    await writeSupportBundleFile(params.outputDir, file);
   }
   return supportBundleContents(params.files);
 }
 
+/** Writes support-bundle files to a private zip archive and returns its byte size. */
 export async function writeSupportBundleZip(params: {
   outputPath: string;
   files: readonly DiagnosticSupportBundleFile[];
   compressionLevel?: number;
 }): Promise<number> {
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   for (const file of params.files) {
     zip.file(assertSafeBundleRelativePath(file.path), file.content);
@@ -141,7 +137,7 @@ export async function writeSupportBundleZip(params: {
     compression: "DEFLATE",
     compressionOptions: { level: params.compressionLevel ?? 6 },
   });
-  fs.mkdirSync(path.dirname(params.outputPath), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(params.outputPath, buffer, { mode: 0o600 });
+  await fsp.mkdir(path.dirname(params.outputPath), { recursive: true, mode: 0o700 });
+  await fsp.writeFile(params.outputPath, buffer, { mode: 0o600 });
   return buffer.length;
 }
