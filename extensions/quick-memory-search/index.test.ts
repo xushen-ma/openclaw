@@ -29,6 +29,12 @@ describe("quick-memory-search plugin register", () => {
     } as never);
 
     expect(registerTool).toHaveBeenCalledTimes(2);
+    expect(registerTool).toHaveBeenNthCalledWith(1, expect.any(Function), {
+      names: ["quick_memory_search"],
+    });
+    expect(registerTool).toHaveBeenNthCalledWith(2, expect.any(Function), {
+      names: ["quick_session_search"],
+    });
     expect(registerService).toHaveBeenCalledTimes(1);
     expect(registerGatewayMethod).toHaveBeenCalledWith(
       "quick-memory-search.status",
