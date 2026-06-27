@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { AnyAgentTool } from "openclaw/plugin-sdk";
+import type { AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
 
 function json(payload: unknown): any {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };

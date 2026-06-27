@@ -1,6 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { AnyAgentTool, OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
 function json(payload: unknown): any {
   return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], details: payload };
@@ -148,8 +148,12 @@ export default function register(api: OpenClawPluginApi) {
 
   // Use factory pattern so each agent's tool instance captures the correct agentId
   // at registration time rather than reading process.env.OPENCLAW_AGENT_ID (never set).
-  api.registerTool((ctx) => createQuickMemorySearchTool(httpConfig, ctx.agentId || "main"));
-  api.registerTool((ctx) => createQuickSessionSearchTool(httpConfig, ctx.agentId || "main"));
+  api.registerTool((ctx) => createQuickMemorySearchTool(httpConfig, ctx.agentId || "main"), {
+    names: ["quick_memory_search"],
+  });
+  api.registerTool((ctx) => createQuickSessionSearchTool(httpConfig, ctx.agentId || "main"), {
+    names: ["quick_session_search"],
+  });
 
   api.registerService({
     id: "quick-memory-search.per-agent-sidecar",
