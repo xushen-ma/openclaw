@@ -1,8 +1,5 @@
 {
   "id": "zenmux",
-  "activation": {
-    "onStartup": false
-  },
   "enabledByDefault": true,
   "providers": ["zenmux"],
   "providerAuthEnvVars": {
