@@ -101,6 +101,14 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     profiles: ["coding"],
   },
   {
+    id: "backtrader_core5_dev_readiness",
+    label: "backtrader_core5_dev_readiness",
+    description: "Run the single read-only Backtrader Core5 dev readiness executable",
+    sectionId: "runtime",
+    profiles: [],
+    includeInOpenClawGroup: true,
+  },
+  {
     id: "code_execution",
     label: "code_execution",
     description: "Run sandboxed remote analysis",

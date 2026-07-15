@@ -27,6 +27,7 @@ const coreTools = [
   stubActionTool("nodes", ["list", "invoke"]),
   stubActionTool("cron", ["schedule", "cancel"]),
   stubActionTool("message", ["send", "reply"]),
+  stubActionTool("backtrader_core5_dev_readiness", ["run"]),
   stubTool("heartbeat_respond"),
   stubActionTool("gateway", [
     "restart",
