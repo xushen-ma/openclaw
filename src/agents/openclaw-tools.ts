@@ -40,6 +40,7 @@ import type { SpawnedToolContext } from "./spawned-context.js";
 import type { ToolFsPolicy } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
+import { createBacktraderCore5DevReadinessTool } from "./tools/backtrader-core5-dev-readiness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createCronTool, type CronCreatorToolAllowlistEntry } from "./tools/cron-tool.js";
 import { createEmbeddedCallGateway } from "./tools/embedded-gateway-stub.js";
@@ -436,6 +437,7 @@ export function createOpenClawTools(
         ]),
     ...(messageTool && includeMessageTool ? [messageTool] : []),
     ...collectPresentOpenClawTools([heartbeatTool]),
+    createBacktraderCore5DevReadinessTool(),
     createTtsTool({
       agentChannel: options?.agentChannel,
       config: resolvedConfig,

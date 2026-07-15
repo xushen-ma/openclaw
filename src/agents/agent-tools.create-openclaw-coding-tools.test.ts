@@ -1241,6 +1241,17 @@ describe("createOpenClawCodingTools", () => {
     expect(toolNameList(cronTools)).toContain("message");
   });
 
+  it("can expose only the Backtrader Core5 readiness entrypoint for cron reports", () => {
+    const tools = createOpenClawCodingTools({
+      config: {
+        tools: {
+          allow: ["backtrader_core5_dev_readiness", "message"],
+        },
+      },
+    });
+    expect(toolNameList(tools).toSorted()).toEqual(["backtrader_core5_dev_readiness", "message"]);
+  });
+
   it("keeps message available for message-tool-only source replies under the coding profile", () => {
     const tools = createOpenClawCodingTools({
       config: { tools: { profile: "coding" } },
