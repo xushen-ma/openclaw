@@ -99,8 +99,9 @@ describe("applyEmbeddedAttemptToolsAllow", () => {
   it("keeps plugin-only allowlists on the shared tool policy path", () => {
     const tools = [{ name: "memory_search" }, { name: "plugin_extra" }];
 
-    expect(resolveEmbeddedAttemptToolConstructionPlan({ toolsAllow: ["memory_search"] }))
-      .toHaveProperty("includeCoreTools", false);
+    expect(
+      resolveEmbeddedAttemptToolConstructionPlan({ toolsAllow: ["memory_search"] }),
+    ).toHaveProperty("includeCoreTools", false);
     expect(
       applyEmbeddedAttemptToolsAllow(tools, ["memory_search"]).map((tool) => tool.name),
     ).toEqual(["memory_search"]);
@@ -317,6 +318,23 @@ describe("resolveEmbeddedAttemptToolConstructionPlan", () => {
         constructTools: true,
         includeCoreTools: true,
         runtimeToolAllowlist: ["skill_workshop"],
+        coding: {
+          includeBaseCodingTools: false,
+          includeShellTools: false,
+          includeChannelTools: false,
+          includeOpenClawTools: true,
+          includePluginTools: false,
+        },
+      },
+    );
+    expectConstructionPlan(
+      resolveEmbeddedAttemptToolConstructionPlan({
+        toolsAllow: ["backtrader_core5_dev_readiness"],
+      }),
+      {
+        constructTools: true,
+        includeCoreTools: true,
+        runtimeToolAllowlist: ["backtrader_core5_dev_readiness"],
         coding: {
           includeBaseCodingTools: false,
           includeShellTools: false,
