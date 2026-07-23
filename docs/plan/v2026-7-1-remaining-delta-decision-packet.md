@@ -71,3 +71,8 @@ Follow-up evidence:
   `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `HOME`,
   `XDG_CACHE_HOME`, and `TMPDIR`; live `~/.openclaw/state` and
   `~/.openclaw/plugins` fingerprints were unchanged before/after validation.
+- Live route-matrix check after the incident found the Mac default interactive
+  route on `openai/gpt-5.5`, but `agents.defaults.heartbeat.model` and
+  `agents.defaults.subagents.model` still configured as `openai/gpt-5.6`.
+  Gateway config patch rejected those protected paths, so staging remains
+  blocked until the operator-approved route remediation is applied and verified.
