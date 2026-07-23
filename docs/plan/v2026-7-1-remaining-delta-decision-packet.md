@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: `e757e1b9150`
+- Current candidate head at packet update: `86e073678770`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -31,9 +31,9 @@
 
 ## Recommended Next Sequence
 
-1. Fix or bypass the `ai.openclaw.staging` LaunchAgent health path so the governed staging `/health` check passes on `:18820`.
-2. Rerun governed sanity after the LaunchAgent fix and require a clean staging health result.
-3. Prepare the PR/promotion packet only after staging health, plugin inventory, Matrix, Discord, model-route, and Quick Memory smokes are all clean.
+1. Open the PR for `mini/upgrade-v2026.7.1-fork-integration` after preserving the staging remediation evidence below.
+2. After merge to `origin/main`, rerun governed sanity on the merged main SHA; the remaining lineage failure must clear there.
+3. Prepare the promotion packet only after merged-main sanity, plugin inventory, Matrix, Discord, model-route, and Quick Memory smokes are all clean.
 4. Keep production blocked pending explicit Mini/Xushen approval.
 
 ## Non-Actions
@@ -107,10 +107,27 @@ legacy=configured sessionFallback=disabled`.
 - Cold plugin inventory with the staging config reports Quick Memory loaded
   from `local-plugins/quick-memory-search/src/index.ts`, origin `config`,
   version `2026.7.1-2-local.0`.
-- Remaining stop condition: the real `ai.openclaw.staging` LaunchAgent still
-  does not bind `:18820`. Its Node child starts and stays alive, but samples show
-  it stuck in Node package/module bootstrap opening parent `package.json` before
-  the staged app reads or emits logs. Direct shell startup with a minimized
-  LaunchAgent-like environment succeeds, so the blocker is specific to launchd
-  execution. The stuck LaunchAgent was stopped and the plist was restored to its
-  wrapper form after a direct-node experiment did not fix the hang.
+- LaunchAgent root cause isolated on 2026-07-24: launchd-spawned Node can read
+  ordinary `/Users/openclaw` files, but hangs opening files or scanning
+  directories under `/Users/openclaw/workspace/openclaw-staging`, whose realpath
+  is `/Volumes/ExtData/openclaw-lanes/openclaw-staging`. Shell-launched Node
+  succeeds against the same paths, so this is a launchd/macOS protected-volume
+  access boundary, not an OpenClaw candidate startup failure.
+- Staging remediation for the gate:
+  - mirrored staged code to
+    `/Users/openclaw/.openclaw/tmp/openclaw-staging-launchd-run`;
+  - mirrored staging runtime config/state to
+    `/Users/openclaw/.openclaw/tmp/openclaw-staging-runtime-launchd`;
+  - changed the staging LaunchAgent working directory to `/Users/openclaw`;
+  - pointed `OPENCLAW_CONFIG_PATH` and `OPENCLAW_STATE_DIR` at the internal
+    runtime mirror;
+  - updated the staging wrapper to execute the internal code mirror with
+    isolated `node@25.9.0`.
+- LaunchAgent health proof after remediation:
+  `curl http://127.0.0.1:18820/health` returned
+  `{"ok":true,"status":"live"}` after 5 seconds.
+- Governed sanity against `86e073678770` at 2026-07-24 09:08 AEST:
+  6 passed / 1 failed. Passed: build, focused tests, LaunchAgent staging boot
+  with pid `34272`, staging `/health` smoke, patch presence, and tag format.
+  The only failure was `candidate is not an ancestor of refs/remotes/origin/main`,
+  which is expected before the PR is merged.
