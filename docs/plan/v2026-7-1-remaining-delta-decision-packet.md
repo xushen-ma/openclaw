@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: pending commit after Quick Memory validator fix
+- Current candidate head at packet update: `e934de63792`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
