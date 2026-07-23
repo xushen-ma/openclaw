@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: `05c2e4678c6`
+- Current candidate head at packet update: `ab61ce48fbb`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -16,6 +16,7 @@
   - exact fork tag build-info preference;
   - Matrix SDK dependency guard before startup monitor import.
 - Focused proof under isolated `node@25.9.0` passes: 5 Vitest shards, 13 files, 385 tests.
+- Quick Memory approved local-plugin replay is implemented at `ab61ce48fbb`.
 
 ## Decisions
 
@@ -29,11 +30,31 @@
 
 ## Recommended Next Sequence
 
-1. Implement Quick Memory as a pinned local plugin with BOM/design/tests.
-2. Verify ZenMux and `tools.fs.extraRoots` are absent from the candidate.
-3. Only then push and use governed test-lane/staging.
+1. Remediate or explicitly accept the accidental live-state migration side effects recorded below.
+2. Validate the Quick Memory plugin with an isolated OpenClaw home/state root.
+3. Verify ZenMux and `tools.fs.extraRoots` are absent from the candidate.
+4. Only then push and use governed test-lane/staging.
 
 ## Non-Actions
 
 - No push, PR, `releasectl`, governed test lane, staging, or production action has been performed.
-- No live gateway config, auth profile, secret, or production state was changed.
+- No live gateway config, auth profile, secret, plugin install, staging state, or production deploy was intentionally changed.
+
+## Live-State Validation Incident
+
+During Quick Memory plugin validation, an OpenClaw plugin validation command was
+mistakenly run without an isolated `OPENCLAW_HOME`/state root. It failed before
+installing the plugin, but it did run migration/update-check startup paths
+against the live OpenClaw home.
+
+Observed live-state touch evidence on 2026-07-24:
+
+- `~/.openclaw/state/openclaw.sqlite` and WAL were modified.
+- Per-agent `agent/codex-home/{goals_1,logs_2,state_5}.sqlite` files were modified for fleet agents.
+- Several session `*.codex-app-server.json.migrated` marker files were created or touched.
+
+Required gate before any push, PR, governed test lane, staging, or production:
+
+- decide whether to keep these migration side effects or restore from backups;
+- inspect live gateway health and current route matrix after the decision;
+- run future plugin validation only with an isolated OpenClaw home/state root.
