@@ -58,6 +58,7 @@ import {
   resolveMatrixAccountConfig,
   type ResolvedMatrixAccount,
 } from "./matrix/accounts.js";
+import { ensureMatrixSdkInstalled } from "./matrix/deps.js";
 import { normalizeMatrixUserId } from "./matrix/monitor/allowlist.js";
 import type { MatrixProbe } from "./matrix/probe.js";
 import {
@@ -580,6 +581,8 @@ export const matrixPlugin: ChannelPlugin<ResolvedMatrixAccount, MatrixProbe> =
           ctx.log?.info(
             `[${account.accountId}] starting provider (${account.homeserver ?? "matrix"})`,
           );
+
+          await ensureMatrixSdkInstalled();
 
           // Serialize startup: wait for any previous startup to complete import phase.
           // This works around a race condition with concurrent dynamic imports.
