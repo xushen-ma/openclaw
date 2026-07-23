@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       "openclaw/plugin-sdk/plugin-entry": "./test-support/plugin-entry.ts",
+      "openclaw/plugin-sdk/tool-plugin": "./test-support/tool-plugin.ts",
     },
   },
   test: {

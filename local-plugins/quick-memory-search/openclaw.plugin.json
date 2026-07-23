@@ -1,33 +1,26 @@
 {
   "id": "quick-memory-search",
   "activation": {
-    "onCapabilities": ["tool"]
+    "onCapabilities": [
+      "tool"
+    ]
   },
   "name": "Quick Memory Search",
   "description": "Fast per-agent OpenViking memory and session search tools.",
-  "contracts": {
-    "tools": ["quick_memory_search", "quick_session_search"],
-    "gatewayMethods": ["quick-memory-search.status"]
-  },
-  "toolMetadata": {
-    "quick_memory_search": {
-      "replaySafe": true
-    },
-    "quick_session_search": {
-      "replaySafe": true
-    }
-  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "perAgentOvBaseUrl": {
-        "type": "string",
-        "description": "Preferred per-agent OpenViking HTTP base URL."
+        "type": "string"
       },
       "agentRouting": {
         "type": "string",
-        "enum": ["header", "query", "path"],
+        "enum": [
+          "header",
+          "query",
+          "path"
+        ],
         "default": "header"
       },
       "agentHeaderName": {
@@ -35,8 +28,7 @@
         "default": "x-openclaw-agent-id"
       },
       "legacyOvBaseUrl": {
-        "type": "string",
-        "description": "Optional legacy shared OpenViking HTTP base URL. Leave unset to disable legacy fallback."
+        "type": "string"
       },
       "requestTimeoutMs": {
         "type": "integer",
@@ -45,8 +37,7 @@
         "default": 10000
       },
       "statsLogPath": {
-        "type": "string",
-        "description": "Optional JSONL diagnostics path for fast-pass stats."
+        "type": "string"
       },
       "sessionFallback": {
         "type": "object",
@@ -70,6 +61,24 @@
           }
         }
       }
+    }
+  },
+  "version": "2026.7.1-2-local.0",
+  "contracts": {
+    "tools": [
+      "quick_memory_search",
+      "quick_session_search"
+    ],
+    "gatewayMethods": [
+      "quick-memory-search.status"
+    ]
+  },
+  "toolMetadata": {
+    "quick_memory_search": {
+      "replaySafe": true
+    },
+    "quick_session_search": {
+      "replaySafe": true
     }
   }
 }

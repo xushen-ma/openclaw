@@ -1,3 +1,4 @@
+import { getToolPluginMetadata } from "openclaw/plugin-sdk/tool-plugin";
 import { describe, expect, it, vi } from "vitest";
 import pluginEntry from "./index.js";
 
@@ -15,6 +16,10 @@ describe("quick memory plugin entry", () => {
     } as never);
 
     expect(pluginEntry.id).toBe("quick-memory-search");
+    expect(getToolPluginMetadata(pluginEntry)?.tools.map((tool) => tool.name)).toEqual([
+      "quick_memory_search",
+      "quick_session_search",
+    ]);
     expect(registerTool).toHaveBeenCalledTimes(2);
     expect(registerTool.mock.calls.map((call) => call[0]({ agentId: "ben" }).name)).toEqual([
       "quick_memory_search",

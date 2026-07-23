@@ -6,16 +6,16 @@ Memory stays as a pinned local plugin, not as bundled core fork code. ZenMux and
 
 ## Plugin BOM
 
-| Field | Value |
-| --- | --- |
-| Plugin id | `quick-memory-search` |
-| Local source | `local-plugins/quick-memory-search` |
-| Package | `@xushen/openclaw-quick-memory-search` |
-| Version | `2026.7.1-2-local.0` |
-| OpenClaw API floor | `openclaw >=2026.7.1` |
-| Runtime entry | `src/index.ts` local source entry |
-| Declared tools | `quick_memory_search`, `quick_session_search` |
-| Gateway method | `quick-memory-search.status` (`operator.read`) |
+| Field              | Value                                          |
+| ------------------ | ---------------------------------------------- |
+| Plugin id          | `quick-memory-search`                          |
+| Local source       | `local-plugins/quick-memory-search`            |
+| Package            | `@xushen/openclaw-quick-memory-search`         |
+| Version            | `2026.7.1-2-local.0`                           |
+| OpenClaw API floor | `openclaw >=2026.7.1`                          |
+| Runtime entry      | `src/index.ts` local source entry              |
+| Declared tools     | `quick_memory_search`, `quick_session_search`  |
+| Gateway method     | `quick-memory-search.status` (`operator.read`) |
 
 ## Runtime Shape
 
@@ -51,5 +51,10 @@ is off.
 
 Focused local tests cover plugin registration/tool schema, per-agent routing,
 status output, sidecar common behavior, and explicit session fallback behavior.
+The plugin authoring validator passes when run with an isolated
+`OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `HOME`,
+`XDG_CACHE_HOME`, and `TMPDIR`; the validation wrapper confirmed the live
+`~/.openclaw/state` and `~/.openclaw/plugins` fingerprints were unchanged.
+
 Staging still needs a two-agent live smoke against the real OpenViking sidecar
 before production consideration.

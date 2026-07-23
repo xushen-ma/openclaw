@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: `ab61ce48fbb`
+- Current candidate head at packet update: pending commit after Quick Memory validator fix
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -16,7 +16,8 @@
   - exact fork tag build-info preference;
   - Matrix SDK dependency guard before startup monitor import.
 - Focused proof under isolated `node@25.9.0` passes: 5 Vitest shards, 13 files, 385 tests.
-- Quick Memory approved local-plugin replay is implemented at `ab61ce48fbb`.
+- Quick Memory approved local-plugin replay is implemented and hermetically validated after
+  the tool-plugin authoring metadata fix.
 
 ## Decisions
 
@@ -30,10 +31,10 @@
 
 ## Recommended Next Sequence
 
-1. Remediate or explicitly accept the accidental live-state migration side effects recorded below.
-2. Validate the Quick Memory plugin with an isolated OpenClaw home/state root.
-3. Verify ZenMux and `tools.fs.extraRoots` are absent from the candidate.
-4. Only then push and use governed test-lane/staging.
+1. Verify ZenMux and `tools.fs.extraRoots` are absent from the candidate.
+2. Take/record a live-state snapshot immediately before any governed test lane or staging run.
+3. Use governed test-lane/staging only after route-matrix health checks pass.
+4. Keep production blocked pending explicit Mini/Xushen approval.
 
 ## Non-Actions
 
@@ -55,6 +56,18 @@ Observed live-state touch evidence on 2026-07-24:
 
 Required gate before any push, PR, governed test lane, staging, or production:
 
-- decide whether to keep these migration side effects or restore from backups;
-- inspect live gateway health and current route matrix after the decision;
+- live-state restore is not recommended based on Janko review; treat the
+  startup migration/cache/index side effects as accepted forward state unless
+  later health checks show damage;
+- inspect live gateway health and current route matrix before staging;
 - run future plugin validation only with an isolated OpenClaw home/state root.
+
+Follow-up evidence:
+
+- Janko gave conditional go to continue candidate work without restoring live
+  state after read-only checks found no gateway config, secret, plugin install,
+  staging, or production mutation.
+- Isolated Quick Memory plugin validation passed with explicit isolated
+  `OPENCLAW_HOME`, `OPENCLAW_STATE_DIR`, `OPENCLAW_CONFIG_PATH`, `HOME`,
+  `XDG_CACHE_HOME`, and `TMPDIR`; live `~/.openclaw/state` and
+  `~/.openclaw/plugins` fingerprints were unchanged before/after validation.
