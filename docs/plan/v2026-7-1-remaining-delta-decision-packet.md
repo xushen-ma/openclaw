@@ -79,3 +79,8 @@ Follow-up evidence:
   Verified after restart: current session, `agents.defaults.model`,
   `agents.defaults.heartbeat.model`, and `agents.defaults.subagents.model` are
   all `openai/gpt-5.5` with no default fallbacks.
+- Pre-test-lane live snapshot recorded 2026-07-24 08:00:54 AEST:
+  config SHA-256 `9d1fb9b570a8e3f1e7a7cd3e781c5bb60a62b0a2727498a5a85379649db55c2c`;
+  state/plugins fingerprint
+  `5c7986d827c376dfbc0a8993aad69a917e72bdf9d7d875f169f87d3213c4a4e6`;
+  route matrix default/heartbeat/subagents all `openai/gpt-5.5`.
