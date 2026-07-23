@@ -461,6 +461,39 @@ describe("matrix monitor handler pairing account scope", () => {
     expect(route.mainDmOwnerPin).toBeUndefined();
   });
 
+  it("does not update the last route for room-scoped DM sessions", async () => {
+    const { handler, recordInboundSession } = createMatrixHandlerTestHarness({
+      isDirectMessage: true,
+      resolveAgentRoute: () =>
+        ({
+          agentId: "ops",
+          channel: "matrix",
+          accountId: "ops",
+          sessionKey: "agent:ops:matrix:direct:!dm:example.org",
+          mainSessionKey: "agent:ops:main",
+          lastRoutePolicy: "session",
+          matchedBy: "default",
+        }) as never,
+    });
+
+    await handler(
+      "!dm:example.org",
+      createMatrixTextMessageEvent({
+        eventId: "$room-scoped-dm",
+        sender: "@owner:example.org",
+        body: "hello",
+      }),
+    );
+
+    expect(recordInboundSession).toHaveBeenCalledTimes(1);
+    const inbound = requireRecord(
+      callArg(recordInboundSession, 0, 0, "record inbound session"),
+      "record inbound session",
+    );
+    expect(inbound.sessionKey).toBe("agent:ops:matrix:direct:!dm:example.org");
+    expect(inbound.updateLastRoute).toBeUndefined();
+  });
+
   it("sends pairing reminders for pending requests with cooldown", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-01T10:00:00.000Z"));

@@ -621,6 +621,143 @@ describe("resolveMatrixAccount", () => {
     });
   });
 
+  it("inherits Matrix account defaults into named accounts while preserving explicit overrides", () => {
+    const account = resolveMatrixAccount({
+      cfg: {
+        channels: {
+          matrix: {
+            homeserver: "https://matrix.example.org",
+            accessToken: "main-token",
+            groups: {
+              "!ops-channel-room:example.org": {
+                account: "ops",
+                enabled: true,
+                agentId: "channel-agent",
+              },
+              "!default-channel-room:example.org": {
+                account: "default",
+                enabled: true,
+              },
+            },
+            dm: {
+              allowFrom: ["@channel-owner:example.org"],
+            },
+            groupAllowFrom: ["@channel-room-owner:example.org"],
+            accounts: {
+              default: {
+                homeserver: "https://default-account.example.org",
+                accessToken: "default-token",
+                userId: "@default:example.org",
+                dm: {
+                  allowFrom: ["@default-owner:example.org"],
+                },
+                groupAllowFrom: ["@default-room-owner:example.org"],
+                groups: {
+                  "!default-account-room:example.org": {
+                    enabled: true,
+                    agentId: "default-agent",
+                  },
+                },
+                rooms: {
+                  "!legacy-default-account-room:example.org": {
+                    enabled: true,
+                    agentId: "legacy-default-agent",
+                  },
+                },
+              },
+              ops: {
+                accessToken: "ops-token",
+                groups: {
+                  "!default-account-room:example.org": {
+                    agentId: "ops-agent",
+                  },
+                },
+                rooms: {
+                  "!ops-legacy-room:example.org": {
+                    enabled: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      accountId: "ops",
+    });
+
+    expect(account.config.dm?.allowFrom).toEqual(["@default-owner:example.org"]);
+    expect(account.config.groupAllowFrom).toEqual(["@default-room-owner:example.org"]);
+    expect(account.config.homeserver).toBe("https://matrix.example.org");
+    expect(account.config.accessToken).toBe("ops-token");
+    expect(account.config.userId).toBeUndefined();
+    expect(account.config.groups).toEqual({
+      "!ops-channel-room:example.org": {
+        account: "ops",
+        enabled: true,
+        agentId: "channel-agent",
+      },
+      "!default-account-room:example.org": {
+        enabled: true,
+        agentId: "ops-agent",
+      },
+    });
+    expect(account.config.rooms).toEqual({
+      "!legacy-default-account-room:example.org": {
+        enabled: true,
+        agentId: "legacy-default-agent",
+      },
+      "!ops-legacy-room:example.org": {
+        enabled: true,
+      },
+    });
+  });
+
+  it("lets named Matrix accounts explicitly clear inherited default maps and allowlists", () => {
+    const account = resolveMatrixAccount({
+      cfg: {
+        channels: {
+          matrix: {
+            homeserver: "https://matrix.example.org",
+            accessToken: "main-token",
+            accounts: {
+              default: {
+                dm: {
+                  allowFrom: ["@default-owner:example.org"],
+                },
+                groupAllowFrom: ["@default-room-owner:example.org"],
+                groups: {
+                  "!default-account-room:example.org": {
+                    enabled: true,
+                  },
+                },
+                rooms: {
+                  "!legacy-default-account-room:example.org": {
+                    enabled: true,
+                  },
+                },
+              },
+              ops: {
+                accessToken: "ops-token",
+                dm: {
+                  allowFrom: [],
+                },
+                groupAllowFrom: [],
+                groups: {},
+                rooms: {},
+              },
+            },
+          },
+        },
+      },
+      accountId: "ops",
+    });
+
+    expect(account.config.dm?.allowFrom).toEqual([]);
+    expect(account.config.groupAllowFrom).toEqual([]);
+    expect(account.config.groups).toBeUndefined();
+    expect(account.config.rooms).toBeUndefined();
+  });
+
   it("filters channel-level groups by room account in multi-account setups", () => {
     expectMultiAccountMatrixScopedEntries(createMatrixScopedEntriesConfig("groups"), "groups");
   });

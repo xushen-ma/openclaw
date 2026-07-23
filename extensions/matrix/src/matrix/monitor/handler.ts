@@ -164,6 +164,23 @@ type MatrixDraftStreamHandle = {
   reset: () => void;
 };
 
+export function shouldUpdateMatrixInboundLastRoute(params: {
+  isDirectMessage: boolean;
+  mainSessionKey: string;
+  route: Parameters<typeof resolveInboundLastRouteSessionKey>[0]["route"];
+  sessionKey: string;
+}): boolean {
+  if (!params.isDirectMessage) {
+    return false;
+  }
+  return (
+    resolveInboundLastRouteSessionKey({
+      route: params.route,
+      sessionKey: params.sessionKey,
+    }) === params.mainSessionKey
+  );
+}
+
 export class MatrixRetryableInboundError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
@@ -2364,6 +2381,14 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         route: _route,
         sessionKey: _route.sessionKey,
       });
+      const shouldUpdateInboundLastRoute =
+        inboundLastRouteSessionKey === _route.mainSessionKey &&
+        shouldUpdateMatrixInboundLastRoute({
+          isDirectMessage,
+          mainSessionKey: _route.mainSessionKey,
+          route: _route,
+          sessionKey: _route.sessionKey,
+        });
 
       const turnResult = await core.channel.inbound.run({
         channel: "matrix",
@@ -2386,7 +2411,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             recordInboundSession: core.channel.session.recordInboundSession,
             botLoopProtection,
             record: {
-              updateLastRoute: isDirectMessage
+              updateLastRoute: shouldUpdateInboundLastRoute
                 ? {
                     sessionKey: inboundLastRouteSessionKey,
                     channel: "matrix",

@@ -18,6 +18,7 @@ import {
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_MEMORY_FILENAME,
   DEFAULT_SOUL_FILENAME,
+  DEFAULT_TEAM_FILENAME,
   DEFAULT_TOOLS_FILENAME,
   DEFAULT_USER_FILENAME,
   ensureAgentWorkspace,
@@ -130,12 +131,19 @@ async function expectCompletedWithoutBootstrap(dir: string) {
 
 function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   const names = files.map((file) => file.name);
-  expect(names).toStrictEqual(["AGENTS.md", "TOOLS.md"]);
+  expect(names).toStrictEqual(["AGENTS.md", "TOOLS.md", "TEAM.md"]);
 }
 
 function expectCronAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   const names = files.map((file) => file.name);
-  expect(names).toStrictEqual(["AGENTS.md", "SOUL.md", "TOOLS.md", "IDENTITY.md", "USER.md"]);
+  expect(names).toStrictEqual([
+    "AGENTS.md",
+    "SOUL.md",
+    "TOOLS.md",
+    "TEAM.md",
+    "IDENTITY.md",
+    "USER.md",
+  ]);
 }
 
 describe("ensureAgentWorkspace", () => {
@@ -846,6 +854,22 @@ describe("loadWorkspaceBootstrapFiles", () => {
     expectSingleMemoryEntry(files, "memory");
   });
 
+  it("recognizes TEAM.md after TOOLS.md in workspace bootstrap files", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-");
+    await writeWorkspaceFile({ dir: tempDir, name: DEFAULT_TEAM_FILENAME, content: "fleet" });
+
+    const files = await loadWorkspaceBootstrapFiles(tempDir);
+    const names = files.map((file) => file.name);
+
+    expect(
+      names.slice(names.indexOf(DEFAULT_TOOLS_FILENAME), names.indexOf(DEFAULT_USER_FILENAME)),
+    ).toEqual([DEFAULT_TOOLS_FILENAME, DEFAULT_TEAM_FILENAME, DEFAULT_IDENTITY_FILENAME]);
+    expect(files.find((file) => file.name === DEFAULT_TEAM_FILENAME)).toMatchObject({
+      content: "fleet",
+      missing: false,
+    });
+  });
+
   it("ignores lowercase memory.md when MEMORY.md is absent", async () => {
     const tempDir = await makeTempWorkspace("openclaw-workspace-");
     await writeWorkspaceFile({ dir: tempDir, name: "memory.md", content: "alt" });
@@ -1036,6 +1060,7 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "AGENTS.md", path: "/w/AGENTS.md", content: "", missing: false },
     { name: "SOUL.md", path: "/w/SOUL.md", content: "", missing: false },
     { name: "TOOLS.md", path: "/w/TOOLS.md", content: "", missing: false },
+    { name: "TEAM.md", path: "/w/TEAM.md", content: "", missing: false },
     { name: "IDENTITY.md", path: "/w/IDENTITY.md", content: "", missing: false },
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
     { name: "HEARTBEAT.md", path: "/w/HEARTBEAT.md", content: "", missing: false },
