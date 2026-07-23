@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: `e934de63792`
+- Current candidate head at packet update: `e757e1b9150`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -31,15 +31,16 @@
 
 ## Recommended Next Sequence
 
-1. Verify ZenMux and `tools.fs.extraRoots` are absent from the candidate.
-2. Take/record a live-state snapshot immediately before any governed test lane or staging run.
-3. Use governed test-lane/staging only after route-matrix health checks pass.
+1. Fix or bypass the `ai.openclaw.staging` LaunchAgent health path so the governed staging `/health` check passes on `:18820`.
+2. Rerun governed sanity after the LaunchAgent fix and require a clean staging health result.
+3. Prepare the PR/promotion packet only after staging health, plugin inventory, Matrix, Discord, model-route, and Quick Memory smokes are all clean.
 4. Keep production blocked pending explicit Mini/Xushen approval.
 
 ## Non-Actions
 
-- No push, PR, `releasectl`, governed test lane, staging, or production action has been performed.
-- No live gateway config, auth profile, secret, plugin install, staging state, or production deploy was intentionally changed.
+- No PR, merge, staging approval, production promotion, production deploy, or production state restore has been performed.
+- Candidate `e757e1b9150` has been pushed and deployed through the governed test lane; the test-lane lock was released.
+- Staging runtime config was intentionally remediated after Xushen's decisions. Backups were retained beside `openclaw.staging.json`.
 
 ## Live-State Validation Incident
 
@@ -84,3 +85,32 @@ Follow-up evidence:
   state/plugins fingerprint
   `5c7986d827c376dfbc0a8993aad69a917e72bdf9d7d875f169f87d3213c4a4e6`;
   route matrix default/heartbeat/subagents all `openai/gpt-5.5`.
+- Route matrix re-verified after the gateway restart on 2026-07-24 08:31 AEST:
+  `agents.defaults.model.primary = openai/gpt-5.5` with empty fallbacks,
+  `agents.defaults.heartbeat.model = openai/gpt-5.5`,
+  `agents.defaults.subagents.model = openai/gpt-5.5`, and the current session
+  status reports `openai/gpt-5.5`. GPT-5.6 remains present only as configured
+  catalog/model aliases in live config, not as an active default route.
+
+## Staging Evidence After Runtime Config Remediation
+
+- Staging config now has no `zenmux`, `gpt-5.6`, or `tools.fs.extraRoots`
+  references. Removed stale ZenMux auth/profile/model/plugin/skill entries and
+  left Quick Memory as an explicit local plugin.
+- Quick Memory staging plugin pin:
+  `plugins.load.paths = ["/Volumes/ExtData/openclaw-lanes/openclaw-staging/local-plugins/quick-memory-search"]`.
+  Migrated plugin config from old `ovBaseUrl` to `legacyOvBaseUrl`.
+- Direct staging startup with isolated `node@25.9.0` and the exact staging
+  config reaches `{"ok":true,"status":"live"}` on a spare port, starts Discord
+  and Matrix, and logs `quick-memory-search registered perAgent=configured
+legacy=configured sessionFallback=disabled`.
+- Cold plugin inventory with the staging config reports Quick Memory loaded
+  from `local-plugins/quick-memory-search/src/index.ts`, origin `config`,
+  version `2026.7.1-2-local.0`.
+- Remaining stop condition: the real `ai.openclaw.staging` LaunchAgent still
+  does not bind `:18820`. Its Node child starts and stays alive, but samples show
+  it stuck in Node package/module bootstrap opening parent `package.json` before
+  the staged app reads or emits logs. Direct shell startup with a minimized
+  LaunchAgent-like environment succeeds, so the blocker is specific to launchd
+  execution. The stuck LaunchAgent was stopped and the plist was restored to its
+  wrapper form after a direct-node experiment did not fix the hang.
