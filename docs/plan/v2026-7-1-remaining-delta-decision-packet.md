@@ -74,5 +74,8 @@ Follow-up evidence:
 - Live route-matrix check after the incident found the Mac default interactive
   route on `openai/gpt-5.5`, but `agents.defaults.heartbeat.model` and
   `agents.defaults.subagents.model` still configured as `openai/gpt-5.6`.
-  Gateway config patch rejected those protected paths, so staging remains
-  blocked until the operator-approved route remediation is applied and verified.
+  Xushen approved reverting GPT-5.6 everywhere; Mini applied the protected-route
+  remediation with a timestamped config backup and managed gateway restart.
+  Verified after restart: current session, `agents.defaults.model`,
+  `agents.defaults.heartbeat.model`, and `agents.defaults.subagents.model` are
+  all `openai/gpt-5.5` with no default fallbacks.
