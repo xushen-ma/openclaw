@@ -4841,6 +4841,16 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Open questions
   - H2: Acceptance criteria
 
+## plan/quick-memory-local-plugin-2026-7-1.md
+
+- Route: /plan/quick-memory-local-plugin-2026-7-1
+- Headings:
+  - H1: Quick Memory Local Plugin for v2026.7.1-2
+  - H2: Plugin BOM
+  - H2: Runtime Shape
+  - H2: Access Boundary
+  - H2: Verification Notes
+
 ## plan/ui-channels.md
 
 - Route: /plan/ui-channels
@@ -4857,6 +4867,31 @@ Do not edit it by hand; run `pnpm docs:map:gen`.
   - H2: Tests
   - H2: Open questions
   - H2: Related
+
+## plan/v2026-7-1-fork-delta-ledger.md
+
+- Route: /plan/v2026-7-1-fork-delta-ledger
+- Headings:
+  - H1: OpenClaw v2026.7.1 Fork Delta Ledger
+  - H2: Ancestry
+  - H2: Historical Local Delta Surface
+  - H2: Delta Ledger
+  - H2: Replay Order
+  - H2: Test Expectations
+  - H2: Decision Needed
+  - H2: Explicit Non-Actions
+
+## plan/v2026-7-1-remaining-delta-decision-packet.md
+
+- Route: /plan/v2026-7-1-remaining-delta-decision-packet
+- Headings:
+  - H1: OpenClaw v2026.7.1-2 Remaining Delta Decision Packet
+  - H2: Current Safe-Replay State
+  - H2: Decisions
+  - H2: Recommended Next Sequence
+  - H2: Non-Actions
+  - H2: Live-State Validation Incident
+  - H2: Staging Evidence After Runtime Config Remediation
 
 ## platforms/android.md
 

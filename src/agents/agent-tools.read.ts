@@ -1154,7 +1154,7 @@ function createHostEditOperations(root: string, options?: HostWorkspaceToolOptio
       writeGuardedHostFile(root, additionalRoots, getRoot, absolutePath, content),
     access: async (absolutePath: string) => {
       let relative: string;
-      let targetRoot = path.resolve(root);
+      let targetRoot: string;
       try {
         const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
         relative = target.relative;
