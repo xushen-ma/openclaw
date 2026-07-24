@@ -191,6 +191,7 @@ describe("resolveMatrixAuth", () => {
       password: "secret",
     });
     expect(saveMatrixCredentialsMock).not.toHaveBeenCalled();
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
   });
 
   it("uses cached matching credentials when access token is not configured", async () => {
@@ -226,6 +227,7 @@ describe("resolveMatrixAuth", () => {
       deviceId: "CACHEDDEVICE",
     });
     expect(saveMatrixCredentialsMock).not.toHaveBeenCalled();
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
   });
 
   it("uses cached matching credentials for env-backed named accounts without fresh auth", async () => {
@@ -263,6 +265,7 @@ describe("resolveMatrixAuth", () => {
       deviceId: "CACHEDDEVICE",
     });
     expect(saveMatrixCredentialsMock).not.toHaveBeenCalled();
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
   });
 
   it("rejects embedded credentials in Matrix homeserver URLs", async () => {
@@ -820,6 +823,8 @@ describe("resolveMatrixAuth", () => {
       deviceId: "DEVICE123",
       encryption: true,
     });
+    expect(saveMatrixCredentialsMock).not.toHaveBeenCalled();
+    expect(touchMatrixCredentialsMock).not.toHaveBeenCalled();
   });
 
   it("falls back to the sole configured account when no global homeserver is set", async () => {

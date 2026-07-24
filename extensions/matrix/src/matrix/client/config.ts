@@ -648,9 +648,6 @@ export async function resolveMatrixAuth(params?: {
         env,
         accountId,
       );
-    } else if (hasMatchingCachedToken) {
-      const { touchMatrixCredentials } = await loadMatrixCredentialsWriteRuntime();
-      await touchMatrixCredentials(env, accountId);
     }
     return {
       accountId,
@@ -670,8 +667,6 @@ export async function resolveMatrixAuth(params?: {
   }
 
   if (cachedCredentials) {
-    const { touchMatrixCredentials } = await loadMatrixCredentialsWriteRuntime();
-    await touchMatrixCredentials(env, accountId);
     return {
       accountId,
       homeserver: cachedCredentials.homeserver,
