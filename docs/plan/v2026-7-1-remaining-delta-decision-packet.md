@@ -114,6 +114,20 @@ legacy=configured sessionFallback=disabled`.
   is `/Volumes/ExtData/openclaw-lanes/openclaw-staging`. Shell-launched Node
   succeeds against the same paths, so this is a launchd/macOS protected-volume
   access boundary, not an OpenClaw candidate startup failure.
+- Updated `tools.fs.extraRoots` remediation on 2026-07-24 after Xushen clarified
+  that Uri and Cici require Backtrader access. Candidate `306ae73206e8`
+  restores `extraRoots` schema/runtime support and staging config now gives
+  `uri` and `cici` the read-only root
+  `/Users/openclaw/workspace/backtrader`. Backups:
+  `openclaw.staging.json.bak.extraRoots-uri-cici-20260724-204612` in both the
+  ExtData staging runtime and the internal launchd runtime mirror.
+- Staging launchd mirror was synced to candidate `306ae73206e8`; after restart,
+  `/health` returned `{"ok":true,"status":"live"}` on `:18820`. Manual staging
+  build under isolated `node@25.9.0` passed. Governed sanity reached 5 passed /
+  2 failed: feature tests, staging boot, staging smoke, patch presence, and tag
+  format passed; lineage remains the expected pre-merge failure; governed build
+  failed only because the governed helper build environment still invoked
+  unsupported Homebrew Node `25.6.0`.
 - Staging remediation for the gate:
   - mirrored staged code to
     `/Users/openclaw/.openclaw/tmp/openclaw-staging-launchd-run`;
