@@ -175,3 +175,15 @@ d8605eeec360b4f88062aa5cb1be4f2b5ccbf5cb` now selects isolated
   advisories, `pnpm why --prod` resolves only the remediated versions, focused
   audit/diagnostics tests passed (2 shards, 127 tests), dependency pin guard
   passed, and `pnpm build` passed under isolated `node@25.9.0`.
+- Governed sanity optional-dependency remediation on 2026-07-24 22:21 AEST:
+  the first installed sanity run on `7ead657c946` hung after pnpm printed
+  `Done`, because optional cross-platform tarball retries kept the pnpm process
+  open. A manual rerun with `npm_config_optional=false` reached 6 passed / 1
+  failed. Mini then fixed `xushen-ma/openclaw-fleet-mgmt#82`, merged it as
+  `12b59ac`, and installed it via approval-gated `releasectl bundle-sync
+--sync`; installed/source `internal/sanity-check.sh` SHA-256 now both equal
+  `26fc750aa676d9e9596d2152472f36daf9ada251065f02be53fd7583fc29a063`.
+  Plain installed `releasectl sanity-check --sha 7ead657c946` now gets past
+  install, passes build, focused tests, LaunchAgent staging boot, staging
+  `/health`, patch presence, and tag format. The only remaining failure is the
+  expected pre-merge lineage check.
