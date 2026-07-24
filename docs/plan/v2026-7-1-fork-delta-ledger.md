@@ -54,7 +54,7 @@ Do not directory-copy these files onto `v2026.7.1`; upstream has large API, plug
 | Matrix room-scoped DM last-route guard                                        | Keep                                                | Replay semantically into current Matrix monitor: update last route only when the inbound DM route is the main session key. Room-scoped DM sessions must not overwrite the main session's last route.                                                            | Upstream 7.1 currently still updates last route for every direct message. Keep the pinned-owner guard for main-session DMs.                                                       |
 | Matrix SDK install guard before account startup                               | Keep                                                | Replayed as a startup preflight before Matrix monitor runtime import so missing deps fail with repair guidance instead of import-time failure.                                                                                                                  | Covered by focused Matrix/startup tests under isolated `node@25.9.0`.                                                                                                             |
 | Agent `TEAM.md` bootstrap injection/order                                     | Keep                                                | Replay by adding `TEAM.md` as a recognized workspace bootstrap file, allowed for cron/subagent where appropriate, ordered after `TOOLS.md` and before `BOOTSTRAP.md`/`MEMORY.md`.                                                                               | Fleet workspace contract requires `TEAM.md`; upstream 7.1 does not include this local fleet-specific context file.                                                                |
-| `tools.fs.extraRoots` for workspace-only tools                                | Keep disabled by decision                           | Do not replay `tools.fs.extraRoots`; keep the narrower 7.1 filesystem boundary.                                                                                                                                                                                 | Xushen approved keeping it disabled on 2026-07-24.                                                                                                                                |
+| `tools.fs.extraRoots` for workspace-only tools                                | Keep by updated decision                            | Restore the fork's explicit extra-root support for workspace-only tools. Preserve mode-aware semantics: read-only roots are readable but not writable/editable/patchable; read-write roots allow write/edit/apply_patch.                                        | Xushen corrected the decision on 2026-07-24: Uri and Cici need the Backtrader root available.                                                                                     |
 | Governed/fork release build-info version identity                             | Keep, rewrite for 7.1 release model                 | Preserve the goal: runtime `/status` and build-info should prefer exact fork tag `vYYYY.M.D-x.N` at HEAD over package version/stable tag. Reimplement against current `scripts/write-build-info.ts` and current version APIs; do not copy old script wholesale. | Upstream 7.1 still writes package version only. Tests should cover exact fork tags and stable fallback.                                                                           |
 | `pnpm-lock.yaml` historical changes                                           | Reject as direct replay                             | Regenerate through `pnpm install --lockfile-only` or normal package workflow after chosen plugins/versions are replayed.                                                                                                                                        | Upstream dependency graph changed heavily between 6.10 and 7.1.                                                                                                                   |
 | Historical docs `docs/quick-memory-per-agent-http.md`                         | Keep as migration note, update before landing       | Move/update under the final plugin/runtime docs location. Remove stale "done" wording unless evidence is freshly reproduced on 7.1.                                                                                                                             | Useful as contract, not sufficient as current evidence.                                                                                                                           |
@@ -76,10 +76,10 @@ Do not directory-copy these files onto `v2026.7.1`; upstream has large API, plug
    - create/update Quick Memory as a pinned plugin artifact compatible with 7.1;
    - do not replay ZenMux;
    - regenerate lockfile only through package tooling.
-6. Filesystem extra roots last, only after decision:
-   - implement if approved;
-   - default disabled;
-   - require explicit config and focused security tests.
+6. Filesystem extra roots:
+   - replay the fork patch deliberately;
+   - keep default disabled unless explicit `tools.fs.extraRoots` config is present;
+   - require focused read-only/read-write security tests.
 7. Run the test matrix below locally before any push/test-lane handoff.
 
 ## Test Expectations
@@ -88,7 +88,7 @@ Minimum local checks before handoff:
 
 - `pnpm test -- extensions/matrix/src/matrix/accounts.test.ts extensions/matrix/src/matrix/monitor/handler.body-for-agent.test.ts`
 - `pnpm test -- src/agents/workspace.test.ts src/agents/system-prompt.test.ts test/scripts/write-build-info.test.ts`
-- `tools.fs.extraRoots` is intentionally not replayed.
+- `tools.fs.extraRoots` schema/runtime support is intentionally replayed, covered by focused read-only/read-write tests.
 - If Quick Memory is replayed: plugin registration tests, per-agent routing tests, status method test, sidecar common tests, and a two-agent staging smoke for `quick_memory_search` and `quick_session_search`.
 - ZenMux is intentionally not replayed.
 - Broad package checks after replay clusters: `pnpm build` and the repo's relevant `pnpm test` shard(s), with any resource-limit substitution documented.
@@ -107,7 +107,7 @@ Staging/test-lane expectations from security review before production considerat
 - Nina's `2026.7.1-2` package source mapping is proven locally as `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c` on `upstream/release/2026.7.1`; retain this evidence in the promotion packet and re-check if Nina is upgraded again.
 - Confirm whether Quick Memory should be bundled in the fork or external/pinned as a local plugin. Security review favors pinned external/plugin BOM evidence.
 - ZenMux is no longer required for this upgrade.
-- `tools.fs.extraRoots` is no longer required for this upgrade.
+- `tools.fs.extraRoots` is required for this upgrade so Uri and Cici can access the Backtrader root.
 - Matrix SDK install guard is implemented and covered by focused tests.
 
 ## Explicit Non-Actions

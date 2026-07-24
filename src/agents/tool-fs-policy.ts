@@ -4,22 +4,73 @@
  * Combines global and agent fs/tool policy into workspace-only and root-expansion decisions.
  */
 import type { OpenClawConfig } from "../config/types.openclaw.js";
+import type { FsToolsConfig } from "../config/types.tools.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { pickSandboxToolPolicy } from "./sandbox-tool-policy.js";
-import type { ToolFsPolicy } from "./tool-fs-policy.types.js";
+import type { ToolFsExtraRoot, ToolFsPolicy } from "./tool-fs-policy.types.js";
 import { isToolAllowedByPolicies } from "./tool-policy-match.js";
 import { mergeAlsoAllowPolicy, resolveToolProfilePolicy } from "./tool-policy.js";
 
 export type { ToolFsPolicy } from "./tool-fs-policy.types.js";
 
-export function createToolFsPolicy(params: { workspaceOnly?: boolean }): ToolFsPolicy {
+type FsExtraRootConfig = NonNullable<FsToolsConfig["extraRoots"]>[number];
+
+function normalizeExtraRoot(entry: FsExtraRootConfig): ToolFsExtraRoot | undefined {
+  if (typeof entry === "string") {
+    const value = entry.trim();
+    return value ? { path: value, mode: "rw" } : undefined;
+  }
+  if (!entry || typeof entry !== "object") {
+    return undefined;
+  }
+  const value = typeof entry.path === "string" ? entry.path.trim() : "";
+  if (!value) {
+    return undefined;
+  }
   return {
+    path: value,
+    mode: entry.mode === "ro" ? "ro" : "rw",
+  };
+}
+
+function mergeExtraRoots(
+  globalRoots?: readonly FsExtraRootConfig[],
+  agentRoots?: readonly FsExtraRootConfig[],
+): ToolFsExtraRoot[] {
+  const merged = [...(globalRoots ?? []), ...(agentRoots ?? [])];
+  const result: ToolFsExtraRoot[] = [];
+  const seen = new Set<string>();
+  for (const root of merged) {
+    const normalized = normalizeExtraRoot(root);
+    if (!normalized) {
+      continue;
+    }
+    const key = `${normalized.mode}:${normalized.path}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(normalized);
+  }
+  return result;
+}
+
+export function createToolFsPolicy(params: {
+  workspaceOnly?: boolean;
+  extraRoots?: ToolFsExtraRoot[];
+}): ToolFsPolicy {
+  const policy: ToolFsPolicy = {
     workspaceOnly: params.workspaceOnly === true,
   };
+  if (params.extraRoots && params.extraRoots.length > 0) {
+    policy.extraRoots = params.extraRoots;
+  }
+  return policy;
 }
 
 export function resolveToolFsConfig(params: { cfg?: OpenClawConfig; agentId?: string }): {
   workspaceOnly?: boolean;
+  extraRoots: ToolFsExtraRoot[];
 } {
   const cfg = params.cfg;
   const globalFs = cfg?.tools?.fs;
@@ -27,6 +78,7 @@ export function resolveToolFsConfig(params: { cfg?: OpenClawConfig; agentId?: st
     cfg && params.agentId ? resolveAgentConfig(cfg, params.agentId)?.tools?.fs : undefined;
   return {
     workspaceOnly: agentFs?.workspaceOnly ?? globalFs?.workspaceOnly,
+    extraRoots: mergeExtraRoots(globalFs?.extraRoots, agentFs?.extraRoots),
   };
 }
 
