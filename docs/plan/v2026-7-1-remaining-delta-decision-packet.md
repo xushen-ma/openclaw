@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head at packet update: `86e073678770`
+- Current candidate head before dependency-audit remediation: `eb3e7466b577`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -38,8 +38,10 @@
 
 ## Non-Actions
 
-- No PR, merge, staging approval, production promotion, production deploy, or production state restore has been performed.
-- Candidate `e757e1b9150` has been pushed and deployed through the governed test lane; the test-lane lock was released.
+- No merge, staging approval, production promotion, production deploy, or production state restore has been performed.
+- Candidate branch has an open PR (`xushen-ma/openclaw#137`). Candidate
+  `e757e1b9150` was pushed and deployed through the governed test lane; the
+  test-lane lock was released.
 - Staging runtime config was intentionally remediated after Xushen's decisions. Backups were retained beside `openclaw.staging.json`.
 
 ## Live-State Validation Incident
@@ -158,3 +160,18 @@ d8605eeec360b4f88062aa5cb1be4f2b5ccbf5cb` now selects isolated
   staging `/health` smoke, patch presence, and tag format. The only remaining
   sanity failure is the expected pre-merge lineage check:
   `candidate is not an ancestor of refs/remotes/origin/main`.
+- PR mergeability remediation on 2026-07-24 21:55-22:04 AEST:
+  Mini replayed fork-main Backtrader readiness commits on top of the v2026.7.1
+  candidate and recorded `origin/main` as an ours-merge parent, preserving the
+  7.1 candidate tree while making PR #137 mergeable. Focused agent-tool tests
+  passed under isolated `node@25.9.0` (2 shards, 91 tests).
+- CI `security-fast` dependency-audit remediation on 2026-07-24 22:04 AEST:
+  local reproduction of `node scripts/pre-commit/pnpm-audit-prod.mjs
+--audit-level=high` found production advisories in `@vitest/browser`,
+  `@opentelemetry/propagator-jaeger`, `axios`, and `fast-uri`. The candidate
+  now raises the affected dependency floors (`vitest` browser stack 4.1.10,
+  OpenTelemetry SDK/core family 0.221.0/2.10.0, `axios` 1.18.1, `fast-uri`
+  3.1.4). Verification passed: production audit reports no high-or-higher
+  advisories, `pnpm why --prod` resolves only the remediated versions, focused
+  audit/diagnostics tests passed (2 shards, 127 tests), dependency pin guard
+  passed, and `pnpm build` passed under isolated `node@25.9.0`.
