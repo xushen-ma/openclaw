@@ -9,7 +9,8 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["src/**/*.test.ts"],
+    dir: import.meta.dirname,
+    include: ["src/**/*.test.ts", "*.test.mjs"],
     globals: false,
     environment: "node",
   },

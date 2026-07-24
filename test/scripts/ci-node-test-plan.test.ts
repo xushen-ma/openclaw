@@ -286,6 +286,7 @@ describe("scripts/lib/ci-node-test-plan.mjs", () => {
         configs: [
           "test/vitest/vitest.tooling.config.ts",
           "test/vitest/vitest.tooling-isolated.config.ts",
+          "local-plugins/quick-memory-search/vitest.config.ts",
         ],
         requiresDist: false,
         runner: "blacksmith-8vcpu-ubuntu-2404",

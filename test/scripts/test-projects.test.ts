@@ -4204,6 +4204,7 @@ describe("scripts/test-projects full-suite sharding", () => {
       ...toolingPlans.map(() => toolingConfig),
       "test/vitest/vitest.tooling-docker.config.ts",
       "test/vitest/vitest.tooling-isolated.config.ts",
+      "local-plugins/quick-memory-search/vitest.config.ts",
       "test/vitest/vitest.contracts-channel-surface.config.ts",
       "test/vitest/vitest.contracts-channel-config.config.ts",
       "test/vitest/vitest.contracts-channel-registry.config.ts",

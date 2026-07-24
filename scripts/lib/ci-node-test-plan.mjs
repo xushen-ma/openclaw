@@ -765,6 +765,7 @@ const SPLIT_NODE_SHARDS = new Map([
         configs: [
           "test/vitest/vitest.tooling.config.ts",
           "test/vitest/vitest.tooling-isolated.config.ts",
+          "local-plugins/quick-memory-search/vitest.config.ts",
         ],
         requiresDist: false,
       },

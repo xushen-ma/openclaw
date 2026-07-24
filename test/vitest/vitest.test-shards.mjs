@@ -46,6 +46,7 @@ export const fullSuiteVitestShards = [
       "test/vitest/vitest.tooling.config.ts",
       "test/vitest/vitest.tooling-docker.config.ts",
       "test/vitest/vitest.tooling-isolated.config.ts",
+      "local-plugins/quick-memory-search/vitest.config.ts",
     ],
   },
   {
