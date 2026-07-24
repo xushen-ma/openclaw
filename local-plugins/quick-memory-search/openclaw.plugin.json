@@ -1,0 +1,84 @@
+{
+  "id": "quick-memory-search",
+  "activation": {
+    "onCapabilities": [
+      "tool"
+    ]
+  },
+  "name": "Quick Memory Search",
+  "description": "Fast per-agent OpenViking memory and session search tools.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "perAgentOvBaseUrl": {
+        "type": "string"
+      },
+      "agentRouting": {
+        "type": "string",
+        "enum": [
+          "header",
+          "query",
+          "path"
+        ],
+        "default": "header"
+      },
+      "agentHeaderName": {
+        "type": "string",
+        "default": "x-openclaw-agent-id"
+      },
+      "legacyOvBaseUrl": {
+        "type": "string"
+      },
+      "requestTimeoutMs": {
+        "type": "integer",
+        "minimum": 1000,
+        "maximum": 60000,
+        "default": 10000
+      },
+      "statsLogPath": {
+        "type": "string"
+      },
+      "sessionFallback": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "memoryRoot": {
+            "type": "string"
+          },
+          "pythonBin": {
+            "type": "string"
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 60000,
+            "default": 15000
+          }
+        }
+      }
+    }
+  },
+  "version": "2026.7.1-2-local.0",
+  "contracts": {
+    "tools": [
+      "quick_memory_search",
+      "quick_session_search"
+    ],
+    "gatewayMethods": [
+      "quick-memory-search.status"
+    ]
+  },
+  "toolMetadata": {
+    "quick_memory_search": {
+      "replaySafe": true
+    },
+    "quick_session_search": {
+      "replaySafe": true
+    }
+  }
+}

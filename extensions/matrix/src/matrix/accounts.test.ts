@@ -2,7 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixScopedEnvVarNames } from "../env-vars.js";
 import type { CoreConfig } from "../types.js";
-import { resolveMatrixAccountAllowlistConfig } from "./account-config.js";
 import {
   listMatrixAccountIds,
   resolveConfiguredMatrixBotUserIds,
@@ -622,55 +621,141 @@ describe("resolveMatrixAccount", () => {
     });
   });
 
-  it("inherits account-scoped default room and allowlist config for named accounts", () => {
-    const cfg: CoreConfig = {
-      channels: {
-        matrix: {
-          homeserver: "https://matrix.example.org",
-          accessToken: "main-token",
-          dm: {
-            allowFrom: ["@top-level:example.org"],
-          },
-          groupAllowFrom: ["@top-level-group:example.org"],
-          accounts: {
-            default: {
-              ...createMatrixAccountConfig("default-token"),
-              dm: {
-                allowFrom: ["@default:example.org"],
+  it("inherits Matrix account defaults into named accounts while preserving explicit overrides", () => {
+    const account = resolveMatrixAccount({
+      cfg: {
+        channels: {
+          matrix: {
+            homeserver: "https://matrix.example.org",
+            accessToken: "main-token",
+            groups: {
+              "!ops-channel-room:example.org": {
+                account: "ops",
+                enabled: true,
+                agentId: "channel-agent",
               },
-              groupAllowFrom: ["@default-group:example.org"],
-              groups: {
-                "!shared:example.org": {
-                  enabled: true,
+              "!default-channel-room:example.org": {
+                account: "default",
+                enabled: true,
+              },
+            },
+            dm: {
+              allowFrom: ["@channel-owner:example.org"],
+            },
+            groupAllowFrom: ["@channel-room-owner:example.org"],
+            accounts: {
+              default: {
+                homeserver: "https://default-account.example.org",
+                accessToken: "default-token",
+                userId: "@default:example.org",
+                dm: {
+                  allowFrom: ["@default-owner:example.org"],
+                },
+                groupAllowFrom: ["@default-room-owner:example.org"],
+                groups: {
+                  "!default-account-room:example.org": {
+                    enabled: true,
+                    agentId: "default-agent",
+                  },
+                },
+                rooms: {
+                  "!legacy-default-account-room:example.org": {
+                    enabled: true,
+                    agentId: "legacy-default-agent",
+                  },
                 },
               },
-              rooms: {
-                "!legacy-shared:example.org": {
-                  enabled: true,
+              ops: {
+                accessToken: "ops-token",
+                groups: {
+                  "!default-account-room:example.org": {
+                    agentId: "ops-agent",
+                  },
+                },
+                rooms: {
+                  "!ops-legacy-room:example.org": {
+                    enabled: true,
+                  },
                 },
               },
             },
-            ops: createMatrixAccountConfig("ops-token"),
           },
         },
       },
-    } as unknown as CoreConfig;
+      accountId: "ops",
+    });
 
-    const account = resolveMatrixAccount({ cfg, accountId: "ops" });
+    expect(account.config.dm?.allowFrom).toEqual(["@default-owner:example.org"]);
+    expect(account.config.groupAllowFrom).toEqual(["@default-room-owner:example.org"]);
+    expect(account.config.homeserver).toBe("https://matrix.example.org");
+    expect(account.config.accessToken).toBe("ops-token");
+    expect(account.config.userId).toBeUndefined();
     expect(account.config.groups).toEqual({
-      "!shared:example.org": {
+      "!ops-channel-room:example.org": {
+        account: "ops",
         enabled: true,
+        agentId: "channel-agent",
+      },
+      "!default-account-room:example.org": {
+        enabled: true,
+        agentId: "ops-agent",
       },
     });
     expect(account.config.rooms).toEqual({
-      "!legacy-shared:example.org": {
+      "!legacy-default-account-room:example.org": {
+        enabled: true,
+        agentId: "legacy-default-agent",
+      },
+      "!ops-legacy-room:example.org": {
         enabled: true,
       },
     });
-    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "ops" })).toEqual({
-      dmAllowFrom: ["@default:example.org"],
-      groupAllowFrom: ["@default-group:example.org"],
+  });
+
+  it("lets named Matrix accounts explicitly clear inherited default maps and allowlists", () => {
+    const account = resolveMatrixAccount({
+      cfg: {
+        channels: {
+          matrix: {
+            homeserver: "https://matrix.example.org",
+            accessToken: "main-token",
+            accounts: {
+              default: {
+                dm: {
+                  allowFrom: ["@default-owner:example.org"],
+                },
+                groupAllowFrom: ["@default-room-owner:example.org"],
+                groups: {
+                  "!default-account-room:example.org": {
+                    enabled: true,
+                  },
+                },
+                rooms: {
+                  "!legacy-default-account-room:example.org": {
+                    enabled: true,
+                  },
+                },
+              },
+              ops: {
+                accessToken: "ops-token",
+                dm: {
+                  allowFrom: [],
+                },
+                groupAllowFrom: [],
+                groups: {},
+                rooms: {},
+              },
+            },
+          },
+        },
+      },
+      accountId: "ops",
     });
+
+    expect(account.config.dm?.allowFrom).toEqual([]);
+    expect(account.config.groupAllowFrom).toEqual([]);
+    expect(account.config.groups).toBeUndefined();
+    expect(account.config.rooms).toBeUndefined();
   });
 
   it("filters channel-level groups by room account in multi-account setups", () => {

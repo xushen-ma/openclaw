@@ -4,6 +4,8 @@ import { mkdir, open, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { sleep as delay } from "../lib/sleep.mjs";
+import { resolveWindowsTaskkillPath } from "../lib/windows-taskkill.mjs";
 
 type Options = {
   altScreen: boolean;
@@ -62,7 +64,7 @@ function readOption(args: string[], name: string): string | undefined {
     return undefined;
   }
   const value = args[idx + 1];
-  if (!value || value.startsWith("--")) {
+  if (!value || value.startsWith("-")) {
     throw new CliArgumentError(`${name} requires a value`);
   }
   return value.trim();
@@ -118,12 +120,6 @@ function parseOptions(args = process.argv.slice(2)): Options {
   };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
-
 function shouldUseAltScreen(options: Options) {
   return options.altScreen && process.stdout.isTTY;
 }
@@ -146,7 +142,7 @@ function signalWindowsProcessTree(
   if (signal === "SIGKILL") {
     args.push("/F");
   }
-  const result = runTaskkill("taskkill", args, { stdio: "ignore" });
+  const result = runTaskkill(resolveWindowsTaskkillPath(), args, { stdio: "ignore" });
   return !result?.error && result?.status === 0;
 }
 

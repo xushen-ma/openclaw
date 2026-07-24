@@ -7,7 +7,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { BUNDLED_PLUGIN_PATH_PREFIX } from "./lib/bundled-plugin-paths.mjs";
+import { parsePositiveInt } from "./lib/numeric-options.mjs";
 import { TSDOWN_PACKAGE_OUTPUT_ROOTS } from "./lib/tsdown-output-roots.mjs";
+import { resolveWindowsTaskkillPath } from "./lib/windows-taskkill.mjs";
 import { resolvePnpmRunner } from "./pnpm-runner.mjs";
 import {
   isSourceCheckoutRoot,
@@ -24,6 +26,7 @@ const DEFAULT_CAPTURE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_TSDOWN_MAX_OLD_SPACE_MB = 12288;
 const DEFAULT_WINDOWS_TSDOWN_MAX_OLD_SPACE_MB = 8192;
+const TSDOWN_MAX_OLD_SPACE_MB_ENV = "OPENCLAW_TSDOWN_MAX_OLD_SPACE_MB";
 const MIN_TSDOWN_MAX_OLD_SPACE_MB = 2048;
 const TSDOWN_CGROUP_MEMORY_HEADROOM_MB = 768;
 const CGROUP_MEMORY_LIMIT_PATHS = [
@@ -31,9 +34,10 @@ const CGROUP_MEMORY_LIMIT_PATHS = [
   "/sys/fs/cgroup/memory/memory.limit_in_bytes",
 ];
 const PROC_MEMINFO_PATH = "/proc/meminfo";
-const TERMINATION_GRACE_MS = 5_000;
+// Build descendants get a short cleanup window; a timed-out build must not hold CI for seconds.
+const TERMINATION_GRACE_MS = 250;
 const PROCESS_GROUP_EXIT_POLL_MS = 25;
-const POST_FORCE_KILL_WAIT_MS = 1_000;
+const POST_FORCE_KILL_WAIT_MS = 250;
 const ROOT_TSDOWN_OUTPUT_ROOTS = ["dist", "dist-runtime"];
 const PRESERVED_TSDOWN_OUTPUT_FILES = ["dist/cli-startup-metadata.json"];
 const PRESERVE_CLI_STARTUP_METADATA_ENV = "OPENCLAW_PRESERVE_CLI_STARTUP_METADATA";
@@ -305,15 +309,7 @@ function parsePositiveIntegerEnv(value, name) {
   if (typeof value !== "string" || value.trim() === "") {
     return null;
   }
-  const text = value.trim();
-  if (!/^\d+$/u.test(text)) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  const parsed = Number(text);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new Error(`${name} must be a positive safe integer`);
-  }
-  return parsed;
+  return parsePositiveInt(value, name);
 }
 
 function parseNonNegativeIntegerEnv(value, name) {
@@ -402,6 +398,14 @@ function resolveTsdownMaxOldSpaceMb(params = {}) {
     (params.platform ?? process.platform) === "win32"
       ? DEFAULT_WINDOWS_TSDOWN_MAX_OLD_SPACE_MB
       : DEFAULT_TSDOWN_MAX_OLD_SPACE_MB;
+  const envOverride = parsePositiveIntegerEnv(
+    (params.env ?? process.env)[TSDOWN_MAX_OLD_SPACE_MB_ENV],
+    TSDOWN_MAX_OLD_SPACE_MB_ENV,
+  );
+  if (envOverride !== null) {
+    return envOverride;
+  }
+
   const limitBytes = readCgroupMemoryLimitBytes(params) ?? readProcMemTotalBytes(params);
   if (limitBytes === null) {
     return defaultMaxOldSpaceMb;
@@ -482,7 +486,7 @@ function resolveTsdownEnv(env, params = {}) {
   };
 }
 
-export function tsdownBuildUsage() {
+function tsdownBuildUsage() {
   return [
     "Usage: node scripts/tsdown-build.mjs [tsdown args...]",
     "",
@@ -578,7 +582,7 @@ export function resolveTsdownBuildInvocation(params = {}) {
     pnpmArgs: ["exec", "tsdown", ...tsdownArgs],
     nodeExecPath: params.nodeExecPath ?? process.execPath,
     npmExecPath: params.npmExecPath ?? env.npm_execpath,
-    comSpec: params.comSpec ?? env.ComSpec,
+    comSpec: params.comSpec,
     platform: params.platform ?? process.platform,
   });
   return {
@@ -593,12 +597,24 @@ export function resolveTsdownBuildInvocation(params = {}) {
   };
 }
 
+/** Builds AI package declarations first, then consumes them from the main graph. */
+export function resolveTsdownBuildInvocations(params = {}) {
+  const forwardedArgs = params.args ?? [];
+  return [
+    resolveTsdownBuildInvocation({
+      ...params,
+      args: ["--config", "tsdown.ai.config.ts", ...forwardedArgs],
+    }),
+    resolveTsdownBuildInvocation(params),
+  ];
+}
+
 function signalWindowsProcessTree(pid, signal, runTaskkill = spawnSync) {
   const args = ["/PID", String(pid), "/T"];
   if (signal === "SIGKILL") {
     args.push("/F");
   }
-  const result = runTaskkill("taskkill", args, { stdio: "ignore" });
+  const result = runTaskkill(resolveWindowsTaskkillPath(), args, { stdio: "ignore" });
   return !result?.error && result?.status === 0;
 }
 
@@ -841,8 +857,14 @@ if (isMainModule()) {
   pruneUntrackedGeneratedSourceDeclarations();
   pruneStaleRuntimeSymlinks();
   cleanTsdownOutputRoots();
-  const invocation = resolveTsdownBuildInvocation({ args: args.forwardedArgs });
-  const result = await runTsdownBuildInvocation(invocation);
+  const invocations = resolveTsdownBuildInvocations({ args: args.forwardedArgs });
+  let result;
+  for (const invocation of invocations) {
+    result = await runTsdownBuildInvocation(invocation);
+    if (result.status !== 0 || result.hasIneffectiveDynamicImport || result.fatalUnresolvedImport) {
+      break;
+    }
+  }
 
   if (result.status === 0 && result.hasIneffectiveDynamicImport) {
     console.error(

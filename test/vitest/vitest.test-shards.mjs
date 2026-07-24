@@ -30,11 +30,6 @@ export const fullSuiteVitestShards = [
     projects: ["test/vitest/vitest.unit-security.config.ts"],
   },
   {
-    config: "test/vitest/vitest.full-core-unit-ui.config.ts",
-    name: "core-unit-ui",
-    projects: ["test/vitest/vitest.unit-ui.config.ts"],
-  },
-  {
     config: "test/vitest/vitest.full-core-unit-support.config.ts",
     name: "core-unit-support",
     projects: ["test/vitest/vitest.unit-support.config.ts"],
@@ -51,6 +46,7 @@ export const fullSuiteVitestShards = [
       "test/vitest/vitest.tooling.config.ts",
       "test/vitest/vitest.tooling-docker.config.ts",
       "test/vitest/vitest.tooling-isolated.config.ts",
+      "local-plugins/quick-memory-search/vitest.config.ts",
     ],
   },
   {

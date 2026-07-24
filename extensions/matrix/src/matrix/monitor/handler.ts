@@ -27,6 +27,8 @@ import {
   resolveChannelContextVisibilityMode,
 } from "openclaw/plugin-sdk/context-visibility-runtime";
 import { isDangerousNameMatchingEnabled } from "openclaw/plugin-sdk/dangerous-name-runtime";
+import { KeyedAsyncQueue } from "openclaw/plugin-sdk/keyed-async-queue";
+import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import {
   isFutureDateTimestampMs,
   resolveExpiresAtMsFromDurationMs,
@@ -40,10 +42,7 @@ import {
 import type { GetReplyOptions } from "openclaw/plugin-sdk/reply-runtime";
 import { resolveInboundLastRouteSessionKey } from "openclaw/plugin-sdk/routing";
 import { resolvePinnedMainDmOwnerFromAllowlist } from "openclaw/plugin-sdk/security-runtime";
-import {
-  loadSessionStore,
-  resolveSessionStoreEntry,
-} from "openclaw/plugin-sdk/session-store-runtime";
+import { getSessionEntry } from "openclaw/plugin-sdk/session-store-runtime";
 import { normalizeOptionalString } from "openclaw/plugin-sdk/string-coerce-runtime";
 import type {
   CoreConfig,
@@ -127,44 +126,20 @@ import { isMatrixVerificationRoomMessage } from "./verification-utils.js";
 const ALLOW_FROM_STORE_CACHE_TTL_MS = 30_000;
 const PAIRING_REPLY_COOLDOWN_MS = 5 * 60_000;
 const MATRIX_TOOL_PROGRESS_MAX_CHARS = 300;
-let matrixSendModulePromise: Promise<typeof import("../send.js")> | undefined;
-let acpBindingRuntimePromise:
-  | Promise<typeof import("openclaw/plugin-sdk/acp-binding-runtime")>
-  | undefined;
-let sessionBindingRuntimePromise:
-  | Promise<typeof import("openclaw/plugin-sdk/session-binding-runtime")>
-  | undefined;
-let matrixReactionEventsPromise: Promise<typeof import("./reaction-events.js")> | undefined;
-let matrixDraftStreamPromise: Promise<typeof import("../draft-stream.js")> | undefined;
 
-function loadMatrixSendModule(): Promise<typeof import("../send.js")> {
-  matrixSendModulePromise ??= import("../send.js");
-  return matrixSendModulePromise;
-}
+const loadMatrixSendModule = createLazyRuntimeModule(() => import("../send.js"));
 
-function loadAcpBindingRuntime(): Promise<
-  typeof import("openclaw/plugin-sdk/acp-binding-runtime")
-> {
-  acpBindingRuntimePromise ??= import("openclaw/plugin-sdk/acp-binding-runtime");
-  return acpBindingRuntimePromise;
-}
+const loadAcpBindingRuntime = createLazyRuntimeModule(
+  () => import("openclaw/plugin-sdk/acp-binding-runtime"),
+);
 
-function loadSessionBindingRuntime(): Promise<
-  typeof import("openclaw/plugin-sdk/session-binding-runtime")
-> {
-  sessionBindingRuntimePromise ??= import("openclaw/plugin-sdk/session-binding-runtime");
-  return sessionBindingRuntimePromise;
-}
+const loadSessionBindingRuntime = createLazyRuntimeModule(
+  () => import("openclaw/plugin-sdk/session-binding-runtime"),
+);
 
-function loadMatrixReactionEvents(): Promise<typeof import("./reaction-events.js")> {
-  matrixReactionEventsPromise ??= import("./reaction-events.js");
-  return matrixReactionEventsPromise;
-}
+const loadMatrixReactionEvents = createLazyRuntimeModule(() => import("./reaction-events.js"));
 
-function loadMatrixDraftStream(): Promise<typeof import("../draft-stream.js")> {
-  matrixDraftStreamPromise ??= import("../draft-stream.js");
-  return matrixDraftStreamPromise;
-}
+const loadMatrixDraftStream = createLazyRuntimeModule(() => import("../draft-stream.js"));
 
 async function matrixTextWouldActivateMentions(
   client: MatrixClient,
@@ -188,6 +163,23 @@ type MatrixDraftStreamHandle = {
   finalizeLive: () => Promise<boolean>;
   reset: () => void;
 };
+
+export function shouldUpdateMatrixInboundLastRoute(params: {
+  isDirectMessage: boolean;
+  mainSessionKey: string;
+  route: Parameters<typeof resolveInboundLastRouteSessionKey>[0]["route"];
+  sessionKey: string;
+}): boolean {
+  if (!params.isDirectMessage) {
+    return false;
+  }
+  return (
+    resolveInboundLastRouteSessionKey({
+      route: params.route,
+      sessionKey: params.sessionKey,
+    }) === params.mainSessionKey
+  );
+}
 
 export class MatrixRetryableInboundError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -347,12 +339,11 @@ function resolveMatrixSharedDmContextNotice(params: {
   }
 
   try {
-    const store = loadSessionStore(params.storePath);
     const currentSession = resolveMatrixStoredSessionMeta(
-      resolveSessionStoreEntry({
-        store,
+      getSessionEntry({
+        storePath: params.storePath,
         sessionKey: params.sessionKey,
-      }).existing,
+      }),
     );
     if (!currentSession) {
       return null;
@@ -556,7 +547,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
     logVerboseMessage,
   });
   const roomHistoryTracker = createRoomHistoryTracker();
-  const roomIngressTails = new Map<string, Promise<void>>();
+  const roomIngressQueue = new KeyedAsyncQueue();
   const sharedDmContextNoticeRooms = new Set<string>();
 
   const readStoreAllowFrom = async (): Promise<string[]> => {
@@ -603,22 +594,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
   };
 
   const runRoomIngress = async <T>(roomId: string, task: () => Promise<T>): Promise<T> => {
-    const previous = roomIngressTails.get(roomId) ?? Promise.resolve();
-    let releaseCurrent!: () => void;
-    const current = new Promise<void>((resolve) => {
-      releaseCurrent = resolve;
-    });
-    const chain = previous.catch(() => {}).then(() => current);
-    roomIngressTails.set(roomId, chain);
-    await previous.catch(() => {});
-    try {
-      return await task();
-    } finally {
-      releaseCurrent();
-      if (roomIngressTails.get(roomId) === chain) {
-        roomIngressTails.delete(roomId);
-      }
-    }
+    return await roomIngressQueue.enqueue(roomId, task);
   };
 
   return async (roomId: string, event: MatrixRawEvent) => {
@@ -1676,6 +1652,7 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
                 mentions: {
                   canDetectMention: true,
                   wasMentioned,
+                  requireMention: shouldRequireMention,
                 },
               }
             : {}),
@@ -2404,6 +2381,14 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
         route: _route,
         sessionKey: _route.sessionKey,
       });
+      const shouldUpdateInboundLastRoute =
+        inboundLastRouteSessionKey === _route.mainSessionKey &&
+        shouldUpdateMatrixInboundLastRoute({
+          isDirectMessage,
+          mainSessionKey: _route.mainSessionKey,
+          route: _route,
+          sessionKey: _route.sessionKey,
+        });
 
       const turnResult = await core.channel.inbound.run({
         channel: "matrix",
@@ -2426,33 +2411,32 @@ export function createMatrixRoomMessageHandler(params: MatrixMonitorHandlerParam
             recordInboundSession: core.channel.session.recordInboundSession,
             botLoopProtection,
             record: {
-              updateLastRoute:
-                isDirectMessage && inboundLastRouteSessionKey === _route.mainSessionKey
-                  ? {
-                      sessionKey: inboundLastRouteSessionKey,
-                      channel: "matrix",
-                      to: `room:${roomId}`,
-                      accountId: _route.accountId,
-                      mainDmOwnerPin:
-                        inboundLastRouteSessionKey === _route.mainSessionKey && pinnedMainDmOwner
-                          ? {
-                              ownerRecipient: pinnedMainDmOwner,
-                              senderRecipient: normalizeMatrixUserId(senderId),
-                              onSkip: ({
-                                ownerRecipient,
-                                senderRecipient,
-                              }: {
-                                ownerRecipient: string;
-                                senderRecipient: string;
-                              }) => {
-                                logVerboseMessage(
-                                  `matrix: skip main-session last route for ${senderRecipient} (pinned owner ${ownerRecipient})`,
-                                );
-                              },
-                            }
-                          : undefined,
-                    }
-                  : undefined,
+              updateLastRoute: shouldUpdateInboundLastRoute
+                ? {
+                    sessionKey: inboundLastRouteSessionKey,
+                    channel: "matrix",
+                    to: `room:${roomId}`,
+                    accountId: _route.accountId,
+                    mainDmOwnerPin:
+                      inboundLastRouteSessionKey === _route.mainSessionKey && pinnedMainDmOwner
+                        ? {
+                            ownerRecipient: pinnedMainDmOwner,
+                            senderRecipient: normalizeMatrixUserId(senderId),
+                            onSkip: ({
+                              ownerRecipient,
+                              senderRecipient,
+                            }: {
+                              ownerRecipient: string;
+                              senderRecipient: string;
+                            }) => {
+                              logVerboseMessage(
+                                `matrix: skip main-session last route for ${senderRecipient} (pinned owner ${ownerRecipient})`,
+                              );
+                            },
+                          }
+                        : undefined,
+                  }
+                : undefined,
               onRecordError: (err) => {
                 logger.warn("failed updating session meta", {
                   error: String(err),

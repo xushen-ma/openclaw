@@ -1,13 +1,14 @@
-/**
- * Read/write/edit tool wrappers for host and sandbox workspaces.
- * Adds workspace-root guards, adaptive read paging, image validation, memory
- * append-only writes, and parameter cleanup around the session file tools.
- */
+// Read/write/edit tool wrappers for host and sandbox workspaces.
+// Adds workspace-root guards, adaptive read paging, image validation, memory
+// append-only writes, and parameter cleanup around the session file tools.
+
 import fs from "node:fs/promises";
 import path from "node:path";
 import { URL } from "node:url";
 import { detectMime } from "@openclaw/media-core/mime";
+import { formatByteSize } from "@openclaw/normalization-core";
 import { isWindowsDrivePath } from "../infra/archive-path.js";
+import { toErrorObject } from "../infra/errors.js";
 import {
   canonicalPathFromExistingAncestor,
   root as fsRoot,
@@ -22,12 +23,13 @@ import {
   resolveMediaReferenceSandboxPath,
 } from "../media/media-reference.js";
 import { sniffMimeFromBase64 } from "../media/sniff-mime-from-base64.js";
+import { clampNumber } from "../utils.js";
 import {
   REQUIRED_PARAM_GROUPS,
   assertRequiredParams,
   getToolParamsRecord,
-  stripMalformedXmlArgValueSuffix,
-  stripMalformedXmlArgValueSuffixFromKeys,
+  normalizeFileToolPathParam,
+  normalizeFileToolPathParamsFromKeys,
   wrapToolParamValidation,
 } from "./agent-tools.params.js";
 import type { AnyAgentTool } from "./agent-tools.types.js";
@@ -79,10 +81,6 @@ const READ_CONTINUATION_NOTICE_RE =
   /\n\n\[(?:Showing lines [^\]]*?Use offset=\d+ to continue\.|\d+ more lines in file\. Use offset=\d+ to continue\.)\]\s*$/;
 const DAILY_MEMORY_PATH_RE = /^memory\/\d{4}-\d{2}-\d{2}\.md$/;
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
 function resolveAdaptiveReadMaxBytes(options?: OpenClawReadToolOptions): number {
   const contextWindowTokens = options?.modelContextWindowTokens;
   if (
@@ -95,7 +93,7 @@ function resolveAdaptiveReadMaxBytes(options?: OpenClawReadToolOptions): number 
   const fromContext = Math.floor(
     contextWindowTokens * CHARS_PER_TOKEN_ESTIMATE * ADAPTIVE_READ_CONTEXT_SHARE,
   );
-  return clamp(fromContext, DEFAULT_READ_PAGE_MAX_BYTES, MAX_ADAPTIVE_READ_MAX_BYTES);
+  return clampNumber(fromContext, DEFAULT_READ_PAGE_MAX_BYTES, MAX_ADAPTIVE_READ_MAX_BYTES);
 }
 
 function malformedXmlArgValuePathError(key: string): Error {
@@ -103,13 +101,12 @@ function malformedXmlArgValuePathError(key: string): Error {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
-  }
-  if (bytes >= 1024) {
-    return `${Math.round(bytes / 1024)}KB`;
-  }
-  return `${bytes}B`;
+  return formatByteSize(bytes, {
+    style: "legacy-binary",
+    maxUnit: "mega",
+    separator: "",
+    fractionDigits: (_value, unit) => (unit === "byte" ? null : unit === "kilo" ? 0 : 1),
+  });
 }
 
 function getToolResultText(result: AgentToolResult<unknown>): string | undefined {
@@ -657,7 +654,7 @@ export function wrapToolMemoryFlushAppendOnlyWrite(
     execute: async (toolCallId, args, signal, onUpdate) => {
       const record = getToolParamsRecord(args);
       const normalizedRecord = record
-        ? stripMalformedXmlArgValueSuffixFromKeys(record, ["path"])
+        ? normalizeFileToolPathParamsFromKeys(record, ["path"])
         : undefined;
       assertRequiredParams(normalizedRecord, REQUIRED_PARAM_GROUPS.write, tool.name);
       const filePath =
@@ -742,7 +739,7 @@ async function assertSandboxPathWithinAnyRoot(params: {
       firstRootEscapeError ??= error;
     }
   }
-  throw toLintErrorObject(
+  throw toErrorObject(
     firstRootEscapeError ?? new Error("Path guard has no configured roots."),
     "Non-Error thrown",
   );
@@ -775,7 +772,7 @@ export function wrapToolWorkspaceRootGuardWithOptions(
         if (typeof rawFilePath !== "string" || !rawFilePath.trim()) {
           continue;
         }
-        const filePath = stripMalformedXmlArgValueSuffix(rawFilePath);
+        const filePath = normalizeFileToolPathParam(rawFilePath);
         if (!filePath.trim()) {
           throw malformedXmlArgValuePathError(key);
         }
@@ -891,7 +888,7 @@ export function createOpenClawReadTool(
     execute: async (toolCallId, params, signal) => {
       const record = getToolParamsRecord(params);
       const normalizedRecord = record
-        ? stripMalformedXmlArgValueSuffixFromKeys(record, ["path"])
+        ? normalizeFileToolPathParamsFromKeys(record, ["path"])
         : undefined;
       assertRequiredParams(normalizedRecord, REQUIRED_PARAM_GROUPS.read, base.name);
       const result = await executeReadWithAdaptivePaging({
@@ -1048,18 +1045,16 @@ function resolveHostWorkspaceRoot(root: string, roots: readonly string[], filePa
 async function writeGuardedHostFile(
   root: string,
   additionalRoots: readonly string[],
-  rootCache: Map<string, ReturnType<typeof fsRoot>>,
+  getRoot: (rootPath: string) => ReturnType<typeof fsRoot>,
   absolutePath: string,
   content: string,
 ) {
+  // Validate the path before starting the fs-safe root: call getRoot() only after
+  // toCanonicalRelativeWorkspacePath succeeds. Eagerly starting it would orphan a
+  // rejecting root promise when validation fails first.
   const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
   const relative = await toCanonicalRelativeWorkspacePath(target.root, target.resolvedPath);
-  let rootPromise = rootCache.get(target.root);
-  if (!rootPromise) {
-    rootPromise = fsRoot(target.root);
-    rootCache.set(target.root, rootPromise);
-  }
-  await (await rootPromise).write(relative, content, { mkdir: true });
+  await (await getRoot(target.root)).write(relative, content, { mkdir: true });
 }
 
 function createHostWriteOperations(root: string, options?: HostWorkspaceToolOptions) {
@@ -1080,11 +1075,21 @@ function createHostWriteOperations(root: string, options?: HostWorkspaceToolOpti
     } as const;
   }
 
-  // When workspaceOnly is true, enforce workspace boundary
+  // When workspaceOnly is true, enforce workspace boundary. Resolve the fs-safe
+  // root lazily on first use: constructing the tool (e.g. doctor projecting tool
+  // schemas) must not open an fs handle, and a missing workspace dir must not
+  // orphan a rejecting promise as "Unhandled promise rejection: root dir not found".
   const additionalRoots = normalizeAdditionalRoots(options?.additionalRoots);
-  const rootCache = new Map<string, ReturnType<typeof fsRoot>>([
-    [path.resolve(root), fsRoot(root)],
-  ]);
+  const rootCache = new Map<string, ReturnType<typeof fsRoot>>();
+  const getRoot = (rootPath: string) => {
+    const resolvedRoot = path.resolve(rootPath);
+    let rootPromise = rootCache.get(resolvedRoot);
+    if (!rootPromise) {
+      rootPromise = fsRoot(resolvedRoot);
+      rootCache.set(resolvedRoot, rootPromise);
+    }
+    return rootPromise;
+  };
   return {
     mkdir: async (dir: string) => {
       const target = resolveHostWorkspaceRoot(root, additionalRoots, dir);
@@ -1096,12 +1101,10 @@ function createHostWriteOperations(root: string, options?: HostWorkspaceToolOpti
       await fs.mkdir(target.resolvedPath, { recursive: true });
     },
     writeFile: (absolutePath: string, content: string) =>
-      writeGuardedHostFile(root, additionalRoots, rootCache, absolutePath, content),
+      writeGuardedHostFile(root, additionalRoots, getRoot, absolutePath, content),
     readFile: async (absolutePath: string) => {
       const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
-      const rootPromise = rootCache.get(target.root) ?? fsRoot(target.root);
-      rootCache.set(target.root, rootPromise);
-      return (await (await rootPromise).read(target.relative)).buffer;
+      return (await (await getRoot(target.root)).read(target.relative)).buffer;
     },
     statFile: async (absolutePath: string) => {
       const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
@@ -1126,24 +1129,32 @@ function createHostEditOperations(root: string, options?: HostWorkspaceToolOptio
     } as const;
   }
 
-  // When workspaceOnly is true, enforce workspace boundary
+  // When workspaceOnly is true, enforce workspace boundary. Resolve the fs-safe
+  // root lazily on first use: constructing the tool (e.g. doctor projecting tool
+  // schemas) must not open an fs handle, and a missing workspace dir must not
+  // orphan a rejecting promise as "Unhandled promise rejection: root dir not found".
   const additionalRoots = normalizeAdditionalRoots(options?.additionalRoots);
-  const rootCache = new Map<string, ReturnType<typeof fsRoot>>([
-    [path.resolve(root), fsRoot(root)],
-  ]);
+  const rootCache = new Map<string, ReturnType<typeof fsRoot>>();
+  const getRoot = (rootPath: string) => {
+    const resolvedRoot = path.resolve(rootPath);
+    let rootPromise = rootCache.get(resolvedRoot);
+    if (!rootPromise) {
+      rootPromise = fsRoot(resolvedRoot);
+      rootCache.set(resolvedRoot, rootPromise);
+    }
+    return rootPromise;
+  };
   return {
     readFile: async (absolutePath: string) => {
       const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
-      const rootPromise = rootCache.get(target.root) ?? fsRoot(target.root);
-      rootCache.set(target.root, rootPromise);
-      const safeRead = await (await rootPromise).read(target.relative);
+      const safeRead = await (await getRoot(target.root)).read(target.relative);
       return safeRead.buffer;
     },
     writeFile: (absolutePath: string, content: string) =>
-      writeGuardedHostFile(root, additionalRoots, rootCache, absolutePath, content),
+      writeGuardedHostFile(root, additionalRoots, getRoot, absolutePath, content),
     access: async (absolutePath: string) => {
       let relative: string;
-      let targetRoot = path.resolve(root);
+      let targetRoot: string;
       try {
         const target = resolveHostWorkspaceRoot(root, additionalRoots, absolutePath);
         relative = target.relative;
@@ -1157,9 +1168,7 @@ function createHostEditOperations(root: string, options?: HostWorkspaceToolOptio
         return;
       }
       try {
-        const rootPromise = rootCache.get(targetRoot) ?? fsRoot(targetRoot);
-        rootCache.set(targetRoot, rootPromise);
-        const opened = await (await rootPromise).open(relative);
+        const opened = await (await getRoot(targetRoot)).open(relative);
         await opened.handle.close().catch(() => {});
       } catch (error) {
         if (error instanceof FsSafeError && error.code === "not-found") {
@@ -1194,19 +1203,5 @@ async function toCanonicalRelativeWorkspacePath(
 function createFsAccessError(code: string, filePath: string): NodeJS.ErrnoException {
   const error = new Error(`Sandbox FS error (${code}): ${filePath}`) as NodeJS.ErrnoException;
   error.code = code;
-  return error;
-}
-
-function toLintErrorObject(value: unknown, fallbackMessage: string): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-  if (typeof value === "string") {
-    return new Error(value);
-  }
-  const error = new Error(fallbackMessage, { cause: value });
-  if ((typeof value === "object" && value !== null) || typeof value === "function") {
-    Object.assign(error, value);
-  }
   return error;
 }

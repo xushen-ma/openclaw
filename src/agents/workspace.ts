@@ -8,10 +8,12 @@ import syncFs from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { readStringValue } from "@openclaw/normalization-core/string-coerce";
+import { extractFrontmatterBlock } from "../../packages/markdown-core/src/frontmatter.js";
 import { resolveLegacyStateDirs, resolveStateDir } from "../config/paths.js";
 import { openRootFile } from "../infra/boundary-file-read.js";
 import { pathExists } from "../infra/fs-safe.js";
 import { replaceFileAtomic } from "../infra/replace-file.js";
+import { retryAsync } from "../infra/retry.js";
 import {
   CANONICAL_ROOT_MEMORY_FILENAME,
   exactWorkspaceEntryExists,
@@ -31,11 +33,11 @@ export {
 export const DEFAULT_AGENTS_FILENAME = "AGENTS.md";
 export const DEFAULT_SOUL_FILENAME = "SOUL.md";
 export const DEFAULT_TOOLS_FILENAME = "TOOLS.md";
+export const DEFAULT_TEAM_FILENAME = "TEAM.md";
 export const DEFAULT_IDENTITY_FILENAME = "IDENTITY.md";
 export const DEFAULT_USER_FILENAME = "USER.md";
 export const DEFAULT_HEARTBEAT_FILENAME = "HEARTBEAT.md";
 export const DEFAULT_BOOTSTRAP_FILENAME = "BOOTSTRAP.md";
-export const DEFAULT_TEAM_FILENAME = "TEAM.md";
 export const DEFAULT_MEMORY_FILENAME = CANONICAL_ROOT_MEMORY_FILENAME;
 const LEGACY_WORKSPACE_STATE_DIRNAME = ".openclaw";
 const LEGACY_WORKSPACE_STATE_FILENAME = "workspace-state.json";
@@ -51,6 +53,9 @@ const WORKSPACE_ONBOARDING_PROFILE_FILENAMES = [
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_USER_FILENAME,
 ] as const;
+const TRANSIENT_WORKSPACE_READ_CODES = new Set(["EAGAIN", "EWOULDBLOCK", "EINTR"]);
+const TRANSIENT_WORKSPACE_READ_ERRNOS = new Set([-11, -4]);
+const TRANSIENT_WORKSPACE_READ_MESSAGE = /Unknown system error -(?:11|4)\b/i;
 
 const workspaceTemplateCache = new Map<string, Promise<string>>();
 let gitAvailabilityPromise: Promise<boolean> | null = null;
@@ -74,48 +79,63 @@ async function readWorkspaceFileWithGuards(params: {
   filePath: string;
   workspaceDir: string;
 }): Promise<WorkspaceGuardedReadResult> {
-  const opened = await openRootFile({
-    absolutePath: params.filePath,
-    rootPath: params.workspaceDir,
-    boundaryLabel: "workspace root",
-    maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
-  });
-  if (!opened.ok) {
-    workspaceFileCache.delete(params.filePath);
-    return opened;
-  }
-
-  const identity = workspaceFileIdentity(opened.stat, opened.path);
-  const cached = workspaceFileCache.get(params.filePath);
-  if (cached && cached.identity === identity) {
-    syncFs.closeSync(opened.fd);
-    return { ok: true, content: cached.content };
-  }
-
   try {
-    const content = syncFs.readFileSync(opened.fd, "utf-8");
-    workspaceFileCache.set(params.filePath, { content, identity });
-    return { ok: true, content };
+    // A transient FS race (EAGAIN/EWOULDBLOCK/EINTR under load) on the open or
+    // read must not drop the agent's bootstrap file for the turn — this reader
+    // runs every turn for AGENTS/SOUL/HEARTBEAT/etc. Retry the whole open+read so
+    // each attempt uses a fresh fd (retrying readFileSync on the same fd could
+    // return truncated content after a partial read); the inode-identity guard
+    // in openRootFile still protects against a swapped file between attempts.
+    return await retryAsync(
+      async () => {
+        const opened = await openRootFile({
+          absolutePath: params.filePath,
+          rootPath: params.workspaceDir,
+          boundaryLabel: "workspace root",
+          maxBytes: MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES,
+        });
+        if (!opened.ok) {
+          // Boundary resolution can report transient IO as "validation", while
+          // pinned open failures use "io". Classify the underlying error so
+          // deterministic path and validation failures still return unchanged.
+          if (isTransientWorkspaceReadError(opened.error)) {
+            throw opened.error;
+          }
+          workspaceFileCache.delete(params.filePath);
+          return opened;
+        }
+
+        const identity = workspaceFileIdentity(opened.stat, opened.path);
+        const cached = workspaceFileCache.get(params.filePath);
+        if (cached && cached.identity === identity) {
+          syncFs.closeSync(opened.fd);
+          return { ok: true, content: cached.content };
+        }
+
+        try {
+          const content = syncFs.readFileSync(opened.fd, "utf-8");
+          workspaceFileCache.set(params.filePath, { content, identity });
+          return { ok: true, content };
+        } finally {
+          syncFs.closeSync(opened.fd);
+        }
+      },
+      {
+        attempts: 3,
+        minDelayMs: 50,
+        maxDelayMs: 50,
+        shouldRetry: (err) => isTransientWorkspaceReadError(err),
+      },
+    );
   } catch (error) {
+    // Non-transient read failure, or transient retries exhausted.
     workspaceFileCache.delete(params.filePath);
     return { ok: false, reason: "io", error };
-  } finally {
-    syncFs.closeSync(opened.fd);
   }
 }
 
 function stripFrontMatter(content: string): string {
-  if (!content.startsWith("---")) {
-    return content;
-  }
-  const endIndex = content.indexOf("\n---", 3);
-  if (endIndex === -1) {
-    return content;
-  }
-  const start = endIndex + "\n---".length;
-  let trimmed = content.slice(start);
-  trimmed = trimmed.replace(/^\s+/, "");
-  return trimmed;
+  return extractFrontmatterBlock(content)?.body.replace(/^\s+/, "") ?? content;
 }
 
 async function loadTemplate(name: string): Promise<string> {
@@ -160,11 +180,11 @@ export type WorkspaceBootstrapFileName =
   | typeof DEFAULT_AGENTS_FILENAME
   | typeof DEFAULT_SOUL_FILENAME
   | typeof DEFAULT_TOOLS_FILENAME
+  | typeof DEFAULT_TEAM_FILENAME
   | typeof DEFAULT_IDENTITY_FILENAME
   | typeof DEFAULT_USER_FILENAME
   | typeof DEFAULT_HEARTBEAT_FILENAME
   | typeof DEFAULT_BOOTSTRAP_FILENAME
-  | typeof DEFAULT_TEAM_FILENAME
   | typeof DEFAULT_MEMORY_FILENAME;
 
 export type WorkspaceBootstrapFile = {
@@ -198,11 +218,11 @@ const VALID_BOOTSTRAP_NAMES: ReadonlySet<string> = new Set([
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_TOOLS_FILENAME,
+  DEFAULT_TEAM_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_USER_FILENAME,
   DEFAULT_HEARTBEAT_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
-  DEFAULT_TEAM_FILENAME,
   DEFAULT_MEMORY_FILENAME,
 ]);
 
@@ -248,18 +268,34 @@ async function writeFileIfMissing(filePath: string, content: string): Promise<bo
   }
 }
 
+function isTransientWorkspaceReadError(error: unknown): boolean {
+  const fsError = error as NodeJS.ErrnoException | undefined;
+  if (fsError?.code && TRANSIENT_WORKSPACE_READ_CODES.has(fsError.code)) {
+    return true;
+  }
+  if (typeof fsError?.errno === "number" && TRANSIENT_WORKSPACE_READ_ERRNOS.has(fsError.errno)) {
+    return true;
+  }
+  return error instanceof Error && TRANSIENT_WORKSPACE_READ_MESSAGE.test(error.message);
+}
+
 async function fileContentDiffersFromTemplate(
   filePath: string,
   template: string,
 ): Promise<boolean> {
   try {
-    return (await fs.readFile(filePath, "utf-8")) !== template;
+    return await retryAsync(async () => (await fs.readFile(filePath, "utf-8")) !== template, {
+      attempts: 3,
+      minDelayMs: 50,
+      maxDelayMs: 50,
+      shouldRetry: (err) => isTransientWorkspaceReadError(err),
+    });
   } catch (err) {
     const anyErr = err as { code?: string };
-    if (anyErr.code !== "ENOENT") {
-      throw err;
+    if (anyErr.code === "ENOENT") {
+      return false;
     }
-    return false;
+    throw err;
   }
 }
 
@@ -470,10 +506,6 @@ function resolveLegacyWorkspaceStatePath(dir: string): string {
   return path.join(dir, LEGACY_WORKSPACE_STATE_DIRNAME, LEGACY_WORKSPACE_STATE_FILENAME);
 }
 
-export function resolveWorkspaceAttestationPath(dir: string): string {
-  return resolveWorkspaceAttestationPathInStateDir(dir, resolveStateDir());
-}
-
 function resolveWorkspaceAttestationPathInStateDir(dir: string, stateDir: string): string {
   const key = createHash("sha256").update(path.resolve(dir)).digest("hex");
   return path.join(stateDir, WORKSPACE_ATTESTATION_DIRNAME, `${key}.attested`);
@@ -502,7 +534,7 @@ async function findRecentWorkspaceAttestationPath(
   return null;
 }
 
-export async function hasRecentWorkspaceAttestation(
+async function hasRecentWorkspaceAttestation(
   attestationPath: string,
   opts?: { trustUnknown?: boolean },
 ): Promise<boolean> {
@@ -1063,6 +1095,10 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
       filePath: path.join(resolvedDir, DEFAULT_TOOLS_FILENAME),
     },
     {
+      name: DEFAULT_TEAM_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_TEAM_FILENAME),
+    },
+    {
       name: DEFAULT_IDENTITY_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_IDENTITY_FILENAME),
     },
@@ -1077,10 +1113,6 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
     {
       name: DEFAULT_BOOTSTRAP_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_BOOTSTRAP_FILENAME),
-    },
-    {
-      name: DEFAULT_TEAM_FILENAME,
-      filePath: path.join(resolvedDir, DEFAULT_TEAM_FILENAME),
     },
     {
       name: DEFAULT_MEMORY_FILENAME,
@@ -1114,7 +1146,11 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
   return result;
 }
 
-const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set([DEFAULT_AGENTS_FILENAME, DEFAULT_TOOLS_FILENAME]);
+const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set([
+  DEFAULT_AGENTS_FILENAME,
+  DEFAULT_TOOLS_FILENAME,
+  DEFAULT_TEAM_FILENAME,
+]);
 
 const CRON_BOOTSTRAP_ALLOWLIST = new Set([
   DEFAULT_AGENTS_FILENAME,

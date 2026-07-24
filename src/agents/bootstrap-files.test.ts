@@ -170,6 +170,7 @@ describe("resolveBootstrapFilesForRun", () => {
       "AGENTS.md",
       "SOUL.md",
       "TOOLS.md",
+      "TEAM.md",
       "IDENTITY.md",
       "USER.md",
       "HEARTBEAT.md",
@@ -291,6 +292,7 @@ describe("resolveBootstrapFilesForRun", () => {
       [
         ["AGENTS.md", "project rules"],
         ["TOOLS.md", "tool rules"],
+        ["TEAM.md", "fleet rules"],
         ["SOUL.md", "persona"],
         ["IDENTITY.md", "identity"],
         ["USER.md", "user profile"],
@@ -307,7 +309,7 @@ describe("resolveBootstrapFilesForRun", () => {
       sessionKey: "agent:main:subagent:worker",
     });
 
-    expect(files.map((file) => file.name)).toStrictEqual(["AGENTS.md", "TOOLS.md"]);
+    expect(files.map((file) => file.name)).toStrictEqual(["AGENTS.md", "TOOLS.md", "TEAM.md"]);
   });
 
   it("keeps cron sessions on their existing minimal bootstrap files", async () => {
@@ -316,6 +318,7 @@ describe("resolveBootstrapFilesForRun", () => {
       [
         ["AGENTS.md", "project rules"],
         ["TOOLS.md", "tool rules"],
+        ["TEAM.md", "fleet rules"],
         ["SOUL.md", "persona"],
         ["IDENTITY.md", "identity"],
         ["USER.md", "user profile"],
@@ -336,6 +339,7 @@ describe("resolveBootstrapFilesForRun", () => {
       "AGENTS.md",
       "SOUL.md",
       "TOOLS.md",
+      "TEAM.md",
       "IDENTITY.md",
       "USER.md",
     ]);
@@ -398,6 +402,20 @@ describe("resolveBootstrapContextForRun", () => {
     });
 
     expect(files).toStrictEqual([]);
+  });
+
+  it("excludes HEARTBEAT.md from commitment-only context", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
+    await fs.writeFile(path.join(workspaceDir, "HEARTBEAT.md"), "global work", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "persona", "utf8");
+
+    const files = await resolveBootstrapFilesForRun({
+      workspaceDir,
+      runKind: "commitment-only",
+    });
+
+    expect(files.map((file) => file.name)).not.toContain("HEARTBEAT.md");
+    expect(files.map((file) => file.name)).toContain("SOUL.md");
   });
 
   it("drops HEARTBEAT.md for non-heartbeat runs when the heartbeat prompt section is disabled", async () => {

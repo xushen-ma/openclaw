@@ -4,11 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const distDir = path.join(rootDir, "dist");
-const pkgPath = path.join(rootDir, "package.json");
+const scriptPath = fileURLToPath(import.meta.url);
+const defaultRootDir = path.resolve(path.dirname(scriptPath), "..");
+const FORK_HEAD_TAG_PATTERN = /^v(\d{4})\.(\d{1,2})\.(\d{1,2})-x\.(\d+)$/u;
 
-const readPackageVersion = () => {
+export const readPackageVersion = (rootDir = defaultRootDir) => {
+  const pkgPath = path.join(rootDir, "package.json");
   try {
     const raw = fs.readFileSync(pkgPath, "utf8");
     const parsed = JSON.parse(raw) as { version?: string };
@@ -18,7 +19,63 @@ const readPackageVersion = () => {
   }
 };
 
-const resolveCommit = () => {
+type ForkTagParts = {
+  tag: string;
+  version: string;
+  year: number;
+  month: number;
+  day: number;
+  fork: number;
+};
+
+function parseForkHeadTag(tag: string): ForkTagParts | null {
+  const match = FORK_HEAD_TAG_PATTERN.exec(tag.trim());
+  if (!match?.[1] || !match[2] || !match[3] || !match[4]) {
+    return null;
+  }
+  return {
+    tag,
+    version: tag.slice(1),
+    year: Number.parseInt(match[1], 10),
+    month: Number.parseInt(match[2], 10),
+    day: Number.parseInt(match[3], 10),
+    fork: Number.parseInt(match[4], 10),
+  };
+}
+
+function compareForkTags(a: ForkTagParts, b: ForkTagParts): number {
+  return (
+    a.year - b.year ||
+    a.month - b.month ||
+    a.day - b.day ||
+    a.fork - b.fork ||
+    a.tag.localeCompare(b.tag)
+  );
+}
+
+export const resolveHeadForkVersion = (rootDir = defaultRootDir) => {
+  try {
+    const raw = execSync("git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*-x.*'", {
+      cwd: rootDir,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+    const matches = raw
+      .split(/\r?\n/u)
+      .map(parseForkHeadTag)
+      .filter((tag): tag is ForkTagParts => Boolean(tag))
+      .toSorted(compareForkTags);
+    return matches.at(-1)?.version ?? null;
+  } catch {
+    return null;
+  }
+};
+
+export const resolveBuildInfoVersion = (rootDir = defaultRootDir) =>
+  resolveHeadForkVersion(rootDir) ?? readPackageVersion(rootDir);
+
+export const resolveCommit = (rootDir = defaultRootDir) => {
   const envCommit = process.env.GIT_COMMIT?.trim() || process.env.GIT_SHA?.trim();
   if (envCommit) {
     return envCommit;
@@ -35,74 +92,24 @@ const resolveCommit = () => {
   }
 };
 
-const STABLE_TAG_PATTERN = /^v\d{4}\.\d{1,2}\.\d{1,2}$/;
-const FORK_TAG_PATTERN = /^v\d{4}\.\d{1,2}\.\d{1,2}-x\.\d+$/;
+export function writeBuildInfo(rootDir = defaultRootDir): void {
+  const distDir = path.join(rootDir, "dist");
+  const version = resolveBuildInfoVersion(rootDir);
+  const commit = resolveCommit(rootDir);
 
-const parseReleaseTag = (tag: string) => {
-  const match = /^v(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-x\.(\d+))?$/.exec(tag);
-  if (!match) {
-    return null;
-  }
-  return {
-    year: Number(match[1]),
-    month: Number(match[2]),
-    patch: Number(match[3]),
-    fork: match[4] ? Number(match[4]) : 0,
+  const buildInfo = {
+    version,
+    commit,
+    builtAt: new Date().toISOString(),
   };
-};
 
-const compareReleaseCandidates = (left: string, right: string) => {
-  const parsedLeft = parseReleaseTag(left);
-  const parsedRight = parseReleaseTag(right);
-  if (!parsedLeft || !parsedRight) {
-    return left.localeCompare(right);
-  }
-  return (
-    parsedLeft.year - parsedRight.year ||
-    parsedLeft.month - parsedRight.month ||
-    parsedLeft.patch - parsedRight.patch ||
-    parsedLeft.fork - parsedRight.fork
+  fs.mkdirSync(distDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(distDir, "build-info.json"),
+    `${JSON.stringify(buildInfo, null, 2)}\n`,
   );
-};
+}
 
-export const resolveVersionTagFromHeadTagList = (tags: readonly string[]) => {
-  const candidates = tags.map((tag) => tag.trim()).filter(Boolean);
-  const latest = (matcher: RegExp) =>
-    candidates
-      .filter((tag) => matcher.test(tag))
-      .toSorted(compareReleaseCandidates)
-      .at(-1) ?? null;
-  return latest(FORK_TAG_PATTERN) ?? latest(STABLE_TAG_PATTERN);
-};
-
-export const resolveVersionTagFromHeadTagOutput = (raw: string) =>
-  resolveVersionTagFromHeadTagList(
-    raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean),
-  );
-
-const resolveVersionTagFromHeadTags = () => {
-  try {
-    const raw = execSync("git tag --points-at HEAD", {
-      cwd: rootDir,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).toString();
-    return resolveVersionTagFromHeadTagOutput(raw);
-  } catch {
-    return null;
-  }
-};
-
-const version = readPackageVersion();
-const commit = resolveCommit();
-
-const buildInfo = {
-  version: resolveVersionTagFromHeadTags() ?? version,
-  commit,
-  builtAt: new Date().toISOString(),
-};
-
-fs.mkdirSync(distDir, { recursive: true });
-fs.writeFileSync(path.join(distDir, "build-info.json"), `${JSON.stringify(buildInfo, null, 2)}\n`);
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
+  writeBuildInfo();
+}
