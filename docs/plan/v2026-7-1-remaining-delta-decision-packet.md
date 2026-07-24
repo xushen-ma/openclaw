@@ -2,7 +2,7 @@
 
 - Date: 2026-07-24
 - Branch: `mini/upgrade-v2026.7.1-fork-integration`
-- Current candidate head before dependency-audit remediation: `eb3e7466b577`
+- Current candidate head after CI remediation: `cb43f8e9ef1216718bef53bd3c2c1b6bca323861`
 - Base: `upstream/release/2026.7.1` / `0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c`
 - Tag anchor: `v2026.7.1` / `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`
 
@@ -187,3 +187,17 @@ d8605eeec360b4f88062aa5cb1be4f2b5ccbf5cb` now selects isolated
   install, passes build, focused tests, LaunchAgent staging boot, staging
   `/health`, patch presence, and tag format. The only remaining failure is the
   expected pre-merge lineage check.
+- PR hosted-gate status on 2026-07-24 22:50 AEST for head
+  `cb43f8e9ef1216718bef53bd3c2c1b6bca323861`: 139 checks passed and 15 were
+  skipped. Known non-code app checks `label` and `auto-response` failed as
+  expected noise. The production/release blocker is that three hosted workflows
+  are still queued with no runner assigned: `Blacksmith ARM Testbox`
+  (`check-arm`), `Blacksmith Build Artifacts Testbox` (`build-artifacts`), and
+  `OpenGrep - PR Diff` (`Scan changed paths (precise)`). The release verifier
+  was run directly and failed with
+  `Missing successful Blacksmith ARM Testbox workflow ... Observed:
+30098196567:queued/unknown`.
+- A cron monitor is active:
+  `5d4cc9ef-8d9c-4b29-bdc2-d002f600b0bb` /
+  `Monitor OpenClaw PR 137 production readiness`, checking PR #137 until the
+  hosted gates either clear or expose a real blocker.
