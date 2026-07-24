@@ -146,3 +146,15 @@ legacy=configured sessionFallback=disabled`.
   with pid `34272`, staging `/health` smoke, patch presence, and tag format.
   The only failure was `candidate is not an ancestor of refs/remotes/origin/main`,
   which is expected before the PR is merged.
+- Governed sanity build helper remediation on 2026-07-24 21:40 AEST:
+  Mini fixed the release-helper source in `xushen-ma/openclaw-fleet-mgmt#81`
+  so `internal/sanity-check.sh` selects a compatible Node runtime before
+  `pnpm install` / `pnpm build`. The PR was merged to fleet-management `main`
+  as `d0b38d3`, then installed via approval-gated `releasectl bundle-sync
+--sync`; bundle-sync reported only `internal/sanity-check.sh` changed and
+  zero residual drift. Installed `releasectl sanity-check --sha
+d8605eeec360b4f88062aa5cb1be4f2b5ccbf5cb` now selects isolated
+  `node@25.9.0` and passes build, focused tests, LaunchAgent staging boot,
+  staging `/health` smoke, patch presence, and tag format. The only remaining
+  sanity failure is the expected pre-merge lineage check:
+  `candidate is not an ancestor of refs/remotes/origin/main`.
