@@ -761,7 +761,7 @@ describe("createOpenClawCodingTools", () => {
     expect(toolNameList(tools)).toContain("message");
   });
 
-  it("admits only Backtrader readiness from an exact scheduled runtime cap", () => {
+  it("adds only Backtrader readiness to the minimal profile for an exact scheduled runtime cap", () => {
     const constructionPlan = {
       includeBaseCodingTools: false,
       includeShellTools: false,
@@ -780,21 +780,26 @@ describe("createOpenClawCodingTools", () => {
         ...params,
       });
 
-    expect(
-      toolNameList(
-        createRestrictedTools({
-          runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
-          scheduledToolPolicy,
-        }),
-      ),
-    ).toEqual([BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME]);
-    expect(
-      toolNameList(
-        createRestrictedTools({
-          runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
-        }),
-      ),
-    ).not.toContain(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME);
+    const baselineToolNames = toolNameList(
+      createRestrictedTools({
+        runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+      }),
+    );
+    expect(baselineToolNames).toEqual(["session_status"]);
+
+    const scheduledToolNames = toolNameList(
+      createRestrictedTools({
+        runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+        scheduledToolPolicy,
+      }),
+    );
+    expect(scheduledToolNames).toEqual([
+      BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
+      "session_status",
+    ]);
+    expect(scheduledToolNames.filter((name) => !baselineToolNames.includes(name))).toEqual([
+      BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
+    ]);
     expect(
       toolNameList(
         createRestrictedTools({ runtimeToolAllowlist: ["gateway"], scheduledToolPolicy }),
