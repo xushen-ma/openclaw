@@ -39,6 +39,7 @@ import { resolveWidgetPresentationForRun } from "./openclaw-tools.widget-present
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { createAgentsListTool } from "./tools/agents-list-tool.js";
 import { createAskUserTool } from "./tools/ask-user-tool.js";
+import { createBacktraderCore5DevReadinessTool } from "./tools/backtrader-core5-dev-readiness-tool.js";
 import type { AnyAgentTool } from "./tools/common.js";
 import { createComputerTool } from "./tools/computer-tool.js";
 import {
@@ -440,6 +441,7 @@ export function createOpenClawTools(options?: OpenClawToolsOptions): AnyAgentToo
           }),
         ]),
     ...collectPresentOpenClawTools([heartbeatTool]),
+    createBacktraderCore5DevReadinessTool(),
     createTtsTool({
       agentChannel: options?.agentChannel,
       config: resolvedConfig,

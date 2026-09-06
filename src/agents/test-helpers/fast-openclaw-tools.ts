@@ -4,6 +4,7 @@
  * Provides lightweight built-in tool stubs for inventory-heavy tests.
  */
 import { vi } from "vitest";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "../tools/backtrader-core5-dev-readiness-tool-name.js";
 import { stubTool } from "./fast-tool-stubs.js";
 
 function stubActionTool(name: string, actions: string[]) {
@@ -27,6 +28,7 @@ const coreTools = [
   stubActionTool("nodes", ["list", "invoke"]),
   stubActionTool("automations", ["schedule", "cancel"]),
   stubActionTool("message", ["send", "reply"]),
+  stubTool(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME),
   stubTool("heartbeat_respond"),
   stubActionTool("gateway", ["config.get", "config.schema.lookup"]),
   stubTool("openclaw"),

@@ -56,6 +56,7 @@ import {
 } from "./test-helpers/host-sandbox-fs-bridge.js";
 import { buildEmptyExplicitToolAllowlistError } from "./tool-allowlist-guard.js";
 import { DEFAULT_PLUGIN_TOOLS_ALLOWLIST_ENTRY, normalizeToolPolicyName } from "./tool-policy.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 import { replaceWithEffectiveCronCreatorToolAllowlist } from "./tools/cron-tool.js";
 import { getGatewayToolCallerIdentity } from "./tools/gateway-caller-context.js";
 
@@ -758,6 +759,47 @@ describe("createOpenClawCodingTools", () => {
     });
 
     expect(toolNameList(tools)).toContain("message");
+  });
+
+  it("admits only Backtrader readiness from an exact scheduled runtime cap", () => {
+    const constructionPlan = {
+      includeBaseCodingTools: false,
+      includeShellTools: false,
+      includeChannelTools: false,
+      includeOpenClawTools: true,
+      includePluginTools: false,
+    } as const;
+    const scheduledToolPolicy = { version: 1, mode: "trusted" } as const;
+    const createRestrictedTools = (params: {
+      runtimeToolAllowlist: string[];
+      scheduledToolPolicy?: typeof scheduledToolPolicy;
+    }) =>
+      createOpenClawCodingTools({
+        config: { tools: { profile: "minimal" } },
+        toolConstructionPlan: constructionPlan,
+        ...params,
+      });
+
+    expect(
+      toolNameList(
+        createRestrictedTools({
+          runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+          scheduledToolPolicy,
+        }),
+      ),
+    ).toEqual([BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME]);
+    expect(
+      toolNameList(
+        createRestrictedTools({
+          runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+        }),
+      ),
+    ).not.toContain(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME);
+    expect(
+      toolNameList(
+        createRestrictedTools({ runtimeToolAllowlist: ["gateway"], scheduledToolPolicy }),
+      ),
+    ).not.toContain("gateway");
   });
 
   it("preserves runtime-allowed message through local model lean filtering", () => {

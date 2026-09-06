@@ -24,6 +24,7 @@ import {
   DISMISS_TASK_TOOL_DISPLAY_SUMMARY,
 } from "./tool-description-presets.js";
 import { AUTOMATIONS_TOOL_NAME } from "./tools/automations-tool-name.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 
 /** Built-in tool profile ids exposed in config and UI. */
 export type ToolProfileId = "minimal" | "coding" | "messaging" | "full";
@@ -102,6 +103,13 @@ const CORE_TOOL_DEFINITIONS: CoreToolDefinition[] = [
     description: PROCESS_TOOL_DISPLAY_SUMMARY,
     sectionId: "runtime",
     profiles: ["coding"],
+  },
+  {
+    id: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
+    description: "Run the single read-only Backtrader Core5 dev readiness executable",
+    sectionId: "runtime",
+    profiles: [],
+    includeInOpenClawGroup: true,
   },
   {
     id: "code_execution",

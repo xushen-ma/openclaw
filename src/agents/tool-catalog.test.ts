@@ -3,7 +3,14 @@
  * Verifies built-in profile allowlists include expected core tool groups.
  */
 import { describe, expect, it } from "vitest";
-import { listCoreToolSections, resolveCoreToolProfilePolicy } from "./tool-catalog.js";
+import {
+  CORE_TOOL_GROUPS,
+  isKnownCoreToolId,
+  listCoreToolSections,
+  resolveCoreToolProfilePolicy,
+  resolveCoreToolProfiles,
+} from "./tool-catalog.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 
 function requireCoreToolProfilePolicy(profile: Parameters<typeof resolveCoreToolProfilePolicy>[0]) {
   const policy = resolveCoreToolProfilePolicy(profile);
@@ -22,6 +29,19 @@ function requirePolicyAllow(profile: Parameters<typeof resolveCoreToolProfilePol
 }
 
 describe("tool-catalog", () => {
+  it("catalogs Backtrader readiness without adding it to generic profiles", () => {
+    const runtime = listCoreToolSections().find((section) => section.id === "runtime");
+
+    expect(isKnownCoreToolId(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME)).toBe(true);
+    expect(resolveCoreToolProfiles(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME)).toEqual([]);
+    expect(CORE_TOOL_GROUPS["group:openclaw"]).toContain(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME);
+    expect(runtime?.tools).toContainEqual({
+      id: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
+      label: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
+      description: "Run the single read-only Backtrader Core5 dev readiness executable",
+    });
+  });
+
   it("lists agents_wait only for a Swarm-enabled catalog", () => {
     const ids = (config?: Parameters<typeof listCoreToolSections>[0]) =>
       listCoreToolSections(config).flatMap((section) => section.tools.map((tool) => tool.id));

@@ -5,6 +5,8 @@ import {
   type CronScheduledToolCallerOrigin,
   type CronScheduledToolPolicy,
 } from "../cron/scheduled-tool-policy.js";
+import { isRuntimeToolAllowed } from "./tool-policy-match.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 
 /** Trusted runtime context for a scheduled run with a server-stamped tool cap. */
 export type ScheduledToolPolicyContext = (
@@ -17,6 +19,27 @@ export type ScheduledToolPolicyContext = (
   /** Restrict-only policy for the rebuilt exec tool; absence keeps baseline exec. */
   execTarget?: { host: "gateway"; ask?: "always" };
 };
+
+/**
+ * Profile exception for the fixed Backtrader readiness entrypoint.
+ *
+ * The tool has no generic profile membership. It becomes profile-visible only
+ * when a server-stamped scheduled policy and that run's runtime cap both
+ * authorize its exact name; no other runtime-allowed core tool is promoted.
+ */
+export function resolveScheduledToolProfileAllowlist(params: {
+  scheduledToolPolicy?: ScheduledToolPolicyContext;
+  runtimeToolAllowlist?: string[];
+}): string[] {
+  if (
+    !params.scheduledToolPolicy ||
+    !params.runtimeToolAllowlist ||
+    !isRuntimeToolAllowed(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME, params.runtimeToolAllowlist)
+  ) {
+    return [];
+  }
+  return [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME];
+}
 
 /** Separates a scheduled creator's authorization identity from its delivery route. */
 export function resolveScheduledToolCallerContext(params: {

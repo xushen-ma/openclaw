@@ -91,6 +91,7 @@ import type { SandboxContext } from "./sandbox.js";
 import { resolveSandboxFileIdentity } from "./sandbox/file-mutation-identity.js";
 import {
   resolveScheduledToolCallerContext,
+  resolveScheduledToolProfileAllowlist,
   type ScheduledToolPolicyContext,
 } from "./scheduled-tool-policy.js";
 import {
@@ -511,6 +512,10 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     ...(options && messageToolOwnsVisibleReply(options) ? ["message"] : []),
     ...(runtimeToolAllowlistIncludesMessage ? ["message"] : []),
     ...(forceHeartbeatTool ? [HEARTBEAT_RESPONSE_TOOL_NAME] : []),
+    ...resolveScheduledToolProfileAllowlist({
+      scheduledToolPolicy: options?.scheduledToolPolicy,
+      runtimeToolAllowlist: options?.runtimeToolAllowlist,
+    }),
     ...toolSearchControlAllowlist,
   ];
   const conversationToolPolicies = resolveConversationToolPolicies({

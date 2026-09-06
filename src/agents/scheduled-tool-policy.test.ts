@@ -1,8 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
   resolveScheduledToolCallerContext,
+  resolveScheduledToolProfileAllowlist,
   resolveScheduledToolPolicyContext,
 } from "./scheduled-tool-policy.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
+
+describe("resolveScheduledToolProfileAllowlist", () => {
+  const scheduledToolPolicy = { version: 1, mode: "trusted" } as const;
+
+  it("admits only Backtrader readiness when scheduled authority and runtime cap agree", () => {
+    expect(
+      resolveScheduledToolProfileAllowlist({
+        scheduledToolPolicy,
+        runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+      }),
+    ).toEqual([BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME]);
+
+    expect(
+      resolveScheduledToolProfileAllowlist({
+        runtimeToolAllowlist: [BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME],
+      }),
+    ).toEqual([]);
+    expect(resolveScheduledToolProfileAllowlist({ scheduledToolPolicy })).toEqual([]);
+    expect(
+      resolveScheduledToolProfileAllowlist({
+        scheduledToolPolicy,
+        runtimeToolAllowlist: ["gateway"],
+      }),
+    ).toEqual([]);
+  });
+});
 
 describe("resolveScheduledToolPolicyContext", () => {
   it("requires both a persisted cap and valid server provenance", () => {

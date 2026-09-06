@@ -3,6 +3,7 @@
  */
 
 import { AUTOMATIONS_TOOL_NAME } from "./tools/automations-tool-name.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 
 export type CoreToolFactoryFamily = "base-coding" | "shell" | "openclaw";
 
@@ -22,6 +23,7 @@ const CORE_TOOL_FACTORY_DESCRIPTORS = [
   // Static factory identity only; runtime and tools.catalog apply the Swarm config gate.
   { name: "agents_wait", family: "openclaw" },
   { name: "ask_user", family: "openclaw" },
+  { name: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME, family: "openclaw" },
   { name: "openclaw", family: "openclaw" },
   { name: "computer", family: "openclaw" },
   { name: "conversations_list", family: "openclaw" },

@@ -335,6 +335,26 @@ describe("resolveEmbeddedAttemptToolConstructionPlan", () => {
     );
   });
 
+  it("materializes the Backtrader Core5 readiness tool through the OpenClaw factory", () => {
+    expectConstructionPlan(
+      resolveEmbeddedAttemptToolConstructionPlan({
+        toolsAllow: ["backtrader_core5_dev_readiness"],
+      }),
+      {
+        constructTools: true,
+        includeCoreTools: true,
+        runtimeToolAllowlist: ["backtrader_core5_dev_readiness"],
+        coding: {
+          includeBaseCodingTools: false,
+          includeShellTools: false,
+          includeChannelTools: false,
+          includeOpenClawTools: true,
+          includePluginTools: false,
+        },
+      },
+    );
+  });
+
   it("limits known core allowlists to the matching local families", () => {
     expectConstructionPlan(resolveEmbeddedAttemptToolConstructionPlan({ toolsAllow: ["read"] }), {
       constructTools: true,

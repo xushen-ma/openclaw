@@ -23,6 +23,7 @@ import {
   shouldIncludeProgressCardToolForOpenClawTools,
   shouldIncludeSecretsToolForOpenClawTools,
 } from "./openclaw-tools.registration.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./tools/backtrader-core5-dev-readiness-tool-name.js";
 import { textResult, type AnyAgentTool } from "./tools/common.js";
 import { createPdfTool } from "./tools/pdf-tool.js";
 
@@ -103,6 +104,14 @@ describe("openclaw-tools progress_card gating", () => {
     expect(
       emittedNames.filter((name) => resolveCoreToolFactoryFamily(name) !== "openclaw"),
     ).toEqual([]);
+  });
+
+  it("registers the Backtrader Core5 readiness tool in the OpenClaw-owned surface", () => {
+    expect(
+      createFastToolNames({
+        config: {} as OpenClawConfig,
+      }),
+    ).toContain(BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME);
   });
 
   it("enables progress_card by default", () => {
