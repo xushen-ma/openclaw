@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getMatrixScopedEnvVarNames } from "../env-vars.js";
 import type { CoreConfig } from "../types.js";
+import { resolveMatrixAccountAllowlistConfig } from "./account-config.js";
 import {
   listMatrixAccountIds,
   resolveConfiguredMatrixBotUserIds,
@@ -585,6 +586,171 @@ describe("resolveMatrixAccount", () => {
     expect(account.config.actions).toEqual({
       reactions: true,
       messages: false,
+    });
+  });
+
+  it("inherits only Matrix policy defaults into named accounts and honors explicit empty overrides", () => {
+    const cfg: CoreConfig = {
+      channels: {
+        matrix: {
+          name: "Shared Matrix",
+          enabled: true,
+          homeserver: "https://root.example.org",
+          accessToken: "root-token",
+          dm: {
+            policy: "pairing",
+            allowFrom: ["@root-owner:example.org"],
+          },
+          groupPolicy: "allowlist",
+          groupAllowFrom: ["@root-room-owner:example.org"],
+          groups: {
+            "!ops-root-room:example.org": {
+              account: "ops",
+              requireMention: true,
+            },
+            "!default-root-room:example.org": {
+              account: "default",
+              enabled: true,
+            },
+            "!shared-root-room:example.org": {
+              enabled: true,
+            },
+          },
+          rooms: {
+            "!ops-root-legacy-room:example.org": {
+              account: "ops",
+              skills: ["root-skill"],
+            },
+          },
+          accounts: {
+            default: {
+              name: "Default Identity",
+              enabled: false,
+              homeserver: "https://default.example.org",
+              userId: "@default:example.org",
+              accessToken: "default-token",
+              password: "default-password",
+              deviceId: "DEFAULTDEVICE",
+              deviceName: "Default Device",
+              avatarUrl: "mxc://example.org/default-avatar",
+              initialSyncLimit: 1,
+              dm: {
+                enabled: false,
+                policy: "disabled",
+                allowFrom: ["@default-owner:example.org"],
+              },
+              groupPolicy: "disabled",
+              groupAllowFrom: ["@default-room-owner:example.org"],
+              groups: {
+                "!ops-root-room:example.org": {
+                  autoReply: true,
+                },
+                "!default-policy-room:example.org": {
+                  requireMention: true,
+                  tools: { allow: ["read"] },
+                },
+              },
+              rooms: {
+                "!default-policy-legacy-room:example.org": {
+                  skills: ["default-skill"],
+                },
+              },
+            },
+            ops: {
+              accessToken: "ops-token",
+              dm: {
+                threadReplies: "always",
+              },
+              groups: {
+                "!default-policy-room:example.org": {
+                  systemPrompt: "Ops room",
+                },
+              },
+              rooms: {
+                "!ops-policy-legacy-room:example.org": {
+                  enabled: true,
+                },
+              },
+            },
+            muted: {
+              accessToken: "muted-token",
+              dm: { allowFrom: [] },
+              groupAllowFrom: [],
+              groups: {},
+              rooms: {},
+            },
+          },
+        },
+      },
+    };
+
+    const account = resolveMatrixAccount({ cfg, accountId: "ops" });
+
+    expect(account.config.dm).toEqual({
+      policy: "pairing",
+      allowFrom: ["@default-owner:example.org"],
+      threadReplies: "always",
+    });
+    expect(account.config.groupPolicy).toBe("allowlist");
+    expect(account.config.groupAllowFrom).toEqual(["@default-room-owner:example.org"]);
+    expect(account.config.groups).toEqual({
+      "!ops-root-room:example.org": {
+        account: "ops",
+        requireMention: true,
+        autoReply: true,
+      },
+      "!shared-root-room:example.org": {
+        enabled: true,
+      },
+      "!default-policy-room:example.org": {
+        requireMention: true,
+        tools: { allow: ["read"] },
+        systemPrompt: "Ops room",
+      },
+    });
+    expect(account.config.rooms).toEqual({
+      "!ops-root-legacy-room:example.org": {
+        account: "ops",
+        skills: ["root-skill"],
+      },
+      "!default-policy-legacy-room:example.org": {
+        skills: ["default-skill"],
+      },
+      "!ops-policy-legacy-room:example.org": {
+        enabled: true,
+      },
+    });
+    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "ops" })).toEqual({
+      dmAllowFrom: ["@default-owner:example.org"],
+      groupAllowFrom: ["@default-room-owner:example.org"],
+    });
+
+    expect(account).toMatchObject({
+      accountId: "ops",
+      name: "Shared Matrix",
+      enabled: true,
+      configured: true,
+      homeserver: "https://root.example.org",
+      userId: undefined,
+    });
+    expect(account.config).toMatchObject({
+      accessToken: "ops-token",
+    });
+    expect(account.config.userId).toBeUndefined();
+    expect(account.config.password).toBeUndefined();
+    expect(account.config.deviceId).toBeUndefined();
+    expect(account.config.deviceName).toBeUndefined();
+    expect(account.config.avatarUrl).toBeUndefined();
+    expect(account.config.initialSyncLimit).toBeUndefined();
+
+    const muted = resolveMatrixAccount({ cfg, accountId: "muted" });
+    expect(muted.config.dm?.allowFrom).toEqual([]);
+    expect(muted.config.groupAllowFrom).toEqual([]);
+    expect(muted.config.groups).toBeUndefined();
+    expect(muted.config.rooms).toBeUndefined();
+    expect(resolveMatrixAccountAllowlistConfig({ cfg, accountId: "muted" })).toEqual({
+      dmAllowFrom: [],
+      groupAllowFrom: [],
     });
   });
 

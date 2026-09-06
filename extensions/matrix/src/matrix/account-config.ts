@@ -85,6 +85,15 @@ export function findMatrixAccountConfig(
   );
 }
 
+function resolveMatrixAccountDefaultConfig(
+  cfg: CoreConfig,
+  accountId: string,
+): MatrixAccountConfig | undefined {
+  return accountId === DEFAULT_ACCOUNT_ID
+    ? undefined
+    : findMatrixAccountConfig(cfg, DEFAULT_ACCOUNT_ID);
+}
+
 export function hasExplicitMatrixAccountConfig(cfg: CoreConfig, accountId: string): boolean {
   const normalized = normalizeAccountId(accountId);
   if (findMatrixAccountConfig(cfg, normalized)) {
@@ -114,8 +123,21 @@ export function resolveMatrixAccountConfig(params: {
 }): MatrixConfig {
   const accountId = normalizeAccountId(params.accountId);
   const base = resolveMatrixBaseConfig(params.cfg);
+  const accountDefaultConfig = resolveMatrixAccountDefaultConfig(params.cfg, accountId);
+  const defaultDmAllowFrom = accountDefaultConfig?.dm?.allowFrom;
+  const policyBase = accountDefaultConfig
+    ? {
+        ...base,
+        ...(defaultDmAllowFrom !== undefined
+          ? { dm: { ...base.dm, allowFrom: defaultDmAllowFrom } }
+          : {}),
+        ...(accountDefaultConfig.groupAllowFrom !== undefined
+          ? { groupAllowFrom: accountDefaultConfig.groupAllowFrom }
+          : {}),
+      }
+    : base;
   const merged = resolveMergedAccountConfig<MatrixConfig>({
-    channelConfig: base,
+    channelConfig: policyBase,
     accounts: params.cfg.channels?.matrix?.accounts as
       | Record<string, Partial<MatrixConfig>>
       | undefined,
@@ -125,18 +147,26 @@ export function resolveMatrixAccountConfig(params: {
   });
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
   const groups = mergeMatrixRoomEntries(
-    selectInheritedMatrixRoomEntries({
-      entries: base.groups,
-      accountId,
-    }),
+    mergeMatrixRoomEntries(
+      selectInheritedMatrixRoomEntries({
+        entries: base.groups,
+        accountId,
+      }),
+      accountDefaultConfig?.groups,
+      false,
+    ),
     accountConfig?.groups,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "groups")),
   );
   const rooms = mergeMatrixRoomEntries(
-    selectInheritedMatrixRoomEntries({
-      entries: base.rooms,
-      accountId,
-    }),
+    mergeMatrixRoomEntries(
+      selectInheritedMatrixRoomEntries({
+        entries: base.rooms,
+        accountId,
+      }),
+      accountDefaultConfig?.rooms,
+      false,
+    ),
     accountConfig?.rooms,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "rooms")),
   );
@@ -158,15 +188,16 @@ export function resolveMatrixAccountAllowlistConfig(params: {
 } {
   const accountId = normalizeAccountId(params.accountId);
   const base = resolveMatrixBaseConfig(params.cfg);
+  const accountDefaultConfig = resolveMatrixAccountDefaultConfig(params.cfg, accountId);
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
   const accountDm = accountConfig?.dm;
 
-  let dmAllowFrom = base.dm?.allowFrom;
+  let dmAllowFrom = accountDefaultConfig?.dm?.allowFrom ?? base.dm?.allowFrom;
   if (accountDm && Object.hasOwn(accountDm, "allowFrom")) {
     dmAllowFrom = accountDm.allowFrom;
   }
 
-  let groupAllowFrom = base.groupAllowFrom;
+  let groupAllowFrom = accountDefaultConfig?.groupAllowFrom ?? base.groupAllowFrom;
   if (accountConfig && Object.hasOwn(accountConfig, "groupAllowFrom")) {
     groupAllowFrom = accountConfig.groupAllowFrom;
   }
