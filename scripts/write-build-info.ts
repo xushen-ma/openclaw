@@ -8,6 +8,7 @@ import { isDirectRunUrl } from "./lib/direct-run.mjs";
 
 const defaultRootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const FULL_GIT_COMMIT_RE = /^[0-9a-f]{40}$/iu;
+const GOVERNED_RELEASE_TAG_RE = /^v[0-9]{4}\.[0-9]+\.[0-9]+(?:\.[0-9]+)?-x\.[1-9][0-9]*$/u;
 const UTC_ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u;
 
 type ExecFileSync = (
@@ -22,6 +23,7 @@ type ExecFileSync = (
 
 export type BuildInfo = {
   version: string | null;
+  releaseTag: string | null;
   commit: string | null;
   builtAt: string;
   buildId: string;
@@ -89,17 +91,37 @@ function resolveGitCommit(rootDir: string, execFileSyncImpl: ExecFileSync): stri
   return normalizeBuildCommit(raw, "git rev-parse HEAD");
 }
 
+function resolveHeadReleaseTag(rootDir: string, execFileSyncImpl: ExecFileSync): string | null {
+  try {
+    const raw = execFileSyncImpl(
+      "git",
+      ["tag", "--points-at", "HEAD", "--list", "--sort=-version:refname"],
+      {
+        cwd: rootDir,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).toString();
+    return (
+      raw
+        .split(/\r?\n/u)
+        .map((tag) => tag.trim())
+        .find((tag) => GOVERNED_RELEASE_TAG_RE.test(tag)) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
 export function resolveBuildInfo(options: ResolveBuildInfoOptions = {}): BuildInfo {
   const rootDir = options.rootDir ?? defaultRootDir;
   const env = options.env ?? process.env;
+  const execFileSyncImpl = options.execFileSync ?? execFileSync;
   const explicitCommit = env.GIT_COMMIT?.trim();
   const explicitSha = env.GIT_SHA?.trim();
   const githubSha = env.GITHUB_SHA?.trim();
   const explicitTimestamp = env.OPENCLAW_BUILD_TIMESTAMP?.trim();
-  const checkedOutCommit =
-    explicitCommit || explicitSha
-      ? null
-      : resolveGitCommit(rootDir, options.execFileSync ?? execFileSync);
+  const checkedOutCommit = resolveGitCommit(rootDir, execFileSyncImpl);
   // GITHUB_SHA names the workflow invocation and can differ from a checked-out tag.
   const commit = explicitCommit
     ? normalizeBuildCommit(explicitCommit)
@@ -113,8 +135,15 @@ export function resolveBuildInfo(options: ResolveBuildInfoOptions = {}): BuildIn
   if (releaseFlag && releaseFlag !== "1") {
     throw new Error("OPENCLAW_CONTROL_UI_RELEASE_BUILD must be 1 when set");
   }
+  const version = readPackageVersion(rootDir);
+  const releaseTag =
+    commit !== null && checkedOutCommit === commit
+      ? resolveHeadReleaseTag(rootDir, execFileSyncImpl)
+      : null;
+  // Display/runtime version remains package-stable; the governed tag only
+  // differentiates the immutable artifact identity shared with the Control UI.
   const buildId = normalizeControlUiBuildInfo({
-    version: readPackageVersion(rootDir),
+    version: releaseTag ?? version,
     commit,
     builtAt,
     release: releaseFlag === "1",
@@ -122,7 +151,8 @@ export function resolveBuildInfo(options: ResolveBuildInfoOptions = {}): BuildIn
   }).buildId;
 
   return {
-    version: readPackageVersion(rootDir),
+    version,
+    releaseTag,
     commit,
     builtAt,
     buildId,
