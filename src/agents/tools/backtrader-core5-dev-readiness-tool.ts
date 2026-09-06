@@ -8,6 +8,7 @@ import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_pro
 import path from "node:path";
 import { promisify } from "node:util";
 import { Type } from "typebox";
+import { isRecord } from "../../utils.js";
 import { optionalStringEnum } from "../schema/string-enum.js";
 import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./backtrader-core5-dev-readiness-tool-name.js";
 import {
@@ -52,6 +53,7 @@ export type BacktraderCore5DevReadinessToolDependencies = {
 };
 
 const defaultRunFile: RunFile = async (file, args, options) =>
+  // SAFETY: execFile with a string encoding resolves with string stdout and stderr fields.
   (await execFileAsync(file, [...args], options)) as RunFileResult;
 
 function resolveTimeoutMs(raw: number | undefined): number {
@@ -89,10 +91,9 @@ export function createBacktraderCore5DevReadinessTool(
     parameters: BacktraderCore5DevReadinessSchema,
     displaySummary: "Run Backtrader Core5 dev readiness script.",
     async execute(_toolCallId, rawParams, signal) {
-      const params =
-        rawParams && typeof rawParams === "object" ? (rawParams as Record<string, unknown>) : {};
+      const params = isRecord(rawParams) ? rawParams : {};
       const report = readToolStringParam(params, "report") ?? "status";
-      if (!BACKTRADER_CORE5_REPORTS.includes(report as (typeof BACKTRADER_CORE5_REPORTS)[number])) {
+      if (!BACKTRADER_CORE5_REPORTS.some((candidate) => candidate === report)) {
         throw new ToolInputError("report must be status, ny-preopen, or daily-paper");
       }
       const timeoutMs = resolveTimeoutMs(
@@ -130,13 +131,9 @@ export function createBacktraderCore5DevReadinessTool(
           stderr: result.stderr.trim() || undefined,
         });
       } catch (cause) {
-        const error = cause as NodeJS.ErrnoException & {
-          stdout?: string;
-          stderr?: string;
-          code?: unknown;
-          signal?: unknown;
-          killed?: boolean;
-        };
+        const error = isRecord(cause) ? cause : {};
+        const stdout = typeof error.stdout === "string" ? error.stdout : "";
+        const stderr = typeof error.stderr === "string" ? error.stderr : "";
         return jsonResult({
           ok: false,
           report,
@@ -144,10 +141,10 @@ export function createBacktraderCore5DevReadinessTool(
           durationMs: Date.now() - startedAt,
           code: error.code,
           signal: error.signal,
-          killed: error.killed,
-          error: error.message,
-          stdout: parseStdout(error.stdout ?? ""),
-          stderr: error.stderr?.trim() || undefined,
+          killed: typeof error.killed === "boolean" ? error.killed : undefined,
+          error: cause instanceof Error ? cause.message : String(cause),
+          stdout: parseStdout(stdout),
+          stderr: stderr.trim() || undefined,
         });
       }
     },
