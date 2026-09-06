@@ -90,8 +90,9 @@ const CONTEXT_FILE_ORDER = new Map<string, number>([
   ["identity.md", 30],
   ["user.md", 40],
   ["tools.md", 50],
-  ["bootstrap.md", 60],
-  ["memory.md", 70],
+  ["team.md", 60],
+  ["bootstrap.md", 70],
+  ["memory.md", 80],
 ]);
 
 const DEFAULT_HEARTBEAT_PROMPT_CONTEXT_BLOCK =

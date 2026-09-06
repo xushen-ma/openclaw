@@ -61,6 +61,7 @@ export {
 export const DEFAULT_AGENTS_FILENAME = "AGENTS.md";
 export const DEFAULT_SOUL_FILENAME = "SOUL.md";
 export const DEFAULT_TOOLS_FILENAME = "TOOLS.md";
+export const DEFAULT_TEAM_FILENAME = "TEAM.md";
 export const DEFAULT_IDENTITY_FILENAME = "IDENTITY.md";
 export const DEFAULT_USER_FILENAME = "USER.md";
 export const DEFAULT_BOOTSTRAP_FILENAME = "BOOTSTRAP.md";
@@ -250,6 +251,7 @@ export const WORKSPACE_BOOTSTRAP_FILENAMES = [
   DEFAULT_SOUL_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_USER_FILENAME,
+  DEFAULT_TEAM_FILENAME,
   DEFAULT_BOOTSTRAP_FILENAME,
   DEFAULT_MEMORY_FILENAME,
 ] as const;
@@ -292,11 +294,15 @@ const OPTIONAL_BOOTSTRAP_FILENAMES: ReadonlySet<string> = new Set([
 
 /**
  * Bootstrap files whose absence is a normal workspace state rather than a fault:
- * the optional profile files, plus MEMORY.md which only appears once memory is
- * written. Editors should offer these for creation instead of flagging them.
+ * the optional profile files, TEAM.md, plus MEMORY.md which only appears once
+ * memory is written. Editors should offer these for creation instead of flagging them.
  */
 export function isExpectedAbsentBootstrapFile(name: string): boolean {
-  return OPTIONAL_BOOTSTRAP_FILENAMES.has(name) || name === DEFAULT_MEMORY_FILENAME;
+  return (
+    OPTIONAL_BOOTSTRAP_FILENAMES.has(name) ||
+    name === DEFAULT_TEAM_FILENAME ||
+    name === DEFAULT_MEMORY_FILENAME
+  );
 }
 
 export const WORKSPACE_VANISHED_ERROR_CODE = "WORKSPACE_VANISHED";
@@ -1271,6 +1277,10 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
       filePath: path.join(resolvedDir, DEFAULT_USER_FILENAME),
     },
     {
+      name: DEFAULT_TEAM_FILENAME,
+      filePath: path.join(resolvedDir, DEFAULT_TEAM_FILENAME),
+    },
+    {
       name: DEFAULT_BOOTSTRAP_FILENAME,
       filePath: path.join(resolvedDir, DEFAULT_BOOTSTRAP_FILENAME),
     },
@@ -1283,7 +1293,9 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
   const result: WorkspaceBootstrapFile[] = [];
   for (const entry of entries) {
     if (
-      (entry.name === DEFAULT_MEMORY_FILENAME || entry.name === DEFAULT_USER_FILENAME) &&
+      (entry.name === DEFAULT_MEMORY_FILENAME ||
+        entry.name === DEFAULT_USER_FILENAME ||
+        entry.name === DEFAULT_TEAM_FILENAME) &&
       !(await exactWorkspaceEntryExists(resolvedDir, entry.name))
     ) {
       continue;
@@ -1327,13 +1339,14 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
   return result;
 }
 
-const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set([DEFAULT_AGENTS_FILENAME]);
+const SUBAGENT_BOOTSTRAP_ALLOWLIST = new Set([DEFAULT_AGENTS_FILENAME, DEFAULT_TEAM_FILENAME]);
 
 const CRON_BOOTSTRAP_ALLOWLIST = new Set([
   DEFAULT_AGENTS_FILENAME,
   DEFAULT_SOUL_FILENAME,
   DEFAULT_IDENTITY_FILENAME,
   DEFAULT_USER_FILENAME,
+  DEFAULT_TEAM_FILENAME,
 ]);
 
 type BootstrapSessionContext = {

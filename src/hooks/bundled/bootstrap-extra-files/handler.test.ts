@@ -52,29 +52,30 @@ async function createBootstrapContext(params: {
 }
 
 describe("bootstrap-extra-files hook", () => {
-  it("appends extra bootstrap files from configured patterns", async () => {
-    const tempDir = await makeTempWorkspace("openclaw-bootstrap-extra-");
-    const extraDir = path.join(tempDir, "packages", "core");
-    await fs.mkdir(extraDir, { recursive: true });
-    await fs.writeFile(path.join(extraDir, "AGENTS.md"), "extra agents", "utf-8");
+  it.each(["AGENTS.md", "TEAM.md"])(
+    "appends recognized %s files from configured patterns",
+    async (fileName) => {
+      const tempDir = await makeTempWorkspace("openclaw-bootstrap-extra-");
+      const extraDir = path.join(tempDir, "packages", "core");
+      await fs.mkdir(extraDir, { recursive: true });
+      await fs.writeFile(path.join(extraDir, fileName), "extra context", "utf-8");
 
-    const cfg = createBootstrapExtraConfig(["packages/*/AGENTS.md"]);
-    const context = await createBootstrapContext({
-      workspaceDir: tempDir,
-      cfg,
-      sessionKey: "agent:main:main",
-      rootFiles: [{ name: "AGENTS.md", content: "root agents" }],
-    });
+      const cfg = createBootstrapExtraConfig([`packages/*/${fileName}`]);
+      const context = await createBootstrapContext({
+        workspaceDir: tempDir,
+        cfg,
+        sessionKey: "agent:main:main",
+        rootFiles: [{ name: "AGENTS.md", content: "root agents" }],
+      });
 
-    const event = createHookEvent("agent", "bootstrap", "agent:main:main", context);
-    await handler(event);
+      const event = createHookEvent("agent", "bootstrap", "agent:main:main", context);
+      await handler(event);
 
-    const injected = context.bootstrapFiles.filter((f) => f.name === "AGENTS.md");
-    expect(injected).toHaveLength(2);
-    expect(injected.map((f) => path.relative(tempDir, f.path))).toContain(
-      path.join("packages", "core", "AGENTS.md"),
-    );
-  });
+      expect(context.bootstrapFiles.map((file) => path.relative(tempDir, file.path))).toContain(
+        path.join("packages", "core", fileName),
+      );
+    },
+  );
 
   it("appends configured nested memory without applying session policy", async () => {
     const tempDir = await makeTempWorkspace("openclaw-bootstrap-extra-memory-");

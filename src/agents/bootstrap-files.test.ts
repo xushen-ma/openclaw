@@ -458,12 +458,14 @@ describe("resolveBootstrapFilesForRun", () => {
   it("keeps MEMORY.md for direct sessions", async () => {
     const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-direct-");
     await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "private memory", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "TEAM.md"), "fleet rules", "utf8");
 
     const files = await resolveBootstrapFilesForRun({
       workspaceDir,
       sessionKey: "agent:main:discord:direct:user-1",
     });
 
+    expect(files.map((file) => file.name)).toContain("TEAM.md");
     expect(files.map((file) => file.name)).toContain("MEMORY.md");
   });
 
@@ -472,6 +474,7 @@ describe("resolveBootstrapFilesForRun", () => {
     async (chatType) => {
       const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-shared-");
       await fs.writeFile(path.join(workspaceDir, "MEMORY.md"), "private memory", "utf8");
+      await fs.writeFile(path.join(workspaceDir, "TEAM.md"), "fleet rules", "utf8");
 
       const files = await resolveBootstrapFilesForRun({
         workspaceDir,
@@ -479,6 +482,7 @@ describe("resolveBootstrapFilesForRun", () => {
         chatType,
       });
 
+      expect(files.map((file) => file.name)).toContain("TEAM.md");
       expect(files.map((file) => file.name)).not.toContain("MEMORY.md");
     },
   );
@@ -600,14 +604,14 @@ describe("resolveBootstrapFilesForRun", () => {
     {
       mode: "subagent",
       sessionKey: "agent:main:subagent:worker",
-      relabeledName: "AGENTS.md",
-      expectedNames: ["AGENTS.md"],
+      relabeledName: "TEAM.md",
+      expectedNames: ["AGENTS.md", "TEAM.md"],
     },
     {
       mode: "cron",
       sessionKey: "agent:main:cron:daily:run:run-1",
       relabeledName: "SOUL.md",
-      expectedNames: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"],
+      expectedNames: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TEAM.md"],
     },
   ] as const)(
     "rejects loader aliases to root memory relabeled under the $mode allowlist",
@@ -629,6 +633,7 @@ describe("resolveBootstrapFilesForRun", () => {
           ["SOUL.md", "persona"],
           ["IDENTITY.md", "identity"],
           ["USER.md", "user profile"],
+          ["TEAM.md", "fleet rules"],
           ["MEMORY.md", "memory"],
           ["HEARTBEAT.md", "heartbeat"],
           ["BOOTSTRAP.md", "setup"],

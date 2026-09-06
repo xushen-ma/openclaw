@@ -50,4 +50,4 @@ workspace root.
 
 All paths are resolved from the workspace and must stay inside it (including realpath checks).
 Only recognized bootstrap basenames are loaded (`AGENTS.md`, `SOUL.md`,
-`IDENTITY.md`, `USER.md`, `BOOTSTRAP.md`, `MEMORY.md`).
+`IDENTITY.md`, `USER.md`, `TEAM.md`, `BOOTSTRAP.md`, `MEMORY.md`).

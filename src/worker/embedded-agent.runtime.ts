@@ -27,7 +27,11 @@ import { SessionManager } from "../agents/sessions/session-manager.js";
 import { SettingsManager } from "../agents/sessions/settings-manager.js";
 import { resolveToolLoopDetectionConfig } from "../agents/tool-loop-detection-config.js";
 import { wrapToolWithGatewayCallerIdentity } from "../agents/tools/gateway-caller-context.js";
-import { DEFAULT_AGENTS_FILENAME, loadWorkspaceBootstrapFiles } from "../agents/workspace.js";
+import {
+  DEFAULT_AGENTS_FILENAME,
+  DEFAULT_TEAM_FILENAME,
+  loadWorkspaceBootstrapFiles,
+} from "../agents/workspace.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { AssistantMessage, AssistantMessageEventStreamLike } from "../llm/types.js";
 import { materializeSkillResources } from "../skills/runtime/resources.js";
@@ -165,7 +169,7 @@ async function runWorkerEmbeddedTurnWithResources(
     retry: { enabled: false },
   });
   const bootstrapFiles = (await loadWorkspaceBootstrapFiles(params.cwd)).filter(
-    (file) => file.name === DEFAULT_AGENTS_FILENAME,
+    (file) => file.name === DEFAULT_AGENTS_FILENAME || file.name === DEFAULT_TEAM_FILENAME,
   );
   const contextFiles = buildBootstrapContextForFiles(bootstrapFiles, {});
   const resourceLoader = createEmbeddedAgentResourceLoader({

@@ -4584,11 +4584,13 @@ describe("runCodexAppServerAttempt", () => {
     const soulGuidance = "Soul voice goes here.";
     const identityGuidance = "Identity guidance goes here.";
     const userProfile = "User profile goes here.";
+    const teamGuidance = "Team mission goes here.";
     await fs.mkdir(workspaceDir, { recursive: true });
     await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), agentsGuidance);
     await fs.writeFile(path.join(workspaceDir, "SOUL.md"), soulGuidance);
     await fs.writeFile(path.join(workspaceDir, "IDENTITY.md"), identityGuidance);
     await fs.writeFile(path.join(workspaceDir, "USER.md"), userProfile);
+    await fs.writeFile(path.join(workspaceDir, "TEAM.md"), teamGuidance);
     const harness = createStartedThreadHarness();
     const params = createParams(sessionFile, workspaceDir);
     setAgentWorkspaceForTest(params, workspaceDir);
@@ -4609,6 +4611,7 @@ describe("runCodexAppServerAttempt", () => {
     expect(threadStartParams.developerInstructions).not.toContain(soulGuidance);
     expect(threadStartParams.developerInstructions).not.toContain(identityGuidance);
     expect(threadStartParams.developerInstructions).not.toContain(userProfile);
+    expect(threadStartParams.developerInstructions).not.toContain(teamGuidance);
     const turnStart = harness.requests.find((request) => request.method === "turn/start");
     const turnStartParams = turnStart?.params as {
       input?: Array<{ text?: string }>;
@@ -4626,9 +4629,14 @@ describe("runCodexAppServerAttempt", () => {
     expect(collaborationInstructions).toContain(soulGuidance);
     expect(collaborationInstructions).toContain(identityGuidance);
     expect(collaborationInstructions).toContain(userProfile);
+    expect(collaborationInstructions).toContain(teamGuidance);
+    expect(collaborationInstructions.indexOf(userProfile)).toBeLessThan(
+      collaborationInstructions.indexOf(teamGuidance),
+    );
     const inputText = turnStartParams.input?.[0]?.text ?? "";
     expect(inputText).toBe("hello");
     expect(inputText).not.toContain(agentsGuidance);
+    expect(inputText).not.toContain(teamGuidance);
     expect(result.systemPromptReport?.systemPrompt.chars).toBe(
       [threadStartParams.developerInstructions ?? "", collaborationInstructions].join("\n\n")
         .length,

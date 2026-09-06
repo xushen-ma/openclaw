@@ -1018,13 +1018,21 @@ describe("worker runtime", () => {
   it("runs a full embedded turn through remote inference, live events, and transcript commits", async () => {
     const { gateway, workspaceDir, launch } = await setup();
     await writeFile(path.join(workspaceDir, "AGENTS.md"), "worker-bootstrap-marker", "utf8");
+    await writeFile(path.join(workspaceDir, "TEAM.md"), "worker-team-marker", "utf8");
+    await writeFile(path.join(workspaceDir, "MEMORY.md"), "private-memory-marker", "utf8");
 
     const result = await runWorkerDescriptor(launch);
 
     expect(result.status).toBe("completed");
     expect(gateway.inferenceRequests).toHaveLength(1);
     expect(gateway.inferenceRequests[0]?.modelRef).toEqual(MODEL_REF);
-    expect(gateway.inferenceRequests[0]?.context.systemPrompt).toContain("worker-bootstrap-marker");
+    const systemPrompt = gateway.inferenceRequests[0]?.context.systemPrompt ?? "";
+    expect(systemPrompt).toContain("worker-bootstrap-marker");
+    expect(systemPrompt).toContain("worker-team-marker");
+    expect(systemPrompt.indexOf("worker-bootstrap-marker")).toBeLessThan(
+      systemPrompt.indexOf("worker-team-marker"),
+    );
+    expect(systemPrompt).not.toContain("private-memory-marker");
     const toolNames = gateway.inferenceRequests[0]?.context.tools?.map((tool) => tool.name) ?? [];
     expect(toolNames).toHaveLength(6);
     const terminalIndex = gateway.applicationOrder.findIndex(

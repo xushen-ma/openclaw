@@ -17,9 +17,31 @@ const mockFiles: WorkspaceBootstrapFile[] = [
   { name: "SOUL.md", path: "/w/SOUL.md", content: "", missing: false },
   { name: "IDENTITY.md", path: "/w/IDENTITY.md", content: "", missing: false },
   { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
+  { name: "TEAM.md", path: "/w/TEAM.md", content: "", missing: false },
   { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
   { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },
 ];
+
+describe("loadWorkspaceBootstrapFiles", () => {
+  it("loads TEAM.md after user context and before bootstrap context", async () => {
+    const tempDir = await makeTempWorkspace("openclaw-workspace-team-");
+    await fs.writeFile(path.join(tempDir, "USER.md"), "user", "utf8");
+    await fs.writeFile(path.join(tempDir, "TEAM.md"), "fleet", "utf8");
+
+    const files = await loadWorkspaceBootstrapFiles(tempDir);
+    const names = files.map((file) => file.name);
+
+    expect(names.slice(names.indexOf("USER.md"), names.indexOf("BOOTSTRAP.md") + 1)).toStrictEqual([
+      "USER.md",
+      "TEAM.md",
+      "BOOTSTRAP.md",
+    ]);
+    expect(files.find((file) => file.name === "TEAM.md")).toMatchObject({
+      content: "fleet",
+      missing: false,
+    });
+  });
+});
 
 describe("workspace bootstrap source identity", () => {
   it("carries canonical source identity through extra-file conversion", async () => {

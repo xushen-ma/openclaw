@@ -1498,6 +1498,20 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Bravo");
   });
 
+  it("orders TEAM.md after TOOLS.md and before bootstrap context", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      contextFiles: [
+        { path: "BOOTSTRAP.md", content: "Bootstrap" },
+        { path: "TEAM.md", content: "Fleet" },
+        { path: "TOOLS.md", content: "Tools" },
+      ],
+    });
+
+    expect(prompt.indexOf("## TOOLS.md")).toBeLessThan(prompt.indexOf("## TEAM.md"));
+    expect(prompt.indexOf("## TEAM.md")).toBeLessThan(prompt.indexOf("## BOOTSTRAP.md"));
+  });
+
   it("removes shipped heartbeat prompt quotes from workspace context without dropping user guidance", () => {
     const heartbeatPrompts = [
       "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly. Do not infer or repeat old tasks from prior chats. If nothing needs attention, reply HEARTBEAT_OK.",

@@ -161,13 +161,12 @@ async function expectCompletedWithoutBootstrap(dir: string) {
 }
 
 function expectSubagentAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
-  const names = files.map((file) => file.name);
-  expect(names).toStrictEqual(["AGENTS.md"]);
+  expect(files.map((file) => file.name)).toStrictEqual(["AGENTS.md", "TEAM.md"]);
 }
 
 function expectCronAllowedBootstrapNames(files: WorkspaceBootstrapFile[]) {
   const names = files.map((file) => file.name);
-  expect(names).toStrictEqual(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]);
+  expect(names).toStrictEqual(["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md", "TEAM.md"]);
 }
 
 describe("ensureAgentWorkspace", () => {
@@ -1170,6 +1169,7 @@ describe("filterBootstrapFilesForSession", () => {
     { name: "SOUL.md", path: "/w/SOUL.md", content: "", missing: false },
     { name: "IDENTITY.md", path: "/w/IDENTITY.md", content: "", missing: false },
     { name: "USER.md", path: "/w/USER.md", content: "", missing: false },
+    { name: "TEAM.md", path: "/w/TEAM.md", content: "", missing: false },
     { name: "BOOTSTRAP.md", path: "/w/BOOTSTRAP.md", content: "", missing: false },
     { name: "MEMORY.md", path: "/w/MEMORY.md", content: "", missing: false },
   ];

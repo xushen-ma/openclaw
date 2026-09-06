@@ -94,9 +94,9 @@ Process draining, authority revocation, database close, and transport or MCP clo
 retain their existing failure behavior. Invalid skill integrity or delivery limits
 still reject the turn.
 
-The worker loads workspace `AGENTS.md` through the bounded bootstrap loader and
-appends Gateway-supplied system instructions as literal text. It does not discover
-`SYSTEM.md` or `APPEND_SYSTEM.md` from the workspace or agent state directory.
+The worker loads workspace `AGENTS.md` and `TEAM.md` through the bounded bootstrap
+loader and appends Gateway-supplied system instructions as literal text. It does not
+discover `SYSTEM.md` or `APPEND_SYSTEM.md` from the workspace or agent state directory.
 
 Worker-to-worker session dispatch is not exposed in this mode. Placement and
 dispatch remain gateway-owned: an operator can dispatch an existing local,
