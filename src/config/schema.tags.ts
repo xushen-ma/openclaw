@@ -58,6 +58,7 @@ const TAG_OVERRIDES: Record<string, ConfigTag[]> = {
   "nodeHost.skills.enabled": ["tools", "network", "advanced"],
   "proxy.tls.caFile": ["security", "network", "storage", "advanced"],
   "tools.exec.applyPatch.workspaceOnly": ["tools", "security", "access", "advanced"],
+  "tools.fs.extraRoots": ["tools", "security", "access", "advanced"],
   "tools.exec.mode": ["tools", "security", "access"],
   "session.sharing": ["access", "privacy", "storage"],
   "session.sharing.*": ["access", "privacy", "storage"],

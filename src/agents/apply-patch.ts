@@ -8,6 +8,7 @@ import path from "node:path";
 import { Type } from "typebox";
 import { createAbortError } from "../infra/abort-signal.js";
 import { PATH_ALIAS_POLICIES, type PathAliasPolicy } from "../infra/path-alias-guards.js";
+import { assertSandboxPathWithinAnyResolvedRoot } from "./agent-tools.read.js";
 import {
   type ApplyPatchFileOptions,
   createPatchTarget,
@@ -121,6 +122,7 @@ export function createApplyPatchTool(
     root?: string;
     sandbox?: SandboxApplyPatchConfig;
     workspaceOnly?: boolean;
+    additionalRoots?: readonly string[];
     abortSignal?: AbortSignal;
     memoryWriteProvenance?: MemoryWriteProvenanceObserver;
   } = {},
@@ -154,6 +156,7 @@ export function createApplyPatchTool(
         root,
         sandbox,
         workspaceOnly,
+        additionalRoots: options.additionalRoots,
         memoryWriteProvenance: options.memoryWriteProvenance,
         signal: executionSignal,
       });
@@ -385,15 +388,22 @@ async function assertPatchParentPath(rawFilePath: string, options: ApplyPatchOpt
   if (!parent || parent === ".") {
     return;
   }
-  const checked = await assertSandboxPath({
+  const checked = await assertSandboxPathWithinAnyResolvedRoot({
     filePath: parent,
     cwd: options.cwd,
-    root: options.root ?? options.cwd,
+    roots: resolveHostPatchRoots(options),
   });
   await assertNoExistingParentAliases({
     parentPath: checked.resolved,
-    rootPath: options.root ?? options.cwd,
+    rootPath: checked.root,
   });
+}
+
+function resolveHostPatchRoots(options: ApplyPatchOptions): string[] {
+  return [
+    path.resolve(options.root ?? options.cwd),
+    ...(options.additionalRoots ?? []).map((entry) => path.resolve(entry)),
+  ];
 }
 
 async function assertNoExistingParentAliases(params: { parentPath: string; rootPath: string }) {
@@ -466,10 +476,10 @@ async function resolvePatchPath(
   const workspaceOnly = options.workspaceOnly !== false;
   const resolved = workspaceOnly
     ? (
-        await assertSandboxPath({
+        await assertSandboxPathWithinAnyResolvedRoot({
           filePath,
           cwd: options.cwd,
-          root: options.root ?? options.cwd,
+          roots: resolveHostPatchRoots(options),
           allowFinalSymlinkForUnlink: aliasPolicy.allowFinalSymlinkForUnlink,
           allowFinalHardlinkForUnlink: aliasPolicy.allowFinalHardlinkForUnlink,
         })

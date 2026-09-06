@@ -3,6 +3,7 @@
  * Assembles core, shell, channel, OpenClaw, plugin, and Tool Search tools, then
  * applies sandbox, profile, provider, sender, group, and sub-agent policy.
  */
+import path from "node:path";
 import type {
   SourceReplyDeliveryMode,
   TaskSuggestionDeliveryMode,
@@ -15,6 +16,7 @@ import type { InboundEventKind } from "../channels/inbound-event/kind.js";
 import type { ModelCompatConfig } from "../config/types.models.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { GroupToolPolicyConfig } from "../config/types.tools.js";
+import { resolveIdentityPathViaExistingAncestorSync } from "../infra/boundary-path.js";
 import type { DiagnosticTraceContext } from "../infra/diagnostic-trace-context.js";
 import { resolveEventSessionRoutingPolicy } from "../infra/event-session-routing.js";
 import { applyExecPolicyLayer } from "../infra/exec-policy.js";
@@ -89,6 +91,7 @@ import { createOpenClawTools, filterToolsByClientCaps } from "./openclaw-tools.j
 import type { PreparedModelRuntimeSnapshot } from "./prepared-model-runtime.js";
 import type { SandboxContext } from "./sandbox.js";
 import { resolveSandboxFileIdentity } from "./sandbox/file-mutation-identity.js";
+import { resolveSandboxHostPathViaExistingAncestor } from "./sandbox/host-paths.js";
 import {
   resolveScheduledToolCallerContext,
   resolveScheduledToolProfileAllowlist,
@@ -101,7 +104,7 @@ import {
 import { resolveSessionPlacementComputer } from "./session-placement-computer.js";
 import type { TrustedSubagentCompletionHandoff } from "./subagents/announce/subagent-announce-handoff.js";
 import { resolveToolFsConfig } from "./tool-fs-policy.js";
-import type { PreparedSessionPermissionPolicy } from "./tool-fs-policy.js";
+import type { PreparedSessionPermissionPolicy, ToolFsExtraRoot } from "./tool-fs-policy.js";
 import { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
 import { buildDeclaredToolAllowlistContext } from "./tool-policy-declared-context.js";
 import { applyToolPolicyPipeline } from "./tool-policy-pipeline.js";
@@ -177,6 +180,58 @@ function applyModelProviderToolPolicy(
 }
 
 export { resolveToolLoopDetectionConfig } from "./tool-loop-detection-config.js";
+
+function pathIsSameOrNestedWithin(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === "" ||
+    (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function resolveConfiguredHostRoot(rootPath: string): string {
+  const hostPath = resolveSandboxHostPathViaExistingAncestor(rootPath);
+  if (!path.isAbsolute(hostPath)) {
+    throw new Error(`tools.fs.extraRoots path is not absolute on this host: ${rootPath}`);
+  }
+  return path.resolve(resolveIdentityPathViaExistingAncestorSync(hostPath));
+}
+
+function prepareConfiguredExtraRoots(params: {
+  roots: readonly ToolFsExtraRoot[];
+  workspaceRoot: string;
+}): ToolFsExtraRoot[] {
+  if (params.roots.length === 0) {
+    return [];
+  }
+  const canonicalWorkspaceRoot = resolveConfiguredHostRoot(params.workspaceRoot);
+  const prepared = params.roots.map((entry) => ({
+    path: resolveConfiguredHostRoot(entry.path),
+    mode: entry.mode,
+  }));
+
+  for (const [index, entry] of prepared.entries()) {
+    for (const prior of prepared.slice(0, index)) {
+      if (
+        pathIsSameOrNestedWithin(prior.path, entry.path) ||
+        pathIsSameOrNestedWithin(entry.path, prior.path)
+      ) {
+        throw new Error(
+          `Configured tools.fs.extraRoots resolve to duplicate or overlapping host roots: ${entry.path}`,
+        );
+      }
+    }
+
+    const extraInsideWorkspace = pathIsSameOrNestedWithin(canonicalWorkspaceRoot, entry.path);
+    const workspaceInsideExtra = pathIsSameOrNestedWithin(entry.path, canonicalWorkspaceRoot);
+    if (extraInsideWorkspace || workspaceInsideExtra) {
+      throw new Error(
+        `Configured tools.fs.extraRoots path overlaps the writable workspace root: ${entry.path}`,
+      );
+    }
+  }
+  return prepared;
+}
 
 /** Public options for building one plugin-owned agent tool surface. */
 type OpenClawCodingToolsOptions = {
@@ -595,6 +650,18 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
   const includePluginTools = toolConstructionPlan.includePluginTools;
   const workspaceOnly =
     isMemoryFlushRun || (sessionCoreToolPolicy?.workspaceOnly ?? fsConfig.workspaceOnly === true);
+  const configuredExtraRootsRaw =
+    !sandboxRoot && !isMemoryFlushRun && !sessionPermissionPolicy && fsConfig.workspaceOnly === true
+      ? fsConfig.extraRoots
+      : [];
+  const configuredExtraRoots = prepareConfiguredExtraRoots({
+    roots: configuredExtraRootsRaw,
+    workspaceRoot: containmentRoot,
+  });
+  const extraReadRoots = configuredExtraRoots.map((entry) => entry.path);
+  const extraWriteRoots = configuredExtraRoots
+    .filter((entry) => entry.mode === "rw")
+    .map((entry) => entry.path);
   const fsPolicy = {
     workspaceOnly,
     ...(sessionPermissionPolicy ? { root: sessionPermissionPolicy.root } : {}),
@@ -634,6 +701,8 @@ function createOpenClawCodingToolsInternal(options?: OpenClawCodingToolsOptions)
     includeBaseCodingTools,
     includeShellTools,
     workspaceOnly,
+    extraReadRoots,
+    extraWriteRoots,
     readOnly,
     sandbox,
     skillsSnapshot: options?.skillsSnapshot,

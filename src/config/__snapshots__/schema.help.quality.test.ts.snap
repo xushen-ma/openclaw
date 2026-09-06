@@ -349,6 +349,8 @@ exports[`config tier coverage > keeps the curated common leaf set reviewable 1`]
   "tools.exec.safeBins.*",
   "tools.exec.security",
   "tools.exec.strictInlineEval",
+  "tools.fs.extraRoots.*.mode",
+  "tools.fs.extraRoots.*.path",
   "tools.fs.workspaceOnly",
   "tools.github.gitAuthor.email",
   "tools.github.gitAuthor.name",

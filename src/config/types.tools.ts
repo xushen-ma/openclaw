@@ -362,6 +362,14 @@ export type FsToolsConfig = {
    * Default: false (unrestricted, matches legacy behavior).
    */
   workspaceOnly?: boolean;
+  /**
+   * Explicit absolute host roots available while workspaceOnly is enabled.
+   * Read-only roots are available only to read; read-write roots also allow write/edit/apply_patch.
+   */
+  extraRoots?: Array<{
+    path: string;
+    mode: "ro" | "rw";
+  }>;
 };
 
 export type SessionsSpawnToolsConfig = {

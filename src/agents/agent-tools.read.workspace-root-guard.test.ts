@@ -246,6 +246,35 @@ describe("wrapToolWorkspaceRootGuardWithOptions", () => {
     });
   });
 
+  it("preserves legacy relative resolution for skill read roots", async () => {
+    const { tool } = createToolHarness();
+    const skillRoot = path.resolve("/tmp/skill-root");
+    const wrapped = wrapToolWorkspaceRootGuardWithOptions(tool, root, {
+      additionalRoots: [skillRoot],
+      resolutionCwd: root,
+      normalizeGuardedPathParams: true,
+    });
+    mocks.assertSandboxPath
+      .mockRejectedValueOnce(new Error(`Path escapes sandbox root (${root}): guide.md`))
+      .mockResolvedValueOnce({
+        resolved: path.resolve(skillRoot, "guide.md"),
+        relative: "guide.md",
+      });
+
+    await wrapped.execute("tc-skill-relative", { path: "guide.md" });
+
+    expect(mocks.assertSandboxPath).toHaveBeenNthCalledWith(1, {
+      filePath: "guide.md",
+      cwd: root,
+      root,
+    });
+    expect(mocks.assertSandboxPath).toHaveBeenNthCalledWith(2, {
+      filePath: "guide.md",
+      cwd: skillRoot,
+      root: skillRoot,
+    });
+  });
+
   it("does not guard outPath by default", async () => {
     const { tool } = createToolHarness();
     const wrapped = wrapToolWorkspaceRootGuardWithOptions(tool, root, {

@@ -42,7 +42,7 @@ import {
 } from "./memory-write-provenance.js";
 import { toRelativeWorkspacePath } from "./path-policy.js";
 import type { AgentTool, AgentToolResult } from "./runtime/index.js";
-import { assertSandboxPath } from "./sandbox-paths.js";
+import { assertSandboxPath, resolveSandboxInputPath } from "./sandbox-paths.js";
 import { resolveSandboxFileMutationQueueKey } from "./sandbox/file-mutation-identity.js";
 import type { SandboxFsBridge } from "./sandbox/fs-bridge.js";
 import {
@@ -830,10 +830,12 @@ function withWorkspaceSafeTempHint(error: unknown): unknown {
   return new Error(message, { cause: error });
 }
 
-async function assertSandboxPathWithinAnyRoot(params: {
+export async function assertSandboxPathWithinAnyRoot(params: {
   cwd?: string;
   filePath: string;
   roots: readonly string[];
+  allowFinalSymlinkForUnlink?: boolean;
+  allowFinalHardlinkForUnlink?: boolean;
 }) {
   let firstRootEscapeError: unknown;
   const seen = new Set<string>();
@@ -848,11 +850,18 @@ async function assertSandboxPathWithinAnyRoot(params: {
     }
     seen.add(root);
     try {
-      return await assertSandboxPath({
+      const result = await assertSandboxPath({
         filePath: params.filePath,
         cwd: index === 0 ? (params.cwd ?? root) : root,
         root,
+        ...(params.allowFinalSymlinkForUnlink === undefined
+          ? {}
+          : { allowFinalSymlinkForUnlink: params.allowFinalSymlinkForUnlink }),
+        ...(params.allowFinalHardlinkForUnlink === undefined
+          ? {}
+          : { allowFinalHardlinkForUnlink: params.allowFinalHardlinkForUnlink }),
       });
+      return { ...result, root };
     } catch (error) {
       if (!isSandboxRootEscapeError(error)) {
         throw error;
@@ -866,12 +875,33 @@ async function assertSandboxPathWithinAnyRoot(params: {
   );
 }
 
+/** Guard one cwd-resolved target against a set of roots without reinterpreting it per root. */
+export async function assertSandboxPathWithinAnyResolvedRoot(params: {
+  cwd?: string;
+  filePath: string;
+  roots: readonly string[];
+  allowFinalSymlinkForUnlink?: boolean;
+  allowFinalHardlinkForUnlink?: boolean;
+}) {
+  const firstRoot = params.roots.find((candidate) => candidate.trim())?.trim();
+  const resolutionCwd = path.resolve(params.cwd ?? firstRoot ?? process.cwd());
+  const rawFilePath = params.filePath;
+  const filePath =
+    path.isAbsolute(rawFilePath) || isWindowsDrivePath(rawFilePath)
+      ? rawFilePath
+      : rawFilePath === "~" || rawFilePath.startsWith("~/") || rawFilePath.startsWith("@")
+        ? resolveSandboxInputPath(rawFilePath, resolutionCwd)
+        : `${resolutionCwd}${path.sep}${rawFilePath}`;
+  return assertSandboxPathWithinAnyRoot({ ...params, cwd: resolutionCwd, filePath });
+}
+
 /** Wrap a file tool with workspace guards and optional container path mapping. */
 export function wrapToolWorkspaceRootGuardWithOptions(
   tool: AnyAgentTool,
   root: string,
   options?: {
     additionalRoots?: readonly string[];
+    cwdResolvedAdditionalRoots?: readonly string[];
     additionalContainerMounts?: readonly {
       containerRoot: string;
       hostRoot: string;
@@ -936,16 +966,38 @@ export function wrapToolWorkspaceRootGuardWithOptions(
           guardedRoot === root && !workspaceMapping?.matched
             ? (options?.additionalRoots ?? [])
             : [];
+        const cwdResolvedAdditionalRoots =
+          guardedRoot === root && !workspaceMapping?.matched
+            ? (options?.cwdResolvedAdditionalRoots ?? [])
+            : [];
         let sandboxResult: Awaited<ReturnType<typeof assertSandboxPathWithinAnyRoot>>;
         try {
-          sandboxResult = await assertSandboxPathWithinAnyRoot({
-            cwd:
-              guardedRoot === root && !workspaceMapping?.matched
-                ? options?.resolutionCwd
-                : undefined,
-            filePath: sandboxPath,
-            roots: [guardedRoot, ...additionalRoots],
-          });
+          const cwd =
+            guardedRoot === root && !workspaceMapping?.matched ? options?.resolutionCwd : undefined;
+          if (cwdResolvedAdditionalRoots.length === 0) {
+            sandboxResult = await assertSandboxPathWithinAnyRoot({
+              cwd,
+              filePath: sandboxPath,
+              roots: [guardedRoot, ...additionalRoots],
+            });
+          } else {
+            try {
+              sandboxResult = await assertSandboxPathWithinAnyResolvedRoot({
+                cwd,
+                filePath: sandboxPath,
+                roots: [guardedRoot, ...cwdResolvedAdditionalRoots],
+              });
+            } catch (error) {
+              if (additionalRoots.length === 0 || !isSandboxRootEscapeError(error)) {
+                throw error;
+              }
+              sandboxResult = await assertSandboxPathWithinAnyRoot({
+                cwd,
+                filePath: sandboxPath,
+                roots: [guardedRoot, ...additionalRoots],
+              });
+            }
+          }
         } catch (error) {
           throw withWorkspaceSafeTempHint(error);
         }
@@ -967,6 +1019,14 @@ type SandboxToolParams = {
   modelContextWindowTokens?: number;
   imageSanitization?: ImageSanitizationLimits;
   modelHasVision?: boolean;
+};
+
+type HostWorkspaceToolOptions = {
+  containmentRoot?: string;
+  workspaceOnly?: boolean;
+  additionalRoots?: readonly string[];
+  abortSignal?: AbortSignal;
+  memoryWriteProvenance?: MemoryWriteProvenanceObserver;
 };
 
 /** Create a sandbox-backed read tool with OpenClaw result normalization. */
@@ -1008,15 +1068,7 @@ export function createSandboxedEditTool(params: SandboxToolParams) {
 }
 
 /** Create a host workspace write tool using guarded filesystem operations. */
-export function createHostWorkspaceWriteTool(
-  root: string,
-  options?: {
-    containmentRoot?: string;
-    workspaceOnly?: boolean;
-    abortSignal?: AbortSignal;
-    memoryWriteProvenance?: MemoryWriteProvenanceObserver;
-  },
-) {
+export function createHostWorkspaceWriteTool(root: string, options?: HostWorkspaceToolOptions) {
   const base = eraseSessionFileTool(
     createWriteTool(root, {
       operations: createHostWriteOperations(options?.containmentRoot ?? root, options),
@@ -1026,15 +1078,7 @@ export function createHostWorkspaceWriteTool(
 }
 
 /** Create a host workspace edit tool using guarded filesystem operations. */
-export function createHostWorkspaceEditTool(
-  root: string,
-  options?: {
-    containmentRoot?: string;
-    workspaceOnly?: boolean;
-    abortSignal?: AbortSignal;
-    memoryWriteProvenance?: MemoryWriteProvenanceObserver;
-  },
-) {
+export function createHostWorkspaceEditTool(root: string, options?: HostWorkspaceToolOptions) {
   const base = eraseSessionFileTool(
     createEditTool(root, {
       operations: createHostEditOperations(options?.containmentRoot ?? root, options),
@@ -1366,8 +1410,8 @@ async function statHostFile(absolutePath: string) {
 }
 
 async function writeWorkspaceFile(
-  root: string,
-  getRoot: () => ReturnType<typeof fsRoot>,
+  roots: readonly string[],
+  getRoot: (rootPath: string) => ReturnType<typeof fsRoot>,
   absolutePath: string,
   content: string,
   abortSignal?: AbortSignal,
@@ -1376,27 +1420,28 @@ async function writeWorkspaceFile(
   // root dir, rejecting if the workspace is missing) only after toCanonicalRelativeWorkspacePath
   // succeeds. Eagerly starting it would orphan a rejecting root promise as an unhandled
   // rejection when validation fails first — the readFile/access paths already defer the same way.
-  const relative = await toCanonicalRelativeWorkspacePath(root, absolutePath);
+  const target = await assertSandboxPathWithinAnyResolvedRoot({
+    cwd: roots[0],
+    filePath: absolutePath,
+    roots,
+  });
+  const relative = await toCanonicalRelativeWorkspacePath(
+    target.root,
+    path.resolve(target.root, target.relative),
+  );
   // fs-safe 0.5.2 atomically replaces a final symlink on write. The workspace
   // contract rejects symlink write targets so the link and its target survive.
-  const rootReal = await fs.realpath(root);
+  const rootReal = await fs.realpath(target.root);
   const targetStat = await fs.lstat(path.resolve(rootReal, relative)).catch(() => undefined);
   if (targetStat?.isSymbolicLink()) {
     throw new FsSafeError("symlink", `refusing to write to symlink: ${absolutePath}`);
   }
-  const rootHandle = await getRoot();
+  const rootHandle = await getRoot(target.root);
   abortSignal?.throwIfAborted();
   await rootHandle.write(relative, content, { mkdir: true });
 }
 
-function createHostWriteOperations(
-  root: string,
-  options?: {
-    workspaceOnly?: boolean;
-    abortSignal?: AbortSignal;
-    memoryWriteProvenance?: MemoryWriteProvenanceObserver;
-  },
-) {
+function createHostWriteOperations(root: string, options?: HostWorkspaceToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
@@ -1423,43 +1468,71 @@ function createHostWriteOperations(
   // root lazily on first use: constructing the tool (e.g. doctor projecting tool
   // schemas) must not open an fs handle, and a missing workspace dir must not
   // orphan a rejecting promise as "Unhandled promise rejection: root dir not found".
-  let rootPromise: ReturnType<typeof fsRoot> | undefined;
-  const getRoot = () => (rootPromise ??= fsRoot(root));
+  const roots = [
+    path.resolve(root),
+    ...(options?.additionalRoots ?? []).map((entry) => path.resolve(entry)),
+  ];
+  const rootPromises = new Map<string, ReturnType<typeof fsRoot>>();
+  const getRoot = (rootPath: string) => {
+    let rootPromise = rootPromises.get(rootPath);
+    if (!rootPromise) {
+      rootPromise = fsRoot(rootPath);
+      rootPromises.set(rootPath, rootPromise);
+    }
+    return rootPromise;
+  };
   return withMemoryWriteProvenance(
     {
       mkdir: async (dir: string) => {
-        const relative = toRelativeWorkspacePath(root, dir, { allowRoot: true });
-        const resolved = relative ? path.resolve(root, relative) : path.resolve(root);
-        await assertSandboxPath({ filePath: resolved, cwd: root, root });
+        const target = await assertSandboxPathWithinAnyResolvedRoot({
+          cwd: root,
+          filePath: dir,
+          roots,
+        });
+        const relative = await toCanonicalRelativeWorkspacePath(
+          target.root,
+          path.resolve(target.root, target.relative),
+          { allowRoot: true },
+        );
         options?.abortSignal?.throwIfAborted();
-        await fs.mkdir(resolved, { recursive: true });
+        const rootHandle = await getRoot(target.root);
+        if (relative === "" || relative === ".") {
+          await rootHandle.ensureRoot();
+          return;
+        }
+        await rootHandle.mkdir(relative);
       },
       writeFile: (absolutePath: string, content: string) =>
-        writeWorkspaceFile(root, getRoot, absolutePath, content, options?.abortSignal),
+        writeWorkspaceFile(roots, getRoot, absolutePath, content, options?.abortSignal),
       readFile: async (absolutePath: string) => {
         // Canonicalize symlink parents like the write path: fs-safe 0.5.2
         // rejects intermediate symlinks by default, but in-workspace symlink
         // parents are part of the workspace contract.
-        const relative = await toCanonicalRelativeWorkspacePath(root, absolutePath);
-        return (await (await getRoot()).read(relative)).buffer;
+        const target = await assertSandboxPathWithinAnyResolvedRoot({
+          cwd: root,
+          filePath: absolutePath,
+          roots,
+        });
+        const relative = await toCanonicalRelativeWorkspacePath(
+          target.root,
+          path.resolve(target.root, target.relative),
+        );
+        return (await (await getRoot(target.root)).read(relative)).buffer;
       },
       statFile: async (absolutePath: string) => {
-        const relative = toRelativeWorkspacePath(root, absolutePath);
-        return statHostFile(path.resolve(root, relative));
+        const target = await assertSandboxPathWithinAnyResolvedRoot({
+          cwd: root,
+          filePath: absolutePath,
+          roots,
+        });
+        return statHostFile(target.resolved);
       },
     } as const,
     options?.memoryWriteProvenance,
   );
 }
 
-function createHostEditOperations(
-  root: string,
-  options?: {
-    workspaceOnly?: boolean;
-    abortSignal?: AbortSignal;
-    memoryWriteProvenance?: MemoryWriteProvenanceObserver;
-  },
-) {
+function createHostEditOperations(root: string, options?: HostWorkspaceToolOptions) {
   const workspaceOnly = options?.workspaceOnly ?? false;
 
   if (!workspaceOnly) {
@@ -1484,29 +1557,56 @@ function createHostEditOperations(
   // root lazily on first use: constructing the tool (e.g. doctor projecting tool
   // schemas) must not open an fs handle, and a missing workspace dir must not
   // orphan a rejecting promise as "Unhandled promise rejection: root dir not found".
-  let rootPromise: ReturnType<typeof fsRoot> | undefined;
-  const getRoot = () => (rootPromise ??= fsRoot(root));
+  const roots = [
+    path.resolve(root),
+    ...(options?.additionalRoots ?? []).map((entry) => path.resolve(entry)),
+  ];
+  const rootPromises = new Map<string, ReturnType<typeof fsRoot>>();
+  const getRoot = (rootPath: string) => {
+    let rootPromise = rootPromises.get(rootPath);
+    if (!rootPromise) {
+      rootPromise = fsRoot(rootPath);
+      rootPromises.set(rootPath, rootPromise);
+    }
+    return rootPromise;
+  };
   return withMemoryWriteProvenance(
     {
       readFile: async (absolutePath: string) => {
         // Canonicalize symlink parents like the write path: fs-safe 0.5.2
         // rejects intermediate symlinks by default, but in-workspace symlink
         // parents are part of the workspace contract.
-        const relative = await toCanonicalRelativeWorkspacePath(root, absolutePath);
-        const safeRead = await (await getRoot()).read(relative);
+        const target = await assertSandboxPathWithinAnyResolvedRoot({
+          cwd: root,
+          filePath: absolutePath,
+          roots,
+        });
+        const relative = await toCanonicalRelativeWorkspacePath(
+          target.root,
+          path.resolve(target.root, target.relative),
+        );
+        const safeRead = await (await getRoot(target.root)).read(relative);
         return safeRead.buffer;
       },
       writeFile: (absolutePath: string, content: string) =>
-        writeWorkspaceFile(root, getRoot, absolutePath, content, options?.abortSignal),
+        writeWorkspaceFile(roots, getRoot, absolutePath, content, options?.abortSignal),
       statFile: async (absolutePath: string) => {
-        const relative = toRelativeWorkspacePath(root, absolutePath);
-        return statHostFile(path.resolve(root, relative));
+        const target = await assertSandboxPathWithinAnyResolvedRoot({
+          cwd: root,
+          filePath: absolutePath,
+          roots,
+        });
+        return statHostFile(target.resolved);
       },
       access: async (absolutePath: string) => {
-        let relative: string;
+        let target: Awaited<ReturnType<typeof assertSandboxPathWithinAnyResolvedRoot>>;
         try {
           // Canonicalized like readFile so in-workspace symlink parents pass.
-          relative = await toCanonicalRelativeWorkspacePath(root, absolutePath);
+          target = await assertSandboxPathWithinAnyResolvedRoot({
+            cwd: root,
+            filePath: absolutePath,
+            roots,
+          });
         } catch {
           // Path escapes workspace root.  Don't throw here – the upstream
           // library replaces any `access` error with a misleading "File not
@@ -1516,7 +1616,11 @@ function createHostEditOperations(
           return;
         }
         try {
-          const opened = await (await getRoot()).open(relative);
+          const relative = await toCanonicalRelativeWorkspacePath(
+            target.root,
+            path.resolve(target.root, target.relative),
+          );
+          const opened = await (await getRoot(target.root)).open(relative);
           await opened.handle.close().catch(() => {});
         } catch (error) {
           if (error instanceof FsSafeError && error.code === "not-found") {
@@ -1538,8 +1642,9 @@ function createHostEditOperations(
 async function toCanonicalRelativeWorkspacePath(
   root: string,
   absolutePath: string,
+  options?: { allowRoot?: boolean },
 ): Promise<string> {
-  const lexicalRelative = toRelativeWorkspacePath(root, absolutePath);
+  const lexicalRelative = toRelativeWorkspacePath(root, absolutePath, options);
   const lexicalPath = path.resolve(root, lexicalRelative);
   const parentPath = path.dirname(lexicalPath);
   const [rootReal, canonicalParentPath] = await Promise.all([
@@ -1547,7 +1652,7 @@ async function toCanonicalRelativeWorkspacePath(
     canonicalPathFromExistingAncestor(parentPath),
   ]);
   const canonicalPath = path.join(canonicalParentPath, path.basename(lexicalPath));
-  return toRelativeWorkspacePath(rootReal, canonicalPath);
+  return toRelativeWorkspacePath(rootReal, canonicalPath, options);
 }
 
 function createFsAccessError(code: string, filePath: string): NodeJS.ErrnoException {

@@ -52,9 +52,10 @@ function resolveSkillReadRoots(skillsSnapshot?: SkillSnapshot): string[] | undef
 
 function guardHostWorkspaceTool(
   tool: AnyAgentTool,
-  options: Pick<CoreCodingToolsOptions, "codingRoot" | "containmentRoot">,
+  options: Pick<CoreCodingToolsOptions, "codingRoot" | "containmentRoot" | "extraWriteRoots">,
 ): AnyAgentTool {
   return wrapToolWorkspaceRootGuardWithOptions(tool, options.containmentRoot, {
+    cwdResolvedAdditionalRoots: options.extraWriteRoots,
     resolutionCwd: options.codingRoot,
     normalizeGuardedPathParams: true,
   });
@@ -67,6 +68,8 @@ type CoreCodingToolsOptions = {
   includeBaseCodingTools: boolean;
   includeShellTools: boolean;
   workspaceOnly: boolean;
+  extraReadRoots?: readonly string[];
+  extraWriteRoots?: readonly string[];
   readOnly: boolean;
   sandbox?: SandboxContext;
   skillsSnapshot?: SkillSnapshot;
@@ -138,6 +141,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
               }
             : {
                 additionalRoots: skillReadRoots,
+                cwdResolvedAdditionalRoots: options.extraReadRoots,
                 resolutionCwd: options.codingRoot,
                 normalizeGuardedPathParams: true,
               },
@@ -166,6 +170,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
       const edit = createHostWorkspaceEditTool(options.codingRoot, {
         containmentRoot: options.containmentRoot,
         workspaceOnly: options.workspaceOnly,
+        additionalRoots: options.extraWriteRoots,
         memoryWriteProvenance: options.memoryWriteProvenance,
         abortSignal: options.abortSignal,
       });
@@ -173,6 +178,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
       const write = createHostWorkspaceWriteTool(options.codingRoot, {
         containmentRoot: options.containmentRoot,
         workspaceOnly: options.workspaceOnly,
+        additionalRoots: options.extraWriteRoots,
         memoryWriteProvenance: options.memoryWriteProvenance,
         abortSignal: options.abortSignal,
       });
@@ -218,6 +224,7 @@ export function createCoreCodingTools(options: CoreCodingToolsOptions): AnyAgent
               ? { root: sandboxRoot, bridge: sandboxFsBridge! }
               : undefined,
           workspaceOnly: options.applyPatchWorkspaceOnly,
+          additionalRoots: sandboxRoot ? undefined : options.extraWriteRoots,
           memoryWriteProvenance: options.memoryWriteProvenance,
           abortSignal: options.abortSignal,
         }),

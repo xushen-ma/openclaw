@@ -5,7 +5,115 @@ import type { OpenClawConfig } from "../config/config.js";
 import {
   resolveEffectiveToolFsRootExpansionAllowed,
   resolveEffectiveToolFsWorkspaceOnly,
+  resolveToolFsConfig,
 } from "./tool-fs-policy.js";
+
+describe("resolveToolFsConfig extra roots", () => {
+  it("merges global and per-agent roots without implicit access modes", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/global-read", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/agent-write", mode: "rw" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toEqual({
+      workspaceOnly: true,
+      extraRoots: [
+        { path: "/global-read", mode: "ro" },
+        { path: "/agent-write", mode: "rw" },
+      ],
+    });
+  });
+
+  it.each([
+    ["duplicate", "ro"],
+    ["conflicting", "rw"],
+  ] as const)("fails closed on cross-scope %s roots", (_name, agentMode) => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/.", mode: agentMode }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/duplicate|conflict/i);
+  });
+
+  it("fails closed when global and agent roots overlap with different modes", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "rw" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/private", mode: "ro" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/conflicting overlapping/i);
+  });
+
+  it("fails closed when global and agent roots overlap with the same mode", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/reference", mode: "ro" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/overlap|redundant/i);
+  });
+});
 
 describe("resolveEffectiveToolFsWorkspaceOnly", () => {
   it("returns false by default when tools.fs.workspaceOnly is unset", () => {

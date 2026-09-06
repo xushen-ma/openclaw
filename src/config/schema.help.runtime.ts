@@ -547,6 +547,12 @@ export const RUNTIME_FIELD_HELP: Record<string, string> = {
     "Optional thread/topic target for channels that support threaded delivery of forwarded plugin approvals.",
   "tools.fs.workspaceOnly":
     "Restrict filesystem tools (read/write/edit/apply_patch) to the workspace directory (default: false).",
+  "tools.fs.extraRoots":
+    "Additional absolute host roots available only when workspaceOnly is true. Each entry requires an explicit ro or rw mode; sandboxed, session-permission, and memory-flush runs do not receive these roots.",
+  "tools.fs.extraRoots[].path":
+    "Absolute host directory added to the workspace-only filesystem boundary. Duplicate, overlapping, and conflicting root declarations are rejected.",
+  "tools.fs.extraRoots[].mode":
+    'Access mode for this extra root: "ro" permits read only; "rw" also permits write, edit, and apply_patch.',
   "tools.sessions.visibility":
     'Controls which sessions can be targeted by sessions_list/sessions_history/sessions_search/sessions_send/session_status. ("all" default = any session on the Gateway, including other agents and users; "agent" = any session in the current agent id; "self" = only current; "tree" = current session + spawned subagent sessions). Cross-agent access is on by default and scoped by tools.agentToAgent; use narrower visibility to restrict access.',
   "tools.message.crossContext.allowWithinProvider":

@@ -5,6 +5,7 @@ import {
   openRootFileFollowingParents,
   type RootFileOpenResult,
 } from "../infra/boundary-file-read.js";
+import { toErrorObject } from "../infra/errors.js";
 import {
   canonicalPathFromExistingAncestor,
   FsSafeError,
@@ -32,6 +33,8 @@ export type ApplyPatchFileOptions = {
   sandbox?: SandboxApplyPatchConfig;
   /** Restrict patch paths to the workspace root (cwd). Default: true. Set false to opt out. */
   workspaceOnly?: boolean;
+  /** Additional explicit host roots allowed only for workspace-contained patch operations. */
+  additionalRoots?: readonly string[];
   memoryWriteProvenance?: MemoryWriteProvenanceObserver;
 };
 
@@ -132,15 +135,46 @@ export async function resolvePatchFileOps(options: ApplyPatchFileOptions): Promi
   }
 
   const containmentRoot = options.root ?? options.cwd;
-  const root = await fsRoot(containmentRoot);
+  const containmentRoots = [
+    path.resolve(containmentRoot),
+    ...(options.additionalRoots ?? []).map((entry) => path.resolve(entry)),
+  ];
+  const rootPromises = new Map<string, ReturnType<typeof fsRoot>>();
+  const getRoot = (rootPath: string) => {
+    let rootPromise = rootPromises.get(rootPath);
+    if (!rootPromise) {
+      rootPromise = fsRoot(rootPath);
+      rootPromises.set(rootPath, rootPromise);
+    }
+    return rootPromise;
+  };
+  const resolveContainedTarget = (
+    filePath: string,
+    pathOptions?: { allowRoot?: boolean },
+  ): { root: string; resolved: string } => {
+    let firstError: unknown;
+    for (const candidateRoot of containmentRoots) {
+      try {
+        const relative = toRelativeSandboxPath(candidateRoot, filePath, pathOptions);
+        return {
+          root: candidateRoot,
+          resolved: relative ? path.resolve(candidateRoot, relative) : candidateRoot,
+        };
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    throw toErrorObject(firstError, "Patch path guard has no configured roots.");
+  };
   // Mirror the read path: canonicalize contained symlink parents so a patch
   // that reads through a directory alias can also mutate through it. Escaping
   // aliases still fail the containment check against the canonical root.
-  const toCanonicalMutationRelative = async (
+  const toCanonicalMutationTarget = async (
     filePath: string,
     pathOptions?: { allowRoot?: boolean },
-  ): Promise<string> => {
-    const absolute = path.resolve(options.cwd, filePath);
+  ): Promise<{ root: string; relative: string }> => {
+    const target = resolveContainedTarget(filePath, pathOptions);
+    const absolute = target.resolved;
     let canonicalAbsolute = absolute;
     try {
       const canonicalParent = await canonicalPathFromExistingAncestor(path.dirname(absolute));
@@ -148,16 +182,20 @@ export async function resolvePatchFileOps(options: ApplyPatchFileOptions): Promi
     } catch {
       // Keep the lexical path; the containment check below owns the failure.
     }
-    const canonicalRoot = await fs.realpath(containmentRoot).catch(() => containmentRoot);
-    return toRelativeSandboxPath(canonicalRoot, canonicalAbsolute, pathOptions);
+    const canonicalRoot = await fs.realpath(target.root).catch(() => target.root);
+    return {
+      root: target.root,
+      relative: toRelativeSandboxPath(canonicalRoot, canonicalAbsolute, pathOptions),
+    };
   };
   return withPatchMemoryWriteProvenance({
     observer: options.memoryWriteProvenance,
     operations: {
       readFile: async (filePath) => {
+        const target = resolveContainedTarget(filePath);
         const opened = await openRootFileFollowingParents({
-          absolutePath: filePath,
-          rootPath: containmentRoot,
+          absolutePath: target.resolved,
+          rootPath: target.root,
           boundaryLabel: "workspace root",
         });
         assertBoundaryRead(opened, filePath);
@@ -168,15 +206,15 @@ export async function resolvePatchFileOps(options: ApplyPatchFileOptions): Promi
         }
       },
       writeFile: async (filePath, content) => {
-        const relative = await toCanonicalMutationRelative(filePath);
+        const target = await toCanonicalMutationTarget(filePath);
         options.signal?.throwIfAborted();
-        await root.write(relative, content, { encoding: "utf8" });
+        await (await getRoot(target.root)).write(target.relative, content, { encoding: "utf8" });
       },
       createFileExclusive: async (filePath, content) => {
-        const relative = await toCanonicalMutationRelative(filePath);
+        const target = await toCanonicalMutationTarget(filePath);
         try {
           options.signal?.throwIfAborted();
-          await root.create(relative, content, { encoding: "utf8" });
+          await (await getRoot(target.root)).create(target.relative, content, { encoding: "utf8" });
           return "created";
         } catch (error) {
           // fs-safe opens an existing destination before its O_EXCL commit. A final
@@ -192,18 +230,19 @@ export async function resolvePatchFileOps(options: ApplyPatchFileOptions): Promi
         }
       },
       remove: async (filePath) => {
-        const relative = await toCanonicalMutationRelative(filePath);
+        const target = await toCanonicalMutationTarget(filePath);
         options.signal?.throwIfAborted();
-        await root.remove(relative);
+        await (await getRoot(target.root)).remove(target.relative);
       },
       mkdirp: async (dir) => {
-        const relative = await toCanonicalMutationRelative(dir, { allowRoot: true });
+        const target = await toCanonicalMutationTarget(dir, { allowRoot: true });
         options.signal?.throwIfAborted();
-        if (relative === "" || relative === ".") {
+        const root = await getRoot(target.root);
+        if (target.relative === "" || target.relative === ".") {
           await root.ensureRoot();
           return;
         }
-        await root.mkdir(relative);
+        await root.mkdir(target.relative);
       },
     },
   });

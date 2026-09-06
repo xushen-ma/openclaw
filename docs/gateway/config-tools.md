@@ -272,6 +272,41 @@ Removing an agent override or choosing native credentials deletes the associated
 
 Control UI issue and pull request hover previews use the selected agent's effective managed GitHub identity, including an inherited system identity. An unavailable managed identity produces an actionable error rather than switching to another credential. Without a managed selection, previews retain the optional `gateway.controlUi.github.token` service credential, shared `GH_TOKEN`/`GITHUB_TOKEN` environment fallback, and anonymous public access. Previews remain public-only, and their caches are scoped to the credential used. Project discovery continues to use the separate service credential. When this SecretRef is explicit, OpenClaw excludes its exact environment or store name from agent execution. A custom name does not clear unrelated `GH_TOKEN` or `GITHUB_TOKEN` values used by native identity; a ref named `GH_TOKEN` or `GITHUB_TOKEN` excludes that exact variable.
 
+### `tools.fs`
+
+`tools.fs.workspaceOnly` defaults to `false`. Set it to `true` to confine
+`read`, `write`, `edit`, and `apply_patch` to the effective workspace. Optional
+`extraRoots` extend that boundary for unsandboxed ordinary agent runs:
+
+```json5
+{
+  tools: {
+    fs: {
+      workspaceOnly: true,
+      extraRoots: [
+        { path: "/absolute/path/to/reference", mode: "ro" },
+        { path: "/absolute/path/to/project", mode: "rw" },
+      ],
+    },
+  },
+}
+```
+
+- Every entry must be an object with a non-empty absolute `path` and an explicit
+  `mode`. String shorthand and omitted modes are rejected; there is no implicit
+  read-write default.
+- `ro` allows `read`. `rw` allows `read`, `write`, `edit`, and `apply_patch`.
+- Global roots and `agents.entries.<id>.tools.fs.extraRoots` are combined. Exact
+  duplicates, overlapping declarations, and conflicting modes fail config or
+  tool construction closed.
+- Extra roots cannot overlap the writable workspace in either direction. Declare
+  only disjoint roots so every boundary has one unambiguous access policy.
+- Extra roots are inactive unless the effective `tools.fs.workspaceOnly` value
+  is `true`. They are never projected into sandbox mounts and do not broaden
+  session-permission or memory-flush roots.
+- Normal traversal, symlink, hardlink, canonicalization, and atomic filesystem
+  guards still apply independently at each root boundary.
+
 ### `tools.exec`
 
 ```json5

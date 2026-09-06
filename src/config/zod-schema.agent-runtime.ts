@@ -8,7 +8,10 @@ import {
 import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { z } from "zod";
 import { splitSandboxBindSpec } from "../agents/sandbox/bind-spec.js";
-import { isSandboxHostPathAbsolute } from "../agents/sandbox/host-paths.js";
+import {
+  getSandboxHostPathPolicyKey,
+  isSandboxHostPathAbsolute,
+} from "../agents/sandbox/host-paths.js";
 import { getBlockedNetworkModeReason } from "../agents/sandbox/network-mode.js";
 import { parseDurationMs } from "../cli/parse-duration.js";
 import { isBlockedObjectKey } from "../infra/prototype-keys.js";
@@ -562,8 +565,50 @@ const ToolExecSchema = z
 const ToolFsSchema = z
   .object({
     workspaceOnly: z.boolean().optional(),
+    extraRoots: z
+      .array(
+        z
+          .object({
+            path: z
+              .string()
+              .trim()
+              .min(1, "tools.fs.extraRoots path must not be empty")
+              .refine(isSandboxHostPathAbsolute, "tools.fs.extraRoots path must be absolute"),
+            mode: z.enum(["ro", "rw"]),
+          })
+          .strict(),
+      )
+      .optional(),
   })
   .strict()
+  .superRefine((value, ctx) => {
+    const seen: Array<{ key: string; mode: "ro" | "rw" }> = [];
+    for (const [index, root] of (value.extraRoots ?? []).entries()) {
+      const key = getSandboxHostPathPolicyKey(root.path);
+      const prior = seen.find(
+        (entry) =>
+          entry.key === key ||
+          entry.key.startsWith(key.endsWith("/") ? key : `${key}/`) ||
+          key.startsWith(entry.key.endsWith("/") ? entry.key : `${entry.key}/`),
+      );
+      if (!prior) {
+        seen.push({ key, mode: root.mode });
+        continue;
+      }
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["extraRoots", index, "path"],
+        message:
+          prior.key === key
+            ? prior.mode === root.mode
+              ? `Duplicate tools.fs.extraRoots path: ${root.path}`
+              : `Conflicting tools.fs.extraRoots modes for path: ${root.path}`
+            : prior.mode === root.mode
+              ? `Overlapping tools.fs.extraRoots paths are redundant: ${root.path}`
+              : `Conflicting overlapping tools.fs.extraRoots modes for path: ${root.path}`,
+      });
+    }
+  })
   .optional();
 
 const ToolLoopDetectionSchema = z
