@@ -18,17 +18,22 @@ OpenClaw has two log surfaces:
 At startup, the Gateway logs the resolved default agent model plus the mode defaults that affect new sessions:
 
 ```text
-agent model: openai/gpt-5.5 (thinking=medium, fast=on)
+agent model: openai/gpt-5.6-sol (thinking=medium, fast=on)
 ```
 
 `thinking` comes from the default agent, model params, or the global agent default; when unset it shows `medium`. `fast` comes from the default agent or the model's `fastMode` params.
 
 ## File-based logger
 
-- Default rolling log file is under `/tmp/openclaw/` (one file per day): `openclaw-YYYY-MM-DD.log`, dated by the gateway host's local timezone. If that directory is unsafe or unwritable (wrong owner, world-writable, a symlink), OpenClaw falls back to a user-scoped `os.tmpdir()/openclaw-<uid>` path instead; on Windows it always uses that OS-tmpdir fallback.
+- Default rolling log files are under `/tmp/openclaw/` (one file per day), dated by the gateway host's local timezone. The default profile uses `openclaw-YYYY-MM-DD.log`; named profiles use `openclaw-<profile>-YYYY-MM-DD.log` (for example, `openclaw-dev-YYYY-MM-DD.log`). If that directory is unsafe or unwritable (wrong owner, world-writable, a symlink), OpenClaw falls back to a user-scoped `os.tmpdir()/openclaw-<uid>` path instead; on Windows it always uses that OS-tmpdir fallback.
 - Active log files rotate at `logging.maxFileBytes` (default: 100 MB), keeping up to five numbered archives (`.1` through `.5`) and continuing to write a fresh active file.
 - Configure the log file path and level via `~/.openclaw/openclaw.json`: `logging.file`, `logging.level`.
 - The file format is one JSON object per line.
+
+With config hot reload enabled, changes to `logging.level`, `logging.file`, and
+`logging.maxFileBytes` apply to the next log record, including records from
+long-lived channel loggers. Queued records finish writing to their original file.
+Explicit logger-level overrides, such as Baileys verbosity, remain in effect.
 
 Talk, realtime voice, and managed-room code paths use the shared file logger for bounded lifecycle records intended for operational debugging and OTLP log export. Transcript text, audio payloads, turn ids, call ids, and provider item ids are never copied into the log record.
 
@@ -43,28 +48,42 @@ openclaw logs --follow
 - **File logs** are controlled exclusively by `logging.level`.
 - `--verbose` only affects **console verbosity** (and WS log style) - it does **not** raise the file log level.
 - To capture verbose-only details in file logs, set `logging.level` to `debug` or `trace`.
+- Embedded-run `continue_normal` decisions log at `debug`; retry, profile-rotation, model-fallback, and error decisions remain warnings.
 - Trace logging also includes diagnostic timing summaries for selected hot paths, such as plugin tool factory preparation. See [/tools/plugin#slow-plugin-tool-setup](/tools/plugin#slow-plugin-tool-setup).
 
 ## Console capture
 
 The CLI captures `console.log/info/warn/error/debug/trace`, writes them to file logs, and still prints to stdout/stderr.
 
+`console.trace()` keeps its redacted stack in every console style, including
+forced stderr output. File capture records it once at `trace` level, subject to
+the configured file log level.
+
 Tune console verbosity independently:
 
 - `logging.consoleLevel` (default `info`)
-- `logging.consoleStyle` (`pretty` | `compact` | `json`; defaults to `pretty` on a TTY, `compact` otherwise)
+- `logging.consoleStyle` (`pretty` | `json`). When unset, output is `pretty` on a TTY and the automatic `compact` style otherwise. `compact` is no longer a settable value; `openclaw doctor --fix` maps a stored one to `pretty`.
 
 ## Redaction
 
 OpenClaw masks sensitive tokens before log or transcript output leaves the process. This redaction policy applies at console, file-log, OTLP log-record, and session transcript text sinks, so matching secret values are masked before JSONL lines or messages are written to disk.
 
-- `logging.redactSensitive`: `off` | `tools` (default: `tools`)
+Model-visible tool-result text preserves ambiguous source assignments such as
+`token = timeObserverToken`. Registered secrets and explicit credential forms,
+including structured fields, authorization headers, URL credentials, and known
+token formats, remain masked. Direct reads of `.env`
+files apply broader assignment masking before their content becomes a tool
+result. Other config and source reads preserve opaque values; register actual
+secrets instead of relying on key-name matching. Other transcript fields and
+diagnostic sinks retain broad assignment matching.
+
+- Sensitive-value redaction is always enabled.
 - `logging.redactPatterns`: array of regex strings (overrides defaults)
   - Use raw regex strings (auto `gi`), or `/pattern/flags` for custom flags.
   - Matches are masked keeping the first 6 + last 4 chars (values >= 18 chars); shorter values become `***`.
   - Defaults cover common key assignments, CLI flags, JSON fields, bearer headers, PEM blocks, popular vendor token prefixes, and payment credential field names (card number, CVC/CVV, shared payment token, payment credential).
 
-Some safety boundaries always redact regardless of `logging.redactSensitive`: Control UI tool-call events, `sessions_history` tool output, diagnostics support exports, provider error observations, exec approval command display, and Gateway WebSocket protocol logs. These surfaces still honor `logging.redactPatterns` as additional patterns, but `redactSensitive: "off"` does not make them emit raw secrets.
+Safety boundaries such as Control UI tool-call events, `sessions_history` output, diagnostics exports, provider errors, exec approval display, and Gateway WebSocket logs always redact. `logging.redactPatterns` adds deployment-specific patterns.
 
 ## Gateway WebSocket logs
 
@@ -100,7 +119,7 @@ The console formatter is **TTY-aware** and prints consistent, prefixed lines. Su
 - **Subsystem prefixes** on every line (e.g. `[gateway]`, `[canvas]`, `[tailscale]`).
 - **Subsystem colors** (stable per subsystem, hashed from the name) plus level coloring.
 - **Color when output is a TTY** or the environment looks like a rich terminal (`TERM`/`COLORTERM`/`TERM_PROGRAM`); respects `NO_COLOR` and `FORCE_COLOR`.
-- **Shortened subsystem prefixes**: drops a leading `gateway/`, `channels/`, or `providers/` segment, then keeps at most the last 2 remaining segments (e.g. `channels/turn/kernel` displays as `turn/kernel`). Known channel subsystems (`telegram`, `whatsapp`, `slack`, etc.) always collapse to just the channel name.
+- **Shortened subsystem prefixes**: drops a leading `gateway/`, `channels/`, or `providers/` segment, then keeps at most the last 2 remaining segments (e.g. `channels/turn/execution` displays as `turn/execution`). Known channel subsystems (`telegram`, `whatsapp`, `slack`, etc.) always collapse to just the channel name.
 - **Sub-loggers by subsystem** (auto prefix + structured field `{ subsystem }`).
 - **`logRaw()`** for QR/UX output (no prefix, no formatting).
 - **Console styles**: `pretty` | `compact` | `json`.

@@ -8,18 +8,11 @@ title: "Transcript hygiene"
 ---
 
 OpenClaw applies **provider-specific fixes** to transcripts before a run
-(building model context). Most of these are **in-memory** adjustments used to
-satisfy strict provider requirements. A separate session-file repair pass may
-also rewrite stored JSONL before the session is loaded, but only for
-malformed lines or persisted turns that are invalid durable records.
-Delivered assistant replies are preserved on disk; provider-specific
+(building model context). These are **in-memory** adjustments used to satisfy
+strict provider requirements. Runtime transcript state stays in SQLite;
+provider-specific
 assistant-prefill stripping happens only while constructing outbound
 payloads.
-
-When a repair occurs, the original file is written to a transient
-`*.bak-<pid>-<ts>` sibling before the atomic replace, then removed once the
-replace succeeds. The backup is retained only if cleanup itself fails, in
-which case the path is reported back.
 
 Scope includes:
 
@@ -64,12 +57,8 @@ All transcript hygiene is centralized in the embedded runner:
 - Sanitization/repair application: `sanitizeSessionHistory` in
   `src/agents/embedded-agent-runner/replay-history.ts`
 
-Separate from transcript hygiene, session files are repaired (if needed)
-before load:
-
-- `repairSessionFileIfNeeded` in `src/agents/session-file-repair.ts`
-- Called from `src/agents/embedded-agent-runner/run/attempt.ts` and
-  `src/agents/embedded-agent-runner/compact.ts`
+Legacy JSONL validation and import belong to `openclaw doctor --fix`; the
+embedded runner does not repair or reopen file-backed runtime transcripts.
 
 ---
 
@@ -88,9 +77,9 @@ Implementation:
 - Max image side is configurable via `agents.defaults.imageMaxDimensionPx`
   (default: `1200`)
 - Blank text blocks are removed while this pass walks replay content.
-  Assistant turns that become empty are dropped from the replay copy; user
-  and tool-result turns that become empty receive a non-empty
-  omitted-content placeholder.
+  Assistant turns that become empty are dropped unless they own opaque
+  provider replay state; user and tool-result turns that become empty receive
+  a non-empty omitted-content placeholder.
 
 ---
 
@@ -108,15 +97,34 @@ Implementation:
 
 ---
 
-## Global rule: incomplete reasoning-only turns
+## Global rule: tool result pairing
 
-Assistant turns that hit the provider output limit with only thinking or
-redacted-thinking content are omitted from the in-memory replay copy. Such
-turns contain incomplete provider state and may carry a partial thinking
-signature.
+Tool results are paired to tool-call occurrences within each assistant turn before
+provider-specific call IDs are rewritten. Provider-generated IDs may repeat on later
+turns, so a result adjacent to a repeated call stays with that occurrence. A displaced
+result is moved only when exactly one unresolved occurrence can own it; ambiguous
+extras are dropped and missing occurrences receive synthetic error results.
+
+Implementation: `sanitizeToolUseResultPairing` in
+`src/agents/session-transcript-repair.ts`
+
+---
+
+## Global rule: incomplete or silent reasoning-only turns
+
+Assistant turns are omitted from the in-memory replay copy when they contain
+only thinking or redacted-thinking content after either of these events:
+
+- The provider output limit ends the turn with incomplete reasoning state.
+- Silent-reply cleanup removes the turn's only visible `NO_REPLY` text.
+
+The silent-reply cleanup prevents hidden reasoning from merging into a later
+assistant tool-use turn when strict providers rebuild the conversation.
 
 Empty length turns remain unchanged, as do length turns with visible text,
-tool calls, or unknown content blocks. Stored transcripts are not rewritten.
+tool calls, or unknown content blocks. Silent-reply turns with tool calls or
+unknown content blocks also remain unchanged. Stored transcripts are not
+rewritten.
 
 Implementation: `normalizeAssistantReplayContent` in
 `src/agents/embedded-agent-runner/replay-history.ts`
@@ -187,17 +195,29 @@ inter-session user turns that only have provenance metadata.
 
 **Anthropic / Minimax (Anthropic-compatible)**
 
+- Prefix-binding Claude models, such as Fable 5.1, persist runtime-context carriers
+  as hidden custom messages immediately after their user turn and replay them in
+  place. Inline inbound metadata on older user turns is also retained. This
+  model-scoped append-only policy includes Bedrock, Vertex, and Foundry routes.
+  Carriers contain only the delimited context body; the shared instruction lives
+  once in the stable system prompt. Carriers remain user-role context and
+  are excluded from chat history and compaction summarization. Other Claude
+  models and Anthropic-compatible models keep transient carriers, avoiding
+  repeated cache-read charges and context use for old carriers when nothing
+  binds the prefix.
 - Tool result pairing repair and synthetic tool results.
 - Turn validation (merge consecutive user turns to satisfy strict
-  alternation).
+  alternation). For prefix-binding models on the Messages API, append-only replay keeps
+  consecutive user turns separate instead, so a command turn followed by a
+  prompt replays with the same per-turn timestamp stamps the active turn was
+  signed over; Bedrock Converse still merges them.
 - Trailing assistant prefill turns are stripped from outgoing Anthropic
   Messages payloads when thinking is enabled, including Cloudflare AI
   Gateway routes.
 - Pre-compaction assistant thinking signatures are stripped before provider
-  replay when a session has been compacted. Thinking signatures are
-  cryptographically bound to the conversation prefix at generation time;
-  after compaction the prefix changes (summarized content replaces the
-  original), so replaying the original signatures causes Anthropic to
+  replay when a session has been compacted. On prefix-binding models,
+  compaction changes the signed prefix (summarized content replaces the
+  original), so replaying the original signatures can cause Anthropic to
   reject the request with "Invalid signature in thinking block". The
   thinking text is preserved as an unsigned block and then handled by the
   rule below.

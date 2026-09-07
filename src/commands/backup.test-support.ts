@@ -6,7 +6,34 @@ import { vi } from "vitest";
 import type { RuntimeEnv } from "../runtime.js";
 import { deleteTestEnvValue } from "../test-utils/env.js";
 import * as backupShared from "./backup-shared.js";
-import { resolveBackupPlanFromPaths } from "./backup-shared.js";
+
+type BackupPlan = Awaited<ReturnType<typeof backupShared.resolveBackupPlanFromDisk>>;
+
+type ResolveBackupPlanFromPathsParams = {
+  stateDir: string;
+  configPath: string;
+  oauthDir: string;
+  workspaceDirs?: string[];
+  includeWorkspace?: boolean;
+  onlyConfig?: boolean;
+  nowMs?: number;
+};
+
+type BackupPlanTestApi = {
+  resolveBackupPlanFromPaths(params: ResolveBackupPlanFromPathsParams): Promise<BackupPlan>;
+};
+
+function getBackupPlanTestApi(): BackupPlanTestApi {
+  return (globalThis as Record<PropertyKey, unknown>)[
+    Symbol.for("openclaw.backupPlanTestApi")
+  ] as BackupPlanTestApi;
+}
+
+export async function resolveBackupPlanFromPaths(
+  params: ResolveBackupPlanFromPathsParams,
+): Promise<BackupPlan> {
+  return await getBackupPlanTestApi().resolveBackupPlanFromPaths(params);
+}
 
 const backupTestMocks = vi.hoisted(() => ({
   backupVerifyCommandMock: vi.fn(),
@@ -63,8 +90,6 @@ export async function mockStateOnlyBackupPlan(stateDir: string) {
       configPath: path.join(stateDir, "openclaw.json"),
       oauthDir: path.join(stateDir, "credentials"),
       includeWorkspace: false,
-      configInsideState: true,
-      oauthInsideState: true,
       nowMs: 123,
     }),
   );

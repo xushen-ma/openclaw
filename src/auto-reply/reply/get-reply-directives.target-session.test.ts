@@ -2,9 +2,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import { SessionWorkStartInvalidatedError } from "../../config/sessions/lifecycle.js";
+import {
+  MODEL_SELECTION_LOCKED_MESSAGE,
+  ModelSelectionLockedError,
+} from "../../sessions/model-overrides.js";
+import { normalizeSessionDeliveryState } from "../../utils/delivery-context.shared.js";
 import { getReplyPayloadMetadata } from "../reply-payload.js";
-import type { TemplateContext } from "../templating.js";
+import type { FinalizedTemplateContext as TemplateContext } from "../templating.js";
 import { resolveReplyDirectives } from "./get-reply-directives.js";
+import {
+  prepareReplyConversation,
+  type PreparedReplyConversation,
+} from "./prompt-session-context.js";
 import { buildTestCtx } from "./test-ctx.js";
 
 const mocks = vi.hoisted(() => ({
@@ -13,6 +22,8 @@ const mocks = vi.hoisted(() => ({
   listAgentEntries: vi.fn(),
   resolveFastModeState: vi.fn(),
   resolveReplyExecOverrides: vi.fn(),
+  resolveGroupRequireMention: vi.fn(async (_params: unknown) => false),
+  shouldHandleTextCommands: vi.fn(() => false),
 }));
 
 function makeSessionEntry(overrides: Partial<SessionEntry> = {}): SessionEntry {
@@ -33,114 +44,6 @@ function makeTypingController() {
     markRunComplete: () => {},
     markDispatchIdle: () => {},
     cleanup: vi.fn(),
-  };
-}
-
-function parseInlineDirectivesForTest(body: string) {
-  const normalized = body.trim();
-  const modelDirective = normalized.match(/(?:^|\n)\/model\s+(\S+)/)?.[1];
-  if (modelDirective) {
-    return {
-      cleaned: normalized.replace(/(?:^|\n)\/model\s+\S+/, "").trim(),
-      hasThinkDirective: false,
-      hasVerboseDirective: false,
-      hasTraceDirective: false,
-      traceLevel: undefined,
-      rawTraceLevel: undefined,
-      hasFastDirective: false,
-      hasReasoningDirective: false,
-      hasElevatedDirective: false,
-      hasExecDirective: false,
-      hasModelDirective: true,
-      hasQueueDirective: false,
-      hasStatusDirective: false,
-      queueReset: false,
-      thinkLevel: undefined,
-      verboseLevel: undefined,
-      fastMode: undefined,
-      reasoningLevel: undefined,
-      elevatedLevel: undefined,
-      rawElevatedLevel: undefined,
-      rawModelDirective: modelDirective,
-      execSecurity: undefined,
-    };
-  }
-  if (normalized === "/reasoning stream") {
-    return {
-      cleaned: "",
-      hasThinkDirective: false,
-      hasVerboseDirective: false,
-      hasTraceDirective: false,
-      traceLevel: undefined,
-      rawTraceLevel: undefined,
-      hasFastDirective: false,
-      hasReasoningDirective: true,
-      reasoningLevel: "stream",
-      rawReasoningLevel: "stream",
-      hasElevatedDirective: false,
-      hasExecDirective: false,
-      hasModelDirective: false,
-      hasQueueDirective: false,
-      hasStatusDirective: false,
-      queueReset: false,
-      thinkLevel: undefined,
-      verboseLevel: undefined,
-      fastMode: undefined,
-      elevatedLevel: undefined,
-      rawElevatedLevel: undefined,
-      rawModelDirective: undefined,
-      execSecurity: undefined,
-    };
-  }
-  if (normalized === "/trace on") {
-    return {
-      cleaned: "",
-      hasThinkDirective: false,
-      hasVerboseDirective: false,
-      hasTraceDirective: true,
-      traceLevel: "on",
-      rawTraceLevel: "on",
-      hasFastDirective: false,
-      hasReasoningDirective: false,
-      hasElevatedDirective: false,
-      hasExecDirective: false,
-      hasModelDirective: false,
-      hasQueueDirective: false,
-      hasStatusDirective: false,
-      queueReset: false,
-      thinkLevel: undefined,
-      verboseLevel: undefined,
-      fastMode: undefined,
-      reasoningLevel: undefined,
-      elevatedLevel: undefined,
-      rawElevatedLevel: undefined,
-      rawModelDirective: undefined,
-      execSecurity: undefined,
-    };
-  }
-  return {
-    cleaned: body,
-    hasThinkDirective: false,
-    hasVerboseDirective: false,
-    hasTraceDirective: false,
-    traceLevel: undefined,
-    rawTraceLevel: undefined,
-    hasFastDirective: false,
-    hasReasoningDirective: false,
-    hasElevatedDirective: false,
-    hasExecDirective: false,
-    hasModelDirective: false,
-    hasQueueDirective: false,
-    hasStatusDirective: false,
-    queueReset: false,
-    thinkLevel: undefined,
-    verboseLevel: undefined,
-    fastMode: undefined,
-    reasoningLevel: undefined,
-    elevatedLevel: undefined,
-    rawElevatedLevel: undefined,
-    rawModelDirective: undefined,
-    execSecurity: undefined,
   };
 }
 
@@ -176,6 +79,7 @@ async function resolveHelloWithModelDefaults(params: {
   cfg?: Parameters<typeof resolveReplyDirectives>[0]["cfg"];
   body?: string;
   sessionEntry?: SessionEntry;
+  sessionStore?: Record<string, SessionEntry>;
   agentCfg?: { reasoningDefault?: "off" | "on" | "stream" };
   agentEntries?: Array<{ id?: string; thinkingDefault?: "off" | "low" }>;
   hasConfiguredThinkingDefault?: boolean;
@@ -186,8 +90,10 @@ async function resolveHelloWithModelDefaults(params: {
   provider?: string;
   model?: string;
   ctx?: Parameters<typeof buildTestCtx>[0];
+  sessionCtx?: Partial<TemplateContext>;
   opts?: Parameters<typeof resolveReplyDirectives>[0]["opts"];
   modelError?: unknown;
+  conversation?: PreparedReplyConversation;
 }) {
   const resolveDefaultThinkingLevel = vi.fn(
     async (selection?: { model?: string }) =>
@@ -212,6 +118,20 @@ async function resolveHelloWithModelDefaults(params: {
   }
   const typing = makeTypingController();
 
+  const sessionCtx = {
+    Body: params.body ?? "hello",
+    BodyStripped: params.body ?? "hello",
+    BodyForAgent: params.body ?? "hello",
+    CommandBody: params.body ?? "hello",
+    commandText: params.body ?? "hello",
+    agentText: params.body ?? "hello",
+    rawText: params.body ?? "hello",
+    Provider: "whatsapp",
+    ...params.sessionCtx,
+  } as TemplateContext;
+
+  const sessionEntry = params.sessionEntry ?? makeSessionEntry();
+
   const result = await resolveReplyDirectives({
     ctx: buildTestCtx({
       Body: params.body ?? "hello",
@@ -223,19 +143,19 @@ async function resolveHelloWithModelDefaults(params: {
     agentDir: "/tmp/main-agent",
     workspaceDir: "/tmp",
     agentCfg: params.agentCfg ?? {},
-    sessionCtx: {
-      Body: params.body ?? "hello",
-      BodyStripped: params.body ?? "hello",
-      BodyForAgent: params.body ?? "hello",
-      CommandBody: params.body ?? "hello",
-      Provider: "whatsapp",
-    } as TemplateContext,
-    sessionEntry: params.sessionEntry ?? makeSessionEntry(),
-    sessionStore: {},
+    sessionCtx,
+    sessionEntry,
+    sessionStore: params.sessionStore ?? {},
     sessionKey: "agent:main:whatsapp:+2000",
     storePath: "/tmp/sessions.json",
     sessionScope: "per-sender",
-    groupResolution: undefined,
+    conversation:
+      params.conversation ??
+      prepareReplyConversation({
+        ctx: sessionCtx,
+        sessionEntry: params.sessionStore?.["agent:main:whatsapp:+2000"] ?? sessionEntry,
+        isHeartbeat: params.opts?.isHeartbeat,
+      }),
     isGroup: false,
     triggerBodyNormalized: "hello",
     resetTriggered: false,
@@ -286,11 +206,11 @@ vi.mock("../../agents/thinking-runtime.js", () => ({
 }));
 
 vi.mock("../../routing/session-key.js", () => ({
-  normalizeAgentId: (value: string) => value,
+  normalizeAgentId: vi.fn((value: string) => value),
 }));
 
 vi.mock("../commands-text-routing.js", () => ({
-  shouldHandleTextCommands: vi.fn(() => false),
+  shouldHandleTextCommands: () => mocks.shouldHandleTextCommands(),
 }));
 
 vi.mock("./commands-context.js", () => ({
@@ -310,9 +230,14 @@ vi.mock("./commands-context.js", () => ({
   })),
 }));
 
-vi.mock("./directive-handling.parse.js", () => ({
-  parseInlineDirectives: vi.fn(parseInlineDirectivesForTest),
-}));
+vi.mock("./directive-handling.parse.js", async () => {
+  const { parseInlineDirectivesForTargetSessionTest } =
+    await import("./get-reply-directives.target-session.test-helpers.js");
+  return {
+    parseInlineSessionDirectives: vi.fn(parseInlineDirectivesForTargetSessionTest),
+    resolveReplyDirectiveCommand: vi.fn(() => undefined),
+  };
+});
 
 vi.mock("./get-reply-directive-aliases.js", () => ({
   reserveSkillCommandNames: vi.fn(),
@@ -338,7 +263,7 @@ vi.mock("./get-reply-fast-path.js", () => ({
 
 vi.mock("./groups.js", () => ({
   defaultGroupActivation: vi.fn(() => "always"),
-  resolveGroupRequireMention: vi.fn(async () => false),
+  resolveGroupRequireMention: (params: unknown) => mocks.resolveGroupRequireMention(params),
 }));
 
 vi.mock("./model-selection.js", () => ({
@@ -363,6 +288,8 @@ describe("resolveReplyDirectives", () => {
     mocks.listAgentEntries.mockReset();
     mocks.resolveFastModeState.mockReset();
     mocks.resolveReplyExecOverrides.mockReset();
+    mocks.resolveGroupRequireMention.mockReset().mockResolvedValue(false);
+    mocks.shouldHandleTextCommands.mockReset().mockReturnValue(false);
 
     mocks.listAgentEntries.mockReturnValue([]);
     mocks.createModelSelectionState.mockResolvedValue({
@@ -406,6 +333,66 @@ describe("resolveReplyDirectives", () => {
     expect(modelSelectionInput.hasOneTurnModelOverride).toBe(true);
   });
 
+  it("passes persisted session identity into system-event group activation resolution", async () => {
+    const wrapperSessionEntry = makeSessionEntry({ sessionId: "wrapper-session" });
+    const targetSessionEntry = makeSessionEntry({
+      sessionId: "target-session",
+      chatType: "channel",
+      groupId: "C123",
+      delivery: normalizeSessionDeliveryState({ context: { channel: "slack", to: "C123" } }),
+    });
+
+    await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      sessionEntry: wrapperSessionEntry,
+      sessionStore: { "agent:main:whatsapp:+2000": targetSessionEntry },
+      ctx: { InternalTurnSource: "heartbeat" },
+      sessionCtx: { InternalTurnSource: "heartbeat", Provider: undefined },
+    });
+
+    expect(mockCallInput(mocks.resolveGroupRequireMention).group).toMatchObject({
+      channel: "slack",
+      groupId: "C123",
+    });
+  });
+
+  it("uses the base room identity for isolated heartbeat group activation", async () => {
+    const baseSessionKey = "agent:main:slack:channel:C123";
+    const baseSessionEntry = makeSessionEntry({
+      sessionId: "base-session",
+      chatType: "channel",
+      groupId: "C123",
+      groupChannel: "#general",
+      delivery: normalizeSessionDeliveryState({ context: { channel: "slack", to: "C123" } }),
+    });
+    const isolatedSessionEntry = makeSessionEntry({
+      sessionId: "isolated-session",
+      heartbeatIsolatedBaseSessionKey: baseSessionKey,
+    });
+
+    await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      conversation: prepareReplyConversation({
+        ctx: { InternalTurnSource: "heartbeat" },
+        sessionEntry: baseSessionEntry,
+      }),
+      sessionStore: {
+        "agent:main:whatsapp:+2000": isolatedSessionEntry,
+        [baseSessionKey]: baseSessionEntry,
+      },
+      ctx: { InternalTurnSource: "heartbeat" },
+      sessionCtx: { InternalTurnSource: "heartbeat", Provider: undefined },
+    });
+
+    expect(mockCallInput(mocks.resolveGroupRequireMention).group).toMatchObject({
+      channel: "slack",
+      groupId: "C123",
+      groupChannel: "#general",
+    });
+  });
+
   it("returns a terminal retry when model preparation sees a rotated session", async () => {
     const error = new SessionWorkStartInvalidatedError(
       'Session "agent:main:whatsapp:+2000" changed while starting work. Retry.',
@@ -416,7 +403,25 @@ describe("resolveReplyDirectives", () => {
       modelError: error,
     });
 
-    expect(result).toEqual({ kind: "reply", reply: { text: error.message } });
+    expect(result).toEqual({
+      kind: "reply",
+      reply: { text: error.message, isError: true },
+    });
+    expect(typing.cleanup).toHaveBeenCalledOnce();
+    expect(mocks.applyInlineDirectiveOverrides).not.toHaveBeenCalled();
+  });
+
+  it("returns a terminal rejection when locked model preparation cannot preserve its model", async () => {
+    const { result, typing } = await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      modelError: new ModelSelectionLockedError(),
+    });
+
+    expect(result).toEqual({
+      kind: "reply",
+      reply: { text: MODEL_SELECTION_LOCKED_MESSAGE, isError: true },
+    });
     expect(typing.cleanup).toHaveBeenCalledOnce();
     expect(mocks.applyInlineDirectiveOverrides).not.toHaveBeenCalled();
   });
@@ -424,7 +429,9 @@ describe("resolveReplyDirectives", () => {
   it("marks terminal directive replies for delivery under source suppression", async () => {
     mocks.applyInlineDirectiveOverrides.mockResolvedValueOnce({
       kind: "reply",
-      reply: { text: "Model set to fable (anthropic/claude-fable-5) for this session." },
+      reply: {
+        text: "Model set to fable (anthropic/claude-fable-5) for this session only; configured default unchanged.",
+      },
     });
 
     const { result } = await resolveHelloWithModelDefaults({
@@ -439,6 +446,33 @@ describe("resolveReplyDirectives", () => {
       throw new Error("expected a single directive reply");
     }
     expect(getReplyPayloadMetadata(result.reply)?.deliverDespiteSourceReplySuppression).toBe(true);
+  });
+
+  it("preserves explicitly suppressed command-shaped text for the model", async () => {
+    const body = "/model openai/gpt-5.5";
+    mocks.shouldHandleTextCommands.mockReturnValue(true);
+
+    const { result } = await resolveHelloWithModelDefaults({
+      body,
+      commandAuthorized: true,
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      ctx: {
+        CommandInterpretationSuppressed: true,
+        CommandTurn: {
+          kind: "normal",
+          source: "message",
+          authorized: false,
+          body,
+        },
+      },
+    });
+
+    expectContinueResult(result, { cleanedBody: body });
+    expect(mockCallInput(mocks.createModelSelectionState).hasModelDirective).toBe(false);
+    expect(mockCallInput(mocks.applyInlineDirectiveOverrides).directives).toMatchObject({
+      hasModelDirective: false,
+    });
   });
 
   it("keeps one-turn fast mode with the resolved fast mode", async () => {
@@ -602,6 +636,9 @@ describe("resolveReplyDirectives", () => {
         BodyStripped: "hello",
         BodyForAgent: "hello",
         CommandBody: "hello",
+        commandText: "hello",
+        agentText: "hello",
+        rawText: "hello",
         Provider: "whatsapp",
       } as TemplateContext,
       sessionEntry: wrapperSessionEntry,
@@ -611,7 +648,7 @@ describe("resolveReplyDirectives", () => {
       sessionKey: "agent:main:whatsapp:+2000",
       storePath: "/tmp/sessions.json",
       sessionScope: "per-sender",
-      groupResolution: undefined,
+      conversation: prepareReplyConversation({ ctx: { Provider: "whatsapp" } }),
       isGroup: false,
       triggerBodyNormalized: "hello",
       resetTriggered: false,
@@ -677,6 +714,9 @@ describe("resolveReplyDirectives", () => {
         BodyStripped: "/trace on",
         BodyForAgent: "/trace on",
         CommandBody: "/trace on",
+        commandText: "/trace on",
+        agentText: "/trace on",
+        rawText: "/trace on",
         Provider: "telegram",
         Surface: "telegram",
       } as TemplateContext,
@@ -687,7 +727,7 @@ describe("resolveReplyDirectives", () => {
       sessionKey: "agent:main:telegram:+2000",
       storePath: "/tmp/sessions.json",
       sessionScope: "per-sender",
-      groupResolution: undefined,
+      conversation: prepareReplyConversation({ ctx: { Provider: "telegram" } }),
       isGroup: false,
       triggerBodyNormalized: "/trace on",
       resetTriggered: false,
@@ -895,6 +935,9 @@ describe("resolveReplyDirectives", () => {
       BodyForAgent: "",
       BodyForCommands: "new session",
       CommandBody: "new session",
+      commandText: "new session",
+      agentText: "",
+      rawText: "new session",
       Provider: "slack",
       Surface: "slack",
     } as TemplateContext;
@@ -926,7 +969,7 @@ describe("resolveReplyDirectives", () => {
       sessionKey: "agent:main:slack:C123",
       storePath: "/tmp/sessions.json",
       sessionScope: "per-sender",
-      groupResolution: undefined,
+      conversation: prepareReplyConversation({ ctx: sessionCtx }),
       isGroup: false,
       triggerBodyNormalized: "new session",
       resetTriggered: true,
@@ -948,5 +991,107 @@ describe("resolveReplyDirectives", () => {
     expect(sessionCtx.Body).toBe("");
     expect(sessionCtx.BodyForAgent).toBe("");
     expect(sessionCtx.BodyStripped).toBe("");
+  });
+
+  it("preserves prompt-facing context for transcript-backed text", async () => {
+    const agentText = "trusted provenance\n\nhello";
+    const { result } = await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      body: "hello",
+      sessionCtx: { commandText: "hello", agentText, rawText: "hello" },
+    });
+
+    expectContinueResult(result, { cleanedBody: agentText });
+  });
+
+  it("does not resurrect a consumed command from the inbound context", async () => {
+    const sessionCtx = {
+      Body: "",
+      BodyStripped: "",
+      commandText: "",
+      agentText: "",
+      rawText: "new session",
+      Provider: "slack",
+      Surface: "slack",
+    } as TemplateContext;
+
+    const directResult = await resolveReplyDirectives({
+      ctx: buildTestCtx({
+        Body: "new session",
+        BodyForCommands: "new session",
+        CommandBody: "new session",
+        Provider: "slack",
+        Surface: "slack",
+      }),
+      cfg: {},
+      agentId: "main",
+      agentDir: "/tmp/main-agent",
+      workspaceDir: "/tmp",
+      agentCfg: {},
+      sessionCtx,
+      sessionEntry: makeSessionEntry(),
+      sessionStore: {},
+      sessionKey: "agent:main:slack:C123",
+      storePath: "/tmp/sessions.json",
+      sessionScope: "per-sender",
+      conversation: prepareReplyConversation({ ctx: sessionCtx }),
+      isGroup: false,
+      triggerBodyNormalized: "new session",
+      resetTriggered: true,
+      commandAuthorized: true,
+      defaultProvider: "openai",
+      defaultModel: "gpt-4o-mini",
+      aliasIndex: { byAlias: new Map(), byKey: new Map() },
+      provider: "openai",
+      model: "gpt-4o-mini",
+      hasResolvedHeartbeatModelOverride: false,
+      typing: makeTypingController(),
+    });
+
+    expectContinueResult(directResult, { commandSource: "", cleanedBody: "" });
+  });
+
+  it("does not apply or remove directives when the command projection is explicitly empty", async () => {
+    const { result } = await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      body: "/trace on",
+      commandAuthorized: true,
+      sessionCtx: {
+        commandText: "",
+        agentText: "/trace on",
+        rawText: "/trace on",
+      },
+    });
+
+    expectContinueResult(result, {
+      commandSource: "",
+      cleanedBody: "/trace on",
+    });
+  });
+
+  it("preserves directives and quoted current-message markers inside flat history", async () => {
+    const agentText = [
+      "[Chat messages since your last reply - for context]",
+      "Other: /trace on",
+      "Other: [Current message - respond to this] /model gpt-5.5",
+      "",
+      "[Current message - respond to this]",
+      "Owner: hello /status",
+    ].join("\n");
+    const { result } = await resolveHelloWithModelDefaults({
+      defaultThinking: "off",
+      defaultReasoning: "on",
+      body: "hello",
+      commandAuthorized: true,
+      sessionCtx: {
+        commandText: "hello",
+        agentText,
+        rawText: "hello",
+      },
+    });
+
+    expectContinueResult(result, { cleanedBody: agentText });
   });
 });

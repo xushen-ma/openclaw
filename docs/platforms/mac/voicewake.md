@@ -11,9 +11,11 @@ title: "Voice wake (macOS)"
 
 Voice Wake and push-to-talk require macOS 26 or newer. On older macOS the controls are hidden from the Voice settings page, which shows the macOS 26 requirement instead.
 
+Voice Wake requires Apple Speech to support on-device recognition for the selected language. The app refuses to start passive wake-word listening when that local-only contract is unavailable; it never falls back to network recognition. Push-to-talk, Talk Mode, and Quick Chat dictation are explicit user actions and may use Apple Speech network services for broader language coverage.
+
 ## Modes
 
-- **Wake-word mode** (default): an always-on Speech recognizer waits for trigger tokens (`swabbleTriggerWords`). On match it starts capture, shows the overlay with partial text, and auto-sends after silence.
+- **Wake-word mode** (default): an always-on, on-device Speech recognizer waits for trigger tokens (`swabbleTriggerWords`). On match it starts capture, shows the overlay with partial text, and auto-sends after silence.
 - **Push-to-talk (hold Right Option)**: hold the right Option key to capture immediately, no trigger needed. The overlay appears while held; releasing finalizes and forwards after a short delay so you can edit the text.
 
 ## Runtime behavior (wake-word)
@@ -24,7 +26,7 @@ Voice Wake and push-to-talk require macOS 26 or newer. On older macOS the contro
 - Hard stop: 120s (`captureHardStop`) to prevent runaway sessions.
 - Debounce between sessions: 350ms (`debounceAfterSend`) after a send.
 - The overlay is driven via `VoiceWakeOverlayController`, with committed/volatile text coloring.
-- After send, the recognizer restarts cleanly to listen for the next trigger.
+- After send, a fresh recognition task listens for the next trigger. Talk, Voice Wake, push-to-talk, and Quick Chat dictation reuse their recognizer while the selected language is unchanged; stopping capture still releases the microphone and cancels the task.
 
 ## Lifecycle invariants
 
@@ -43,7 +45,9 @@ Voice Wake and push-to-talk require macOS 26 or newer. On older macOS the contro
 
 - **Voice Wake** toggle: enables the wake-word runtime.
 - **Hold Right Option to talk**: enables the push-to-talk monitor.
+- If the selected language lacks on-device recognition on this Mac, Voice Wake stays disabled while push-to-talk and Talk Mode remain available.
 - Language and mic pickers, a live level meter, a trigger-word table, and a tester (local-only, never forwards).
+- Trigger words follow the Primary Gateway and refresh when it reconnects or you select a different Primary. Opening a saved Gateway chat does not change them.
 - The mic picker preserves the last selection if a device disconnects, shows a disconnected hint, and temporarily falls back to the system default until it returns.
 - **Sounds**: chimes on trigger detect and on send, defaulting to the macOS "Glass" system sound. Pick any `NSSound`-loadable file (e.g. MP3/WAV/AIFF) per event, or choose **No Sound**.
 

@@ -1,6 +1,12 @@
 // Runtime-context prompt tests keep hidden OpenClaw context separate from the
 // user-visible prompt while preserving model-only hook additions.
 import { describe, expect, it } from "vitest";
+import { stripInternalMetadataForDisplay } from "../../../auto-reply/reply/display-text-sanitize.js";
+import {
+  extractInternalRuntimeContext,
+  hasInternalRuntimeContext,
+  stripInternalRuntimeContext,
+} from "../../internal-runtime-context.js";
 import {
   buildCurrentInboundPrompt,
   buildRuntimeContextCustomMessage,
@@ -38,8 +44,9 @@ describe("runtime context prompt submission", () => {
   it("moves hidden runtime context out of the visible prompt", () => {
     // Hidden context is provider input, not user-authored transcript text; it
     // must be split before persistence and display.
+    const visiblePrompt = "[media attached: /tmp/a.png (image/png)]\nvisible ask";
     const effectivePrompt = [
-      "visible ask",
+      visiblePrompt,
       "",
       "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
       "secret runtime context",
@@ -49,10 +56,10 @@ describe("runtime context prompt submission", () => {
     expect(
       resolveRuntimeContextPromptParts({
         effectivePrompt,
-        transcriptPrompt: "visible ask",
+        transcriptPrompt: visiblePrompt,
       }),
     ).toEqual({
-      prompt: "visible ask",
+      prompt: visiblePrompt,
       runtimeContext:
         "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\nsecret runtime context\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
     });
@@ -171,9 +178,9 @@ describe("runtime context prompt submission", () => {
   it("strips hidden prompt context on both sides without removing repeated hook text", () => {
     const systemEvent = "System: [2026-06-20 13:59:51] Slack DM from Alice";
     const userText = "Hello";
-    const untrustedContext = "Untrusted channel metadata";
+    const channelMetadata = "Untrusted channel metadata";
     const hookContext = systemEvent;
-    const effectivePrompt = [systemEvent, userText, untrustedContext].join("\n\n");
+    const effectivePrompt = [systemEvent, userText, channelMetadata].join("\n\n");
     const modelPrompt = [hookContext, effectivePrompt, hookContext].join("\n\n");
 
     expect(
@@ -191,7 +198,7 @@ describe("runtime context prompt submission", () => {
     ).toEqual({
       prompt: userText,
       modelPrompt: [hookContext, userText, hookContext].join("\n\n"),
-      runtimeContext: [systemEvent, untrustedContext].join("\n\n"),
+      runtimeContext: [systemEvent, channelMetadata].join("\n\n"),
     });
   });
 
@@ -221,8 +228,8 @@ describe("runtime context prompt submission", () => {
   it("strips the last matching prompt occurrence when prepend hooks quote the body", () => {
     const systemEvent = "System: [2026-06-20 13:59:51] Slack DM from Alice";
     const userText = "Hello";
-    const untrustedContext = "Untrusted channel metadata";
-    const effectivePrompt = [systemEvent, userText, untrustedContext].join("\n\n");
+    const channelMetadata = "Untrusted channel metadata";
+    const effectivePrompt = [systemEvent, userText, channelMetadata].join("\n\n");
 
     expect(
       resolveRuntimeContextPromptParts({
@@ -238,7 +245,7 @@ describe("runtime context prompt submission", () => {
     ).toEqual({
       prompt: userText,
       modelPrompt: [effectivePrompt, userText].join("\n\n"),
-      runtimeContext: [systemEvent, untrustedContext].join("\n\n"),
+      runtimeContext: [systemEvent, channelMetadata].join("\n\n"),
     });
   });
 
@@ -611,9 +618,6 @@ describe("runtime context prompt submission", () => {
       role: "custom",
       customType: "openclaw.runtime-context",
       content: [
-        "OpenClaw runtime context for the immediately preceding user message.",
-        "This context is runtime-generated, not user-authored. Keep internal details private.",
-        "",
         "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>",
         "secret runtime context",
         "<<<END_OPENCLAW_INTERNAL_CONTEXT>>>",
@@ -632,5 +636,17 @@ describe("runtime context prompt submission", () => {
     expect(parts.runtimeSystemContext).toContain("OpenClaw runtime event.");
     expect(parts.runtimeSystemContext).toContain("not user-authored");
     expect(parts.runtimeSystemContext).toContain("internal event");
+  });
+
+  it("detects and hides the delimiter-only carrier on user-visible surfaces", () => {
+    const content = buildRuntimeContextCustomMessage("secret runtime context")!.content;
+    expect(hasInternalRuntimeContext(content)).toBe(true);
+    expect(extractInternalRuntimeContext(content).runtimeContext).toBe(content);
+    for (const strip of [stripInternalRuntimeContext, stripInternalMetadataForDisplay]) {
+      expect(strip(content)).toBe("");
+      expect(strip(`Visible answer\n\n${content}\n\nMore answer`)).toBe(
+        "Visible answer\n\nMore answer",
+      );
+    }
   });
 });

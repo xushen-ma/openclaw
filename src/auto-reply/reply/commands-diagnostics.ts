@@ -4,18 +4,23 @@ import { resolveSessionAgentId } from "../../agents/agent-scope.js";
 import { createExecTool } from "../../agents/bash-tools.js";
 import type { ExecToolDetails } from "../../agents/bash-tools.js";
 import type { SessionEntry } from "../../config/sessions.js";
+import { listSessionEntriesReadOnly } from "../../config/sessions/session-accessor.js";
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import type { ExecApprovalRequest } from "../../infra/exec-approvals.js";
-import type { InteractiveReply, MessagePresentationAction } from "../../interactive/payload.js";
+import type {
+  LegacyInteractiveReply,
+  MessagePresentationAction,
+} from "../../interactive/payload.js";
 import { executePluginCommand, matchPluginCommand } from "../../plugins/commands.js";
 import type { PluginCommandDiagnosticsSession, PluginCommandResult } from "../../plugins/types.js";
+import {
+  deliveryContextFromSession,
+  sessionDeliveryOrigin,
+} from "../../utils/delivery-context.shared.js";
 import type { ReplyPayload } from "../types.js";
 import { rejectNonOwnerCommand } from "./command-gates.js";
-import {
-  buildCurrentOpenClawCliCommand,
-  buildCurrentOpenClawCliExecEnv,
-} from "./commands-openclaw-cli.js";
+import { buildCurrentOpenClawCliExecRequest } from "./commands-openclaw-cli.js";
 import {
   deliverPrivateCommandReply,
   readCommandDeliveryTarget,
@@ -65,7 +70,7 @@ const defaultDiagnosticsCommandDeps: DiagnosticsCommandDeps = {
 };
 
 /** Creates a diagnostics command handler with injectable private-route dependencies. */
-export function createDiagnosticsCommandHandler(
+function createDiagnosticsCommandHandler(
   deps: Partial<DiagnosticsCommandDeps> = {},
 ): CommandHandler {
   const resolvedDeps: DiagnosticsCommandDeps = {
@@ -101,13 +106,30 @@ async function handleDiagnosticsCommandWithDeps(
   if (nonOwner) {
     return nonOwner;
   }
+  // Inventory belongs to this authorized command, not every reply's retained
+  // session view. Metadata preserves Codex target discovery without prompt snapshots.
+  const commandParams = params.storePath
+    ? {
+        ...params,
+        sessionStore: {
+          ...Object.fromEntries(
+            listSessionEntriesReadOnly({
+              agentId: params.agentId,
+              storePath: params.storePath,
+              projection: "list",
+            }).map(({ sessionKey, entry }) => [sessionKey, entry]),
+          ),
+          ...params.sessionStore,
+        },
+      }
+    : params;
   if (isCodexDiagnosticsConfirmationAction(args)) {
-    const codexResult = await executeCodexDiagnosticsAddon(params, args);
+    const codexResult = await executeCodexDiagnosticsAddon(commandParams, args);
     const reply = codexResult
       ? rewriteCodexDiagnosticsResult(codexResult)
       : { text: "No Codex diagnostics confirmation handler is available for this session." };
-    if (params.isGroup) {
-      return await deliverGroupDiagnosticsReplyPrivately(deps, params, reply);
+    if (commandParams.isGroup) {
+      return await deliverGroupDiagnosticsReplyPrivately(deps, commandParams, reply);
     }
     return {
       shouldContinue: false,
@@ -115,15 +137,15 @@ async function handleDiagnosticsCommandWithDeps(
     };
   }
 
-  if (params.isGroup) {
-    const privateTarget = (await deps.resolvePrivateDiagnosticsTargets(params))[0];
+  if (commandParams.isGroup) {
+    const privateTarget = (await deps.resolvePrivateDiagnosticsTargets(commandParams))[0];
     if (!privateTarget) {
       return {
         shouldContinue: false,
         reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_UNAVAILABLE },
       };
     }
-    const privateReply = await buildDiagnosticsReply(deps, params, args, {
+    const privateReply = await buildDiagnosticsReply(deps, commandParams, args, {
       diagnosticsPrivateRouted: true,
       privateApprovalTarget: privateTarget,
     });
@@ -133,10 +155,15 @@ async function handleDiagnosticsCommandWithDeps(
         reply: { text: DIAGNOSTICS_PRIVATE_ROUTE_ACK },
       };
     }
-    return await deliverGroupDiagnosticsReplyPrivately(deps, params, privateReply, privateTarget);
+    return await deliverGroupDiagnosticsReplyPrivately(
+      deps,
+      commandParams,
+      privateReply,
+      privateTarget,
+    );
   }
 
-  const reply = await buildDiagnosticsReply(deps, params, args);
+  const reply = await buildDiagnosticsReply(deps, commandParams, args);
   return reply ? { shouldContinue: false, reply } : { shouldContinue: false };
 }
 
@@ -235,9 +262,10 @@ function buildDiagnosticsApprovalRequest(params: HandleCommandsParams): ExecAppr
       config: params.cfg,
     });
   return {
+    approvalKind: "exec",
     id: "diagnostics-private-route",
     request: {
-      command: buildGatewayDiagnosticsExportJsonCommand(),
+      command: buildGatewayDiagnosticsExportJsonRequest().command,
       agentId,
       ...(params.sessionKey ? { sessionKey: params.sessionKey } : {}),
       turnSourceChannel: params.command.channel,
@@ -250,8 +278,8 @@ function buildDiagnosticsApprovalRequest(params: HandleCommandsParams): ExecAppr
   };
 }
 
-function buildGatewayDiagnosticsExportJsonCommand(): string {
-  return buildCurrentOpenClawCliCommand(["gateway", "diagnostics", "export", "--json"]);
+function buildGatewayDiagnosticsExportJsonRequest() {
+  return buildCurrentOpenClawCliExecRequest(["gateway", "diagnostics", "export", "--json"]);
 }
 
 async function deliverPrivateDiagnosticsReply(params: {
@@ -268,14 +296,14 @@ async function requestGatewayDiagnosticsExportApproval(
   options: { privateApprovalTarget?: PrivateCommandRouteTarget } = {},
   codexDiagnostics: CodexDiagnosticsApprovalIntegration = {},
 ): Promise<GatewayDiagnosticsApprovalResult> {
-  const timeoutSec = params.cfg.tools?.exec?.timeoutSec;
+  const timeoutSec = params.cfg.tools?.exec?.timeoutSeconds;
   const agentId =
     params.agentId ??
     resolveSessionAgentId({
       sessionKey: params.sessionKey,
       config: params.cfg,
     });
-  const command = buildGatewayDiagnosticsExportJsonCommand();
+  const { command, env } = buildGatewayDiagnosticsExportJsonRequest();
   try {
     const execTool = deps.createExecTool({
       host: "gateway",
@@ -291,8 +319,10 @@ async function requestGatewayDiagnosticsExportApproval(
       cwd: params.workspaceDir,
       agentId,
       sessionKey: params.sessionKey,
-      mainKey: params.cfg.session?.mainKey,
-      sessionScope: params.cfg.session?.scope,
+      eventRouting: {
+        mainKey: params.cfg.session?.mainKey,
+        sessionScope: params.cfg.session?.scope,
+      },
       ...resolveCommandExecApprovalRoute({
         commandParams: params,
         privateApprovalTarget: options.privateApprovalTarget,
@@ -302,11 +332,10 @@ async function requestGatewayDiagnosticsExportApproval(
     });
     const result = await execTool.execute("chat-diagnostics-gateway-export", {
       command,
-      env: buildCurrentOpenClawCliExecEnv(),
-      security: "allowlist",
+      env,
       ask: "always",
       background: true,
-      timeout: timeoutSec,
+      timeoutSeconds: timeoutSec,
     });
     if (result.details?.status === "approval-pending") {
       return { status: "pending" };
@@ -437,12 +466,13 @@ async function executeCodexDiagnosticsAddon(
     agentId: params.agentId,
     sessionKey: params.sessionKey,
     sessionId: targetSessionEntry?.sessionId,
-    sessionFile: targetSessionEntry?.sessionFile,
+    sessionFile: targetSessionEntry ? params.sessionKey : undefined,
     authProfileId: targetSessionEntry?.authProfileOverride,
     commandBody,
     config: params.cfg,
     from: params.command.from,
     to: params.command.to,
+    originatingTo: normalizeOptionalString(params.ctx.OriginatingTo),
     accountId: params.ctx.AccountId ?? undefined,
     messageThreadId:
       typeof params.ctx.MessageThreadId === "string" ||
@@ -477,23 +507,21 @@ function buildCodexDiagnosticsSessions(
     }
   }
   return Array.from(sessions.entries())
-    .filter(([, entry]) => Boolean(entry.sessionFile))
+    .filter(([, entry]) => Boolean(entry.sessionId?.trim()))
     .map(([sessionKey, entry]) => ({
       sessionKey,
       sessionId: entry.sessionId,
-      sessionFile: entry.sessionFile,
+      sessionFile: sessionKey,
       agentHarnessId: entry.agentHarnessId,
       channel: resolveDiagnosticsSessionChannel(entry, params, sessionKey),
       channelId: resolveDiagnosticsSessionChannelId(entry, params, sessionKey),
       accountId:
-        normalizeOptionalString(entry.deliveryContext?.accountId) ??
-        normalizeOptionalString(entry.origin?.accountId) ??
-        normalizeOptionalString(entry.lastAccountId) ??
+        normalizeOptionalString(deliveryContextFromSession(entry)?.accountId) ??
+        normalizeOptionalString(sessionDeliveryOrigin(entry)?.accountId) ??
         (sessionKey === params.sessionKey ? (params.ctx.AccountId ?? undefined) : undefined),
       messageThreadId:
-        entry.deliveryContext?.threadId ??
-        entry.origin?.threadId ??
-        entry.lastThreadId ??
+        deliveryContextFromSession(entry)?.threadId ??
+        sessionDeliveryOrigin(entry)?.threadId ??
         (sessionKey === params.sessionKey &&
         (typeof params.ctx.MessageThreadId === "string" ||
           typeof params.ctx.MessageThreadId === "number")
@@ -512,10 +540,8 @@ function resolveDiagnosticsSessionChannel(
   sessionKey: string,
 ): string | undefined {
   return (
-    normalizeOptionalString(entry.deliveryContext?.channel) ??
-    normalizeOptionalString(entry.origin?.provider) ??
-    normalizeOptionalString(entry.channel) ??
-    normalizeOptionalString(entry.lastChannel) ??
+    normalizeOptionalString(deliveryContextFromSession(entry)?.channel) ??
+    normalizeOptionalString(sessionDeliveryOrigin(entry)?.provider) ??
     (sessionKey === params.sessionKey ? params.command.channel : undefined)
   );
 }
@@ -526,7 +552,7 @@ function resolveDiagnosticsSessionChannelId(
   sessionKey: string,
 ) {
   return (
-    normalizeOptionalString(entry.origin?.nativeChannelId) ??
+    normalizeOptionalString(sessionDeliveryOrigin(entry)?.nativeChannelId) ??
     (sessionKey === params.sessionKey ? params.command.channelId : undefined)
   );
 }
@@ -579,7 +605,7 @@ function rewriteCodexDiagnosticsResult(result: PluginCommandResult): PluginComma
   };
 }
 
-function rewriteInteractive(interactive: InteractiveReply): InteractiveReply {
+function rewriteInteractive(interactive: LegacyInteractiveReply): LegacyInteractiveReply {
   return {
     blocks: interactive.blocks.map((block) => {
       if (block.type === "buttons") {
@@ -597,7 +623,7 @@ function rewriteInteractive(interactive: InteractiveReply): InteractiveReply {
           ...block,
           options: block.options.map((option) => ({
             ...option,
-            ...(option.action ? { action: rewritePresentationAction(option.action) } : {}),
+            ...(option.action ? { action: rewriteSelectPresentationAction(option.action) } : {}),
             ...(option.value ? { value: rewriteCodexDiagnosticsCommandPrefix(option.value) } : {}),
           })),
         };
@@ -614,10 +640,25 @@ function rewritePresentationAction(action: MessagePresentationAction): MessagePr
       command: rewriteCodexDiagnosticsCommandPrefix(action.command),
     };
   }
-  return {
-    type: "callback",
-    value: rewriteCodexDiagnosticsCommandPrefix(action.value),
-  };
+  if (action.type === "callback") {
+    return {
+      type: "callback",
+      value: rewriteCodexDiagnosticsCommandPrefix(action.value),
+    };
+  }
+  return action;
+}
+
+function rewriteSelectPresentationAction(
+  action: Extract<MessagePresentationAction, { type: "command" | "callback" | "model-picker" }>,
+): Extract<MessagePresentationAction, { type: "command" | "callback" | "model-picker" }> {
+  if (action.type === "command") {
+    return { type: "command", command: rewriteCodexDiagnosticsCommandPrefix(action.command) };
+  }
+  if (action.type === "callback") {
+    return { type: "callback", value: rewriteCodexDiagnosticsCommandPrefix(action.value) };
+  }
+  return action;
 }
 
 function rewriteCodexDiagnosticsCommandPrefix(value: string): string {

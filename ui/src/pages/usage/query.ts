@@ -1,24 +1,19 @@
-// Control UI view renders usage query screen content.
 import { timestampMsToIsoString } from "@openclaw/normalization-core/number-coercion";
-import { normalizeLowercaseStringOrEmpty, uniqueStrings } from "../../lib/string-coerce.ts";
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
+import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { extractQueryTerms } from "./helpers.ts";
 import type { CostDailyEntry, UsageAggregates, UsageSessionEntry } from "./types.ts";
 
-function downloadTextFile(filename: string, content: string, type = "text/plain") {
-  const blob = new Blob([content], { type: `${type};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+function neutralizeSpreadsheetFormulaCell(value: string): string {
+  return /^[ \t\r\n]*[=+\-@\uFF0B\uFF0D\uFF1D\uFF20]/u.test(value) ? `'${value}` : value;
 }
 
-function csvEscape(value: string): string {
-  if (/[",\n]/.test(value)) {
-    return `"${value.replaceAll('"', '""')}"`;
+function csvEscape(value: string, neutralizeFormulas = true): string {
+  const safeValue = neutralizeFormulas ? neutralizeSpreadsheetFormulaCell(value) : value;
+  if (/[",\r\n]/.test(safeValue)) {
+    return `"${safeValue.replaceAll('"', '""')}"`;
   }
-  return value;
+  return safeValue;
 }
 
 function toCsvRow(values: Array<string | number | undefined | null>): string {
@@ -27,7 +22,7 @@ function toCsvRow(values: Array<string | number | undefined | null>): string {
       if (value === undefined || value === null) {
         return "";
       }
-      return csvEscape(String(value));
+      return csvEscape(String(value), typeof value === "string");
     })
     .join(",");
 }
@@ -135,10 +130,13 @@ const buildQuerySuggestions = (
   if (!trimmed) {
     return [];
   }
-  const tokens = trimmed.length ? trimmed.split(/\s+/) : [];
-  const lastToken = tokens.length ? tokens[tokens.length - 1] : "";
-  const [rawKey, rawValue] = lastToken.includes(":")
-    ? [lastToken.slice(0, lastToken.indexOf(":")), lastToken.slice(lastToken.indexOf(":") + 1)]
+  const tokens = extractQueryTerms(trimmed).map((term) => term.raw);
+  const lastQueryWord = tokens.at(-1) ?? "";
+  const [rawKey, rawValue] = lastQueryWord.includes(":")
+    ? [
+        lastQueryWord.slice(0, lastQueryWord.indexOf(":")),
+        lastQueryWord.slice(lastQueryWord.indexOf(":") + 1),
+      ]
     : ["", ""];
 
   const key = normalizeLowercaseStringOrEmpty(rawKey);
@@ -219,54 +217,41 @@ const applySuggestionToQuery = (query: string, suggestion: string): string => {
   if (!trimmed) {
     return `${suggestion} `;
   }
-  const tokens = trimmed.split(/\s+/);
+  const tokens = extractQueryTerms(trimmed).map((term) => term.raw);
   tokens[tokens.length - 1] = suggestion;
   return `${tokens.join(" ")} `;
 };
 
 const normalizeQueryText = (value: string): string => normalizeLowercaseStringOrEmpty(value);
 
-const addQueryToken = (query: string, token: string): string => {
-  const trimmed = query.trim();
-  if (!trimmed) {
-    return `${token} `;
-  }
-  const tokens = trimmed.split(/\s+/);
-  const last = tokens[tokens.length - 1] ?? "";
-  const tokenKey = token.includes(":") ? token.split(":")[0] : null;
-  const lastKey = last.includes(":") ? last.split(":")[0] : null;
-  if (last.endsWith(":") && tokenKey && lastKey === tokenKey) {
-    tokens[tokens.length - 1] = token;
-    return `${tokens.join(" ")} `;
-  }
-  if (tokens.includes(token)) {
-    return `${tokens.join(" ")} `;
-  }
-  return `${tokens.join(" ")} ${token} `;
-};
-
 const removeQueryToken = (query: string, token: string): string => {
-  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  const tokens = extractQueryTerms(query).map((term) => term.raw);
   const next = tokens.filter((entry) => entry !== token);
   return next.length ? `${next.join(" ")} ` : "";
 };
 
 const setQueryTokensForKey = (query: string, key: string, values: string[]): string => {
   const normalizedKey = normalizeQueryText(key);
-  const tokens = extractQueryTerms(query)
-    .filter((term) => normalizeQueryText(term.key ?? "") !== normalizedKey)
-    .map((term) => term.raw);
-  const next = [...tokens, ...values.map((value) => `${key}:${value}`)];
+  const remaining = new Map(values.map((value) => [normalizeQueryText(value), value]));
+  const tokens: string[] = [];
+  // Retained values keep their authored spelling and quotes; serialize only new selections.
+  for (const term of extractQueryTerms(query)) {
+    if (
+      normalizeQueryText(term.key ?? "") !== normalizedKey ||
+      remaining.delete(normalizeQueryText(term.value))
+    ) {
+      tokens.push(term.raw);
+    }
+  }
+  const next = [...tokens, ...Array.from(remaining.values(), (value) => `${key}:${value}`)];
   return next.length ? `${next.join(" ")} ` : "";
 };
 
 export {
-  addQueryToken,
   applySuggestionToQuery,
   buildDailyCsv,
   buildQuerySuggestions,
   buildSessionsCsv,
-  downloadTextFile,
   normalizeQueryText,
   removeQueryToken,
   setQueryTokensForKey,

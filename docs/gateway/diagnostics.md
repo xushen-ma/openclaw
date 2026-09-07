@@ -110,7 +110,13 @@ delay; otherwise they log at `debug`. Idle liveness samples are still recorded
 as diagnostic events but never escalate to a warning by themselves.
 
 Startup phases emit `diagnostic.phase.completed` events with wall-clock and
-CPU timing. Stalled embedded-run diagnostics mark `terminalProgressStale=true`
+whole-process CPU timing, including worker and native threads. Phase CPU can
+include concurrent work outside that phase; it is not exclusive attribution.
+The `cpuCoreRatio` in phase and liveness events is measured in core equivalents
+and can exceed `1`. See
+[CPU pressure and event-loop delay](/gateway/health#cpu-pressure-and-event-loop-delay).
+
+Stalled embedded-run diagnostics mark `terminalProgressStale=true`
 when the last bridge progress looked terminal (for example a raw response
 item or response-completion event) but the Gateway still considers the
 embedded run active.
@@ -175,21 +181,9 @@ diagnostic event collection:
 Disabling diagnostics reduces bug-report detail; it does not affect normal
 Gateway logging.
 
-Critical memory pressure snapshots are off by default. To capture the
-pre-OOM stability snapshot in addition to normal diagnostics events:
-
-```json5
-{
-  diagnostics: {
-    memoryPressureSnapshot: true,
-  },
-}
-```
-
-Use this only on hosts that can tolerate the extra file-system scan and
-snapshot write during critical memory pressure. Normal memory pressure events
-still record RSS, heap, threshold, and growth facts (`rss_threshold`,
-`heap_threshold`, `rss_growth`) when the snapshot is off.
+Memory pressure events record RSS, heap, threshold, and growth facts
+(`rss_threshold`, `heap_threshold`, `rss_growth`) without performing a
+file-system scan or writing a pre-OOM snapshot.
 
 ## Related
 

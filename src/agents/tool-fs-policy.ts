@@ -7,65 +7,62 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { FsToolsConfig } from "../config/types.tools.js";
 import { resolveAgentConfig } from "./agent-scope.js";
 import { pickSandboxToolPolicy } from "./sandbox-tool-policy.js";
-import type { ToolFsExtraRoot, ToolFsPolicy } from "./tool-fs-policy.types.js";
+import { getSandboxHostPathPolicyKey, isSandboxHostPathAbsolute } from "./sandbox/host-paths.js";
+import type { ToolFsExtraRoot } from "./tool-fs-policy.types.js";
 import { isToolAllowedByPolicies } from "./tool-policy-match.js";
 import { mergeAlsoAllowPolicy, resolveToolProfilePolicy } from "./tool-policy.js";
 
-export type { ToolFsPolicy } from "./tool-fs-policy.types.js";
+export type {
+  PreparedSessionPermissionPolicy,
+  ToolFsExtraRoot,
+  ToolFsPolicy,
+} from "./tool-fs-policy.types.js";
+export { resolveSessionPermissionExecMode } from "./session-permission-exec-mode.js";
 
 type FsExtraRootConfig = NonNullable<FsToolsConfig["extraRoots"]>[number];
 
-function normalizeExtraRoot(entry: FsExtraRootConfig): ToolFsExtraRoot | undefined {
-  if (typeof entry === "string") {
-    const value = entry.trim();
-    return value ? { path: value, mode: "rw" } : undefined;
+function normalizeExtraRoot(entry: FsExtraRootConfig): ToolFsExtraRoot {
+  const rootPath = typeof entry?.path === "string" ? entry.path.trim() : "";
+  if (!rootPath || !isSandboxHostPathAbsolute(rootPath)) {
+    throw new Error("tools.fs.extraRoots entries require a non-empty absolute path");
   }
-  if (!entry || typeof entry !== "object") {
-    return undefined;
+  if (entry.mode !== "ro" && entry.mode !== "rw") {
+    throw new Error(`tools.fs.extraRoots entry for ${rootPath} requires mode "ro" or "rw"`);
   }
-  const value = typeof entry.path === "string" ? entry.path.trim() : "";
-  if (!value) {
-    return undefined;
-  }
-  return {
-    path: value,
-    mode: entry.mode === "ro" ? "ro" : "rw",
-  };
+  return { path: rootPath, mode: entry.mode };
 }
 
 function mergeExtraRoots(
   globalRoots?: readonly FsExtraRootConfig[],
   agentRoots?: readonly FsExtraRootConfig[],
 ): ToolFsExtraRoot[] {
-  const merged = [...(globalRoots ?? []), ...(agentRoots ?? [])];
   const result: ToolFsExtraRoot[] = [];
-  const seen = new Set<string>();
-  for (const root of merged) {
-    const normalized = normalizeExtraRoot(root);
-    if (!normalized) {
-      continue;
+  const seen = new Map<string, ToolFsExtraRoot>();
+  for (const entry of [...(globalRoots ?? []), ...(agentRoots ?? [])]) {
+    const normalized = normalizeExtraRoot(entry);
+    const key = getSandboxHostPathPolicyKey(normalized.path);
+    const priorEntry = Array.from(seen.entries()).find(
+      ([priorKey]) =>
+        priorKey === key ||
+        priorKey.startsWith(key.endsWith("/") ? key : `${key}/`) ||
+        key.startsWith(priorKey.endsWith("/") ? priorKey : `${priorKey}/`),
+    );
+    const prior = priorEntry?.[1];
+    if (prior) {
+      if (priorEntry?.[0] === key && prior.mode === normalized.mode) {
+        throw new Error(`Duplicate tools.fs.extraRoots path: ${normalized.path}`);
+      }
+      if (prior.mode !== normalized.mode) {
+        throw new Error(
+          `Conflicting overlapping tools.fs.extraRoots modes for path: ${normalized.path}`,
+        );
+      }
+      throw new Error(`Overlapping tools.fs.extraRoots paths are redundant: ${normalized.path}`);
     }
-    const key = `${normalized.mode}:${normalized.path}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
+    seen.set(key, normalized);
     result.push(normalized);
   }
   return result;
-}
-
-export function createToolFsPolicy(params: {
-  workspaceOnly?: boolean;
-  extraRoots?: ToolFsExtraRoot[];
-}): ToolFsPolicy {
-  const policy: ToolFsPolicy = {
-    workspaceOnly: params.workspaceOnly === true,
-  };
-  if (params.extraRoots && params.extraRoots.length > 0) {
-    policy.extraRoots = params.extraRoots;
-  }
-  return policy;
 }
 
 export function resolveToolFsConfig(params: { cfg?: OpenClawConfig; agentId?: string }): {

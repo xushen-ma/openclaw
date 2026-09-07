@@ -1,6 +1,8 @@
 // Tests runtime-loaded fast-path command behavior for get-reply.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { setActivePluginRegistry } from "../../plugins/runtime.js";
+import { createTestRegistry } from "../../test-utils/channel-plugins.js";
 import {
   createReplyRuntimeMocks,
   createTempHomeHarness,
@@ -47,6 +49,7 @@ describe("getReplyFromConfig fast-path runtime", () => {
   beforeEach(async () => {
     vi.stubEnv("OPENCLAW_TEST_FAST", "1");
     resetReplyRuntimeMocks(agentMocks);
+    setActivePluginRegistry(createTestRegistry([]));
   });
 
   afterEach(() => {
@@ -70,8 +73,10 @@ describe("getReplyFromConfig fast-path runtime", () => {
           CommandBody: "hello",
           From: "+1001",
           To: "+2000",
-          MediaPaths: ["/tmp/a.png", "/tmp/b.png"],
-          MediaUrls: ["/tmp/a.png", "/tmp/b.png"],
+          media: [
+            { path: "/tmp/a.png", url: "/tmp/a.png" },
+            { path: "/tmp/b.png", url: "/tmp/b.png" },
+          ],
           SessionKey: "agent:main:whatsapp:+2000",
           Provider: "whatsapp",
           Surface: "whatsapp",

@@ -1,32 +1,60 @@
-import { execFile } from "node:child_process";
+/**
+ * Fixed Backtrader Core5 readiness boundary.
+ *
+ * Exposes one read-only project executable with a closed report enum and no
+ * caller-controlled command, path, argv, environment, or trading controls.
+ */
+import { execFile, type ExecFileOptionsWithStringEncoding } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { Type } from "typebox";
+import { isRecord } from "../../utils.js";
+import { optionalStringEnum } from "../schema/string-enum.js";
+import { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME } from "./backtrader-core5-dev-readiness-tool-name.js";
 import {
   jsonResult,
   readNumberParam,
-  readStringParam,
+  readToolStringParam,
   ToolInputError,
   type AnyAgentTool,
 } from "./common.js";
 
 const execFileAsync = promisify(execFile);
 
-export const BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME = "backtrader_core5_dev_readiness";
+export { BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME };
 export const BACKTRADER_CORE5_DEV_READINESS_SCRIPT =
   "/Users/openclaw/.openclaw/workspace-uri/projects/backtrader-dev/scripts/core5_dev_readiness.py";
+
 const BACKTRADER_CORE5_DEV_READINESS_CWD = path.dirname(
   path.dirname(BACKTRADER_CORE5_DEV_READINESS_SCRIPT),
 );
+const BACKTRADER_CORE5_REPORTS = ["status", "ny-preopen", "daily-paper"] as const;
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 10 * 60_000;
+const MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 
-const BacktraderCore5DevReadinessSchema = Type.Object({
-  report: Type.Optional(
-    Type.Union([Type.Literal("ny-preopen"), Type.Literal("daily-paper"), Type.Literal("status")]),
-  ),
-  timeoutMs: Type.Optional(Type.Number()),
-});
+const BacktraderCore5DevReadinessSchema = Type.Object(
+  {
+    report: optionalStringEnum(BACKTRADER_CORE5_REPORTS),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_TIMEOUT_MS })),
+  },
+  { additionalProperties: false },
+);
+
+type RunFileResult = { stdout: string; stderr: string };
+type RunFile = (
+  file: string,
+  args: readonly string[],
+  options: ExecFileOptionsWithStringEncoding,
+) => Promise<RunFileResult>;
+
+export type BacktraderCore5DevReadinessToolDependencies = {
+  runFile?: RunFile;
+};
+
+const defaultRunFile: RunFile = async (file, args, options) =>
+  // SAFETY: execFile with a string encoding resolves with string stdout and stderr fields.
+  (await execFileAsync(file, [...args], options)) as RunFileResult;
 
 function resolveTimeoutMs(raw: number | undefined): number {
   if (raw === undefined) {
@@ -50,7 +78,11 @@ function parseStdout(stdout: string): unknown {
   }
 }
 
-export function createBacktraderCore5DevReadinessTool(): AnyAgentTool {
+/** Creates the sole read-only Backtrader Core5 readiness tool. */
+export function createBacktraderCore5DevReadinessTool(
+  dependencies: BacktraderCore5DevReadinessToolDependencies = {},
+): AnyAgentTool {
+  const runFile = dependencies.runFile ?? defaultRunFile;
   return {
     name: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
     label: BACKTRADER_CORE5_DEV_READINESS_TOOL_NAME,
@@ -59,11 +91,10 @@ export function createBacktraderCore5DevReadinessTool(): AnyAgentTool {
     parameters: BacktraderCore5DevReadinessSchema,
     displaySummary: "Run Backtrader Core5 dev readiness script.",
     async execute(_toolCallId, rawParams, signal) {
-      const params =
-        rawParams && typeof rawParams === "object" ? (rawParams as Record<string, unknown>) : {};
-      const report = readStringParam(params, "report") ?? "status";
-      if (!["ny-preopen", "daily-paper", "status"].includes(report)) {
-        throw new ToolInputError("report must be ny-preopen, daily-paper, or status");
+      const params = isRecord(rawParams) ? rawParams : {};
+      const report = readToolStringParam(params, "report") ?? "status";
+      if (!BACKTRADER_CORE5_REPORTS.some((candidate) => candidate === report)) {
+        throw new ToolInputError("report must be status, ny-preopen, or daily-paper");
       }
       const timeoutMs = resolveTimeoutMs(
         readNumberParam(params, "timeoutMs", { integer: true, label: "timeoutMs" }),
@@ -71,15 +102,17 @@ export function createBacktraderCore5DevReadinessTool(): AnyAgentTool {
 
       const startedAt = Date.now();
       try {
-        const result = await execFileAsync(
+        const result = await runFile(
           BACKTRADER_CORE5_DEV_READINESS_SCRIPT,
           ["--report", report, "--json"],
           {
             cwd: BACKTRADER_CORE5_DEV_READINESS_CWD,
+            encoding: "utf8",
             timeout: timeoutMs,
             signal,
             windowsHide: true,
-            maxBuffer: 2 * 1024 * 1024,
+            shell: false,
+            maxBuffer: MAX_BUFFER_BYTES,
             env: {
               ...process.env,
               OPENCLAW_BACKTRADER_CORE5_DEV_READINESS: "1",
@@ -97,14 +130,10 @@ export function createBacktraderCore5DevReadinessTool(): AnyAgentTool {
           stdout: parseStdout(result.stdout),
           stderr: result.stderr.trim() || undefined,
         });
-      } catch (err) {
-        const error = err as NodeJS.ErrnoException & {
-          stdout?: string;
-          stderr?: string;
-          code?: unknown;
-          signal?: unknown;
-          killed?: boolean;
-        };
+      } catch (cause) {
+        const error = isRecord(cause) ? cause : {};
+        const stdout = typeof error.stdout === "string" ? error.stdout : "";
+        const stderr = typeof error.stderr === "string" ? error.stderr : "";
         return jsonResult({
           ok: false,
           report,
@@ -112,10 +141,10 @@ export function createBacktraderCore5DevReadinessTool(): AnyAgentTool {
           durationMs: Date.now() - startedAt,
           code: error.code,
           signal: error.signal,
-          killed: error.killed,
-          error: error.message,
-          stdout: parseStdout(error.stdout ?? ""),
-          stderr: error.stderr?.trim() || undefined,
+          killed: typeof error.killed === "boolean" ? error.killed : undefined,
+          error: cause instanceof Error ? cause.message : String(cause),
+          stdout: parseStdout(stdout),
+          stderr: stderr.trim() || undefined,
         });
       }
     },

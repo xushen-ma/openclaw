@@ -4,7 +4,9 @@ read_when:
   - You need to inspect raw model output for reasoning leakage
   - You want to run the Gateway in watch mode while iterating
   - You need a repeatable debugging workflow
+  - You are diagnosing Node or tsx startup errors
 title: "Debugging"
+doc-schema-version: 1
 ---
 
 Debugging helpers for streaming output, gateway iteration, and startup profiling.
@@ -15,8 +17,8 @@ Debugging helpers for streaming output, gateway iteration, and startup profiling
 
 ```text
 /debug show
-/debug set messages.responsePrefix="[openclaw]"
-/debug unset messages.responsePrefix
+/debug set channels.whatsapp.responsePrefix="[openclaw]"
+/debug unset channels.whatsapp.responsePrefix
 /debug reset
 ```
 
@@ -35,6 +37,7 @@ Debugging helpers for streaming output, gateway iteration, and startup profiling
 ## Plugin lifecycle trace
 
 Set `OPENCLAW_PLUGIN_LIFECYCLE_TRACE=1` for a phase-by-phase breakdown of plugin metadata, discovery, registry, runtime mirror, config mutation, and refresh work. Writes to stderr, so JSON command output stays parseable.
+Plugin load failures include their stack trace while this trace is enabled.
 
 ```bash
 OPENCLAW_PLUGIN_LIFECYCLE_TRACE=1 openclaw plugins install tokenjuice --force
@@ -47,6 +50,12 @@ OPENCLAW_PLUGIN_LIFECYCLE_TRACE=1 openclaw plugins install tokenjuice --force
 ```
 
 Use this before reaching for a CPU profiler. From a source checkout, measure the built runtime with `node dist/entry.js ...` after `pnpm build`; `pnpm openclaw ...` also measures source-runner overhead.
+
+For synchronous module-load timings, use the shared diagnostics surface instead of a separate plugin-only environment switch:
+
+```bash
+OPENCLAW_DIAGNOSTICS=plugin.load-profile openclaw plugins list
+```
 
 ## CLI startup and command profiling
 
@@ -74,6 +83,17 @@ OPENCLAW_TRACE_SYNC_IO=1 pnpm openclaw gateway --force
 
 `pnpm gateway:watch` leaves this flag disabled by default for the watched Gateway child; set `OPENCLAW_TRACE_SYNC_IO=1` when you want sync I/O trace output in watch mode too.
 
+## Node and tsx startup errors
+
+If a source-run command fails with `TypeError: __name is not a function`, capture
+`node --version`, `pnpm list tsx --depth 0`, the exact command, and the full stack.
+Confirm that Node is a [supported version](/install/node).
+
+From a trusted source checkout, run `pnpm build` before comparing the failure with
+the built runtime through `pnpm openclaw <command>`. The repository's typecheck
+does not emit build output. Keep the failing command and version evidence in a
+bug report rather than applying a workaround from an old investigation.
+
 ## Gateway watch mode
 
 ```bash
@@ -84,13 +104,25 @@ By default this starts or restarts a tmux session named `openclaw-gateway-watch-
 
 ```bash
 tmux attach -t openclaw-gateway-watch-main
+# Read recent output without attaching
+tmux capture-pane -ep -t openclaw-gateway-watch-main -S -200
 ```
+
+The pane uses tmux `remain-on-exit`, so startup failures stay available for attach or capture instead of deleting the session. Re-running `pnpm gateway:watch` respawns that pane.
 
 The tmux pane runs the raw watcher:
 
 ```bash
 node scripts/watch-node.mjs gateway --force
 ```
+
+Before watching the configured/default port, the tmux wrapper stops the active profile's installed Gateway service. This hands the port to the source watcher without launchd, systemd, or Scheduled Task respawning and replacing it. The service stays installed; restore it after the watch session with:
+
+```bash
+pnpm openclaw gateway start
+```
+
+When an explicit `--port` or `OPENCLAW_GATEWAY_PORT` differs from the installed service's effective port, the wrapper leaves the service running so both Gateways can run side by side.
 
 Foreground mode without tmux:
 
@@ -99,6 +131,8 @@ pnpm gateway:watch:raw
 # or
 OPENCLAW_GATEWAY_WATCH_TMUX=0 pnpm gateway:watch
 ```
+
+Raw mode does not manage the installed service. Run `pnpm openclaw gateway stop` first when it uses the same port.
 
 Keep tmux management but disable auto-attach:
 
@@ -135,6 +169,26 @@ Add gateway CLI flags after `gateway:watch` and they pass through on each restar
 
 ## Dev profile + dev gateway (--dev)
 
+When you run `pnpm openclaw`, `pnpm dev`, or a Gateway development runner from
+a checkout, the runner selects that checkout's plugins ahead of tracked global
+copies with the same id. Built plugin output remains preferred when available,
+including for separately published checkout plugins and Doctor's provider/tool
+checks. Source-only plugins still load from the checkout. Rebuild to pick up
+source changes when using built output. Intentional source-entry selections and
+mounted source overlays keep using source instead of their compiled peers.
+
+This selection is separate from the `--dev` profile. It does not grant trusted
+plugin capabilities to arbitrary local links, `npm-pack:` installs, or plugins
+with an official-looking name. Explicit `plugins.load.paths` overrides still
+win; an alias of the same independently discovered bundled entry retains its
+bundled provenance. A different local copy remains untrusted.
+
+The runners supply the existing `OPENCLAW_DEV_SOURCE_ROOT` selector unless you
+set it explicitly. When launching `node dist/entry.js` directly for debugging,
+set it to the running checkout root for the same duplicate-selection behavior.
+It does not add an unrelated checkout to trusted bundled discovery. Use
+`pnpm openclaw plugins inspect <id> --json` to check the selected source and origin.
+
 Two **separate** `--dev` flags:
 
 - **Global `--dev` (profile):** isolates state under `~/.openclaw-dev` and defaults the gateway port to `19001` (derived ports shift with it).
@@ -160,9 +214,11 @@ What this does:
 2. **Dev bootstrap** (`gateway --dev`)
    - Writes a minimal config if missing (`gateway.mode=local`, bind loopback).
    - Sets `agents.defaults.workspace` to the dev workspace and `agents.defaults.skipBootstrap=true`.
-   - Seeds the workspace files if missing: `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `USER.md`.
+   - Seeds the workspace files if missing: `AGENTS.md`, `SOUL.md`, `IDENTITY.md`, `USER.md`.
    - Default identity: **C3-PO** (protocol droid).
    - `pnpm gateway:dev` also sets `OPENCLAW_SKIP_CHANNELS=1` to skip channel providers.
+
+All Gateways ignore ambient channel environment triggers by default, so credentials inherited from the launching shell do not connect to channel services without explicit intent. A `channels.<id>` configuration block still enables that channel and can use environment variables for its credentials. Pass `--ambient-channels` to restore ambient channel auto-configuration for that run; `--dev-ambient-channels` remains as a deprecated alias.
 
 Reset flow (fresh start):
 

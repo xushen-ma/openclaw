@@ -94,6 +94,14 @@ export default defineToolPlugin({
       parameters: Type.Object({
         symbol: Type.String({ description: "Ticker symbol, for example OPEN." }),
       }),
+      outputSchema: Type.Object(
+        {
+          symbol: Type.String(),
+          configured: Type.Boolean(),
+          baseUrl: Type.String(),
+        },
+        { additionalProperties: false },
+      ),
       async execute({ symbol }, config, context) {
         context.signal?.throwIfAborted();
         return {
@@ -147,6 +155,34 @@ tool({
 });
 ```
 
+Factories can use `toolContext.delivery?.send({ text, mediaUrl })` for outbound
+messages in the active conversation. The host chooses the destination,
+account, thread, and local-media policy; plugins cannot retarget this helper,
+and retained copies stop working after the turn closes. The helper is unavailable
+for channels whose delivery is owned by a Gateway transport.
+
+A factory may return a core `AgentTool`, an array of them, or `null` or
+`undefined` to opt out, as the example above does. When it returns a concrete
+tool, that tool uses the core runtime signature
+`execute(toolCallId, params, signal?, onUpdate?)` with the tool call ID first.
+That is the opposite argument order from the declarative
+`execute(params, config, context)` shown above, and it matches the
+`api.registerTool` examples in [Building Plugins](/plugins/building-plugins).
+Reading `params` from the first argument of a factory tool returns the tool
+call ID string instead.
+
+Concrete tools can provide `prepareArguments(args)` to normalize input before
+schema validation. The native agent loop also honors
+`executionMode: "sequential"` when tool calls must run one at a time. These
+runtime properties come from the current factory context even when the tool's
+descriptor is cached; argument preparation and execution use the same instance.
+
+Set `hideFromChannelProgress: true` on the concrete factory tool to keep its
+transient activity out of channel progress drafts. Lifecycle events and the
+final tool result still flow normally. OpenClaw preserves this flag when
+reusing a cached tool or normalizing its schema; omitted or `false` leaves
+normal progress behavior in place. See [Progress drafts](/concepts/progress-drafts).
+
 Factories still declare a fixed tool name up front. Use `definePluginEntry`
 directly when the plugin computes tool names dynamically or combines tools
 with hooks, services, providers, or commands.
@@ -184,6 +220,63 @@ tool({
 
 Use a factory tool when you need a custom `AgentToolResult` or want to reuse an
 existing `api.registerTool` implementation.
+
+## Output contracts
+
+Add `outputSchema` when a tool returns stable JSON-compatible data. It describes
+the original value stored in `AgentToolResult.details`, not the formatted text
+in `content`:
+
+```typescript
+tool({
+  name: "shipment_list",
+  description: "List shipments.",
+  parameters: Type.Object({
+    buyer: Type.Optional(Type.String()),
+  }),
+  outputSchema: Type.Array(
+    Type.Object(
+      {
+        id: Type.String(),
+        buyer: Type.String(),
+        paid: Type.Boolean(),
+        tons: Type.Number(),
+      },
+      { additionalProperties: false },
+    ),
+  ),
+  execute: ({ buyer }) => listShipments(buyer),
+});
+```
+
+[Code Mode](/tools/code-mode) and [Tool Search](/tools/tool-search) turn this
+schema into a bounded TypeScript-style output hint. That lets a model call and
+transform a known result in one program instead of spending another model turn
+observing its shape.
+
+OpenClaw compiles the schema before executing a catalog call, then validates the
+final `details` value after tool hooks before returning it through the bridge.
+An invalid schema cannot run the tool; a result mismatch fails the completed
+call. Include every non-throwing result variant, including structured error
+variants, or omit the schema when the result is not stable. Do not put secrets
+or sensitive values in schema descriptions because trusted output metadata can
+become model-visible.
+Use `{ additionalProperties: false }` on object layers when you want a complete
+compact output hint; open or truncated schemas remain available through
+the callable catalog handle's `describe()` but are not advertised as complete
+quick-index contracts.
+
+Factory tools declare `outputSchema` on the concrete `AnyAgentTool` they
+return. The static `tool({ factory })` declaration does not accept a separate
+output schema because it could drift from the runtime tool.
+
+OpenClaw also grades the call outcome from `details`, so `status`, `ok`,
+`success`, `error`, `timedOut`, and `exitCode` are reserved names. A `status`
+of `blocked`, `denied`, `invalid`, `cancelled`, or any other failure value
+marks the call failed unless `ok` or `success` is explicitly `true`, even when
+`execute` returned normally. Domain data that
+uses one of those names belongs under a wrapper key, such as `{ card }`,
+instead of at the top level of `details`.
 
 ## Configuration
 
@@ -301,6 +394,13 @@ openclaw plugins build --entry ./dist/index.js --check
 openclaw plugins validate --entry ./dist/index.js
 npm test
 ```
+
+OpenClaw SDK compatibility fields carry TypeScript `@deprecated` annotations,
+which editors surface as migration warnings. To enforce them in CI, enable a
+type-aware rule such as
+[`@typescript-eslint/no-deprecated`](https://typescript-eslint.io/rules/no-deprecated/).
+Oxlint is not type-aware, so it cannot enforce these annotations. The generated
+`plugins init` scaffold therefore does not add a deprecation lint config.
 
 `plugins validate` checks that:
 

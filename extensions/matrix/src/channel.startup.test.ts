@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   ensureMatrixSdkInstalled: vi.fn<() => Promise<void>>(async () => {}),
+  monitorModuleLoaded: vi.fn(),
   monitorMatrixProvider: vi.fn<() => Promise<void>>(async () => {}),
 }));
 
@@ -10,9 +11,10 @@ vi.mock("./matrix/deps.js", async (importOriginal) => ({
   ensureMatrixSdkInstalled: mocks.ensureMatrixSdkInstalled,
 }));
 
-vi.mock("./matrix/monitor/index.js", () => ({
-  monitorMatrixProvider: mocks.monitorMatrixProvider,
-}));
+vi.mock("./matrix/monitor/index.js", () => {
+  mocks.monitorModuleLoaded();
+  return { monitorMatrixProvider: mocks.monitorMatrixProvider };
+});
 
 import { matrixPlugin } from "./channel.js";
 
@@ -35,11 +37,12 @@ describe("matrix channel startup", () => {
   beforeEach(() => {
     mocks.ensureMatrixSdkInstalled.mockReset();
     mocks.ensureMatrixSdkInstalled.mockResolvedValue(undefined);
+    mocks.monitorModuleLoaded.mockClear();
     mocks.monitorMatrixProvider.mockReset();
     mocks.monitorMatrixProvider.mockResolvedValue(undefined);
   });
 
-  it("checks SDK dependencies before importing the monitor runtime", async () => {
+  it("reports missing SDK dependencies before starting the monitor", async () => {
     mocks.ensureMatrixSdkInstalled.mockRejectedValueOnce(
       new Error(
         "Matrix plugin dependencies are missing: matrix-js-sdk. Repair this plugin with `openclaw plugins update matrix` or run `openclaw doctor --fix`.",
@@ -50,6 +53,8 @@ describe("matrix channel startup", () => {
       matrixPlugin.gateway?.startAccount?.(buildStartAccountContext() as never),
     ).rejects.toThrow(/Matrix plugin dependencies are missing/);
 
+    expect(mocks.ensureMatrixSdkInstalled).toHaveBeenCalledOnce();
+    expect(mocks.monitorModuleLoaded).not.toHaveBeenCalled();
     expect(mocks.monitorMatrixProvider).not.toHaveBeenCalled();
   });
 
@@ -59,6 +64,7 @@ describe("matrix channel startup", () => {
     ).resolves.toBeUndefined();
 
     expect(mocks.ensureMatrixSdkInstalled).toHaveBeenCalledOnce();
+    expect(mocks.monitorModuleLoaded).toHaveBeenCalledOnce();
     expect(mocks.monitorMatrixProvider).toHaveBeenCalledOnce();
   });
 });

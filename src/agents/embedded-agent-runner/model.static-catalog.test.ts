@@ -1,10 +1,12 @@
-// Coverage for resolving bundled static manifest model catalog rows.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ModelDefinitionConfig } from "../../config/types.models.js";
+import { createManifestRecord } from "./model.static-catalog.test-helpers.js";
 
 const manifestMocks = vi.hoisted(() => ({
+  getCurrentPluginMetadataSnapshot: vi.fn(),
   listOpenClawPluginManifestMetadata: vi.fn(),
   loadPluginManifest: vi.fn(),
-  loadPluginManifestRegistry: vi.fn(),
+  loadPluginManifestRegistryCore: vi.fn(),
 }));
 const providerMocks = vi.hoisted(() => ({
   normalizePluginDiscoveryResult: vi.fn(),
@@ -19,6 +21,11 @@ vi.mock("../../plugins/manifest-metadata-scan.js", () => ({
   listOpenClawPluginManifestMetadata: manifestMocks.listOpenClawPluginManifestMetadata,
 }));
 
+vi.mock("../../plugins/current-plugin-metadata-snapshot.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../plugins/current-plugin-metadata-snapshot.js")>()),
+  getCurrentPluginMetadataSnapshot: manifestMocks.getCurrentPluginMetadataSnapshot,
+}));
+
 vi.mock("../../plugins/manifest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/manifest.js")>()),
   loadPluginManifest: manifestMocks.loadPluginManifest,
@@ -26,7 +33,7 @@ vi.mock("../../plugins/manifest.js", async (importOriginal) => ({
 
 vi.mock("../../plugins/manifest-registry.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../plugins/manifest-registry.js")>()),
-  loadPluginManifestRegistry: manifestMocks.loadPluginManifestRegistry,
+  loadPluginManifestRegistryCore: manifestMocks.loadPluginManifestRegistryCore,
 }));
 
 vi.mock("../../plugins/providers.js", async (importOriginal) => ({
@@ -43,10 +50,11 @@ vi.mock("../../plugins/provider-discovery.js", async (importOriginal) => ({
   runProviderStaticCatalog: providerMocks.runProviderStaticCatalog,
 }));
 
+import { createPluginCache, withPluginCache } from "../../plugins/plugin-cache.js";
+import { clearPluginMetadataLifecycleCaches } from "../../plugins/plugin-metadata-lifecycle.js";
 import { getModelProviderRequestTransport } from "../provider-request-config.js";
 import {
   createBundledProviderStaticCatalogContextResolver,
-  createBundledProviderStaticCatalogModelResolver,
   createBundledStaticCatalogModelResolver,
   loadBundledProviderStaticCatalogContextModels,
   resolveBundledProviderStaticCatalogModel,
@@ -80,8 +88,8 @@ function setManifestPlugins(plugins: unknown[]) {
 function createMistralManifestPlugin(overrides?: {
   discovery?: "static" | "refreshable" | "runtime";
   origin?: string;
+  cost?: ModelDefinitionConfig["cost"];
 }) {
-  // Mistral fixture represents a bundled plugin with a static modelCatalog row.
   return {
     id: "mistral",
     origin: overrides?.origin ?? "bundled",
@@ -100,7 +108,7 @@ function createMistralManifestPlugin(overrides?: {
               contextWindow: 262144,
               maxTokens: 8192,
               thinkingLevelMap: { off: null, minimal: "low", max: "max" },
-              cost: { input: 1.5, output: 7.5, cacheRead: 0, cacheWrite: 0 },
+              cost: overrides?.cost ?? { input: 1.5, output: 7.5, cacheRead: 0, cacheWrite: 0 },
               mediaInput: {
                 image: { maxSidePx: 2048, preferredSidePx: 1536, tokenMode: "provider" },
               },
@@ -116,9 +124,11 @@ function createMistralManifestPlugin(overrides?: {
 }
 
 beforeEach(() => {
+  clearPluginMetadataLifecycleCaches();
+  manifestMocks.getCurrentPluginMetadataSnapshot.mockReset();
   manifestMocks.listOpenClawPluginManifestMetadata.mockReset();
   manifestMocks.loadPluginManifest.mockReset();
-  manifestMocks.loadPluginManifestRegistry.mockReset();
+  manifestMocks.loadPluginManifestRegistryCore.mockReset();
   providerMocks.normalizePluginDiscoveryResult.mockReset();
   providerMocks.resolveActivatableProviderOwnerPluginIds.mockReset();
   providerMocks.resolveBundledProviderCompatPluginIds.mockReset();
@@ -126,7 +136,8 @@ beforeEach(() => {
   providerMocks.resolveRuntimePluginDiscoveryProviders.mockReset();
   providerMocks.runProviderStaticCatalog.mockReset();
   setManifestPlugins([]);
-  manifestMocks.loadPluginManifestRegistry.mockReturnValue({ plugins: [] });
+  manifestMocks.getCurrentPluginMetadataSnapshot.mockReturnValue(undefined);
+  manifestMocks.loadPluginManifestRegistryCore.mockReturnValue({ plugins: [] });
   providerMocks.resolveActivatableProviderOwnerPluginIds.mockImplementation(
     ({ pluginIds }: { pluginIds: string[] }) => pluginIds,
   );
@@ -138,6 +149,25 @@ beforeEach(() => {
 });
 
 describe("resolveBundledStaticCatalogModel", () => {
+  it("keeps static catalog plans inside their metadata owner for the same env and config", () => {
+    const plugin = createMistralManifestPlugin();
+    setManifestPlugins([plugin]);
+    const env = {};
+    const cfg = {};
+    const lookup = { provider: "mistral", modelId: "mistral-medium-3-5", cfg, env };
+    expect(resolveBundledStaticCatalogModel(lookup)?.contextWindow).toBe(262144);
+    const updated = createMistralManifestPlugin();
+    updated.modelCatalog.providers.mistral.models[0]!.contextWindow = 524288;
+    setManifestPlugins([updated]);
+
+    expect(resolveBundledStaticCatalogModel(lookup)?.contextWindow).toBe(262144);
+    expect(
+      withPluginCache(createPluginCache(), () => resolveBundledStaticCatalogModel(lookup))
+        ?.contextWindow,
+    ).toBe(524288);
+    expect(resolveBundledStaticCatalogModel(lookup)?.contextWindow).toBe(262144);
+  });
+
   it("reuses one manifest scan across prepared lookups", () => {
     setManifestPlugins([createMistralManifestPlugin()]);
 
@@ -149,35 +179,74 @@ describe("resolveBundledStaticCatalogModel", () => {
     expect(manifestMocks.listOpenClawPluginManifestMetadata).toHaveBeenCalledTimes(1);
   });
 
-  it("synthesizes a runtime model from an exact bundled static manifest catalog row", () => {
-    setManifestPlugins([createMistralManifestPlugin()]);
+  it.each([false, true])(
+    "synthesizes a runtime model with complete static pricing (tiered=%s)",
+    (tiered) => {
+      const cost = {
+        input: 1.5,
+        output: 7.5,
+        cacheRead: 0,
+        cacheWrite: 0,
+        ...(tiered
+          ? {
+              tieredPricing: [
+                {
+                  input: 1.5,
+                  output: 7.5,
+                  cacheRead: 0.1,
+                  cacheWrite: 0.2,
+                  range: [0, 200_001] as [number, number],
+                },
+                {
+                  input: 3,
+                  output: 15,
+                  cacheRead: 0.3,
+                  cacheWrite: 0.4,
+                  range: [200_001] as [number],
+                },
+              ],
+            }
+          : {}),
+      };
+      setManifestPlugins([createMistralManifestPlugin({ cost })]);
 
-    const model = resolveBundledStaticCatalogModel({
-      provider: "mistral",
-      modelId: "mistral-medium-3-5",
-      cfg: {},
-    });
+      const model = resolveBundledStaticCatalogModel({
+        provider: "mistral",
+        modelId: "mistral-medium-3-5",
+        cfg: {},
+      });
 
-    expect(model).toEqual({
-      api: "openai-completions",
-      baseUrl: "https://api.mistral.ai/v1",
-      compat: undefined,
-      contextTokens: undefined,
-      contextWindow: 262144,
-      cost: { input: 1.5, output: 7.5, cacheRead: 0, cacheWrite: 0 },
-      headers: undefined,
-      id: "mistral-medium-3-5",
-      input: ["text", "image"],
-      maxTokens: 8192,
-      mediaInput: {
-        image: { maxSidePx: 2048, preferredSidePx: 1536, tokenMode: "provider" },
-      },
-      name: "Mistral Medium 3.5",
-      provider: "mistral",
-      reasoning: true,
-      thinkingLevelMap: { off: null, minimal: "low", max: "max" },
-    });
-  });
+      expect(model).toEqual({
+        api: "openai-completions",
+        baseUrl: "https://api.mistral.ai/v1",
+        compat: undefined,
+        contextTokens: undefined,
+        contextWindow: 262144,
+        cost: {
+          ...cost,
+          ...(tiered
+            ? {
+                tieredPricing: [
+                  cost.tieredPricing![0],
+                  { ...cost.tieredPricing![1], range: [200_001, Infinity] },
+                ],
+              }
+            : {}),
+        },
+        headers: undefined,
+        id: "mistral-medium-3-5",
+        input: ["text", "image"],
+        maxTokens: 8192,
+        mediaInput: {
+          image: { maxSidePx: 2048, preferredSidePx: 1536, tokenMode: "provider" },
+        },
+        name: "Mistral Medium 3.5",
+        provider: "mistral",
+        reasoning: true,
+        thinkingLevelMap: { off: null, minimal: "low", max: "max" },
+      });
+    },
+  );
 
   it("ignores non-bundled and non-static manifest catalog rows", () => {
     // Workspace plugins and refreshable/runtime catalogs are not process-stable
@@ -218,8 +287,8 @@ describe("resolveBundledStaticCatalogModel", () => {
     }
   });
 
-  it("can include bundled runtime-discovery manifest catalog rows for configured fallbacks", () => {
-    setManifestPlugins([createMistralManifestPlugin({ discovery: "runtime" })]);
+  it("can include bundled refreshable manifest catalog rows for configured fallbacks", () => {
+    setManifestPlugins([createMistralManifestPlugin({ discovery: "refreshable" })]);
 
     const model = resolveBundledStaticCatalogModel({
       provider: "mistral",
@@ -262,13 +331,11 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
       staticCatalog: { run: vi.fn() },
     };
     providerMocks.resolveBundledProviderCompatPluginIds.mockReturnValue(["google"]);
-    manifestMocks.loadPluginManifestRegistry.mockReturnValue({
+    manifestMocks.loadPluginManifestRegistryCore.mockReturnValue({
       plugins: [
-        {
-          id: "google",
-          origin: "bundled",
+        createManifestRecord("google", {
           providerDiscoverySource: "/fixtures/google/provider-discovery.ts",
-        },
+        }),
       ],
     });
     providerMocks.resolveRuntimePluginDiscoveryProviders.mockResolvedValue([provider]);
@@ -307,7 +374,7 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
 
   it("skips bundled providers without discovery entries during context warmup", async () => {
     providerMocks.resolveBundledProviderCompatPluginIds.mockReturnValue(["google", "openai"]);
-    manifestMocks.loadPluginManifestRegistry.mockReturnValue({
+    manifestMocks.loadPluginManifestRegistryCore.mockReturnValue({
       plugins: [
         {
           id: "google",
@@ -329,18 +396,14 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
 
   it("keeps successful provider context rows when another static catalog fails", async () => {
     providerMocks.resolveBundledProviderCompatPluginIds.mockReturnValue(["google", "minimax"]);
-    manifestMocks.loadPluginManifestRegistry.mockReturnValue({
+    manifestMocks.loadPluginManifestRegistryCore.mockReturnValue({
       plugins: [
-        {
-          id: "google",
-          origin: "bundled",
+        createManifestRecord("google", {
           providerDiscoverySource: "/fixtures/google/provider-discovery.ts",
-        },
-        {
-          id: "minimax",
-          origin: "bundled",
+        }),
+        createManifestRecord("minimax", {
           providerDiscoverySource: "/fixtures/minimax/provider-discovery.ts",
-        },
+        }),
       ],
     });
     providerMocks.resolveRuntimePluginDiscoveryProviders.mockImplementation(
@@ -376,6 +439,12 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
 
   it("resolves exact rows from bundled provider static catalogs", async () => {
     const cfg = { plugins: { entries: { google: { enabled: true } } } };
+    const metadataSnapshot = {
+      plugins: [],
+      owners: {},
+      index: {},
+      manifestRegistry: { plugins: [] },
+    } as never;
     const provider = {
       id: "google",
       pluginId: "google",
@@ -412,6 +481,7 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
       provider: "google",
       modelId: "gemini-3.1-pro-preview",
       cfg,
+      metadataSnapshot,
     });
 
     expect(model).toMatchObject({
@@ -442,13 +512,9 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
       requireCompleteDiscoveryEntryCoverage: true,
       discoveryEntriesOnly: true,
       includeManifestModelCatalogProviders: false,
+      pluginMetadataSnapshot: metadataSnapshot,
     });
-    expect(providerMocks.runProviderStaticCatalog).toHaveBeenCalledWith({
-      provider,
-      config: cfg,
-      workspaceDir: undefined,
-      env: process.env,
-    });
+    expect(providerMocks.runProviderStaticCatalog).toHaveBeenCalledWith({ provider });
   });
 
   it("does not load bundled provider static catalogs when owner policy blocks the plugin", async () => {
@@ -486,10 +552,10 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
       },
     });
 
-    const resolveModel = createBundledProviderStaticCatalogModelResolver();
+    const resolveModel = createBundledProviderStaticCatalogContextResolver();
     await expect(
       resolveModel({ provider: "google", modelId: "gemini-3.1-pro-preview" }),
-    ).resolves.toMatchObject({ contextWindow: 1_048_576 });
+    ).resolves.toEqual({ contextWindow: 1_048_576 });
     await expect(
       resolveModel({ provider: "google", modelId: "missing-model" }),
     ).resolves.toBeUndefined();
@@ -544,9 +610,8 @@ describe("resolveBundledProviderStaticCatalogModel", () => {
 
     providerMocks.resolveRuntimePluginDiscoveryProviders.mockClear();
     providerMocks.runProviderStaticCatalog.mockClear();
-    const resolveModel = createBundledProviderStaticCatalogModelResolver();
     await expect(
-      resolveModel({
+      resolveBundledProviderStaticCatalogModel({
         provider: "google-gemini-cli",
         modelId: "google/gemini-3.1-pro-preview",
       }),

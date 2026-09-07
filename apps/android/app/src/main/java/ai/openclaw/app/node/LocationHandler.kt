@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -143,7 +144,9 @@ class LocationHandler private constructor(
       when (accuracy) {
         // Provider order is part of the accuracy policy: GPS first for precise, network first otherwise.
         "precise" -> listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+
         "coarse" -> listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
+
         else -> listOf(LocationManager.NETWORK_PROVIDER, LocationManager.GPS_PROVIDER)
       }
     try {
@@ -160,6 +163,8 @@ class LocationHandler private constructor(
         code = "LOCATION_TIMEOUT",
         message = "LOCATION_TIMEOUT: no fix in time",
       )
+    } catch (err: CancellationException) {
+      throw err
     } catch (err: Throwable) {
       val message = err.message ?: "LOCATION_UNAVAILABLE: no fix"
       return GatewaySession.InvokeResult.error(code = "LOCATION_UNAVAILABLE", message = message)

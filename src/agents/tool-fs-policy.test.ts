@@ -3,10 +3,117 @@
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import {
-  resolveToolFsConfig,
   resolveEffectiveToolFsRootExpansionAllowed,
   resolveEffectiveToolFsWorkspaceOnly,
+  resolveToolFsConfig,
 } from "./tool-fs-policy.js";
+
+describe("resolveToolFsConfig extra roots", () => {
+  it("merges global and per-agent roots without implicit access modes", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/global-read", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/agent-write", mode: "rw" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toEqual({
+      workspaceOnly: true,
+      extraRoots: [
+        { path: "/global-read", mode: "ro" },
+        { path: "/agent-write", mode: "rw" },
+      ],
+    });
+  });
+
+  it.each([
+    ["duplicate", "ro"],
+    ["conflicting", "rw"],
+  ] as const)("fails closed on cross-scope %s roots", (_name, agentMode) => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/.", mode: agentMode }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/duplicate|conflict/i);
+  });
+
+  it("fails closed when global and agent roots overlap with different modes", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "rw" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/private", mode: "ro" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/conflicting overlapping/i);
+  });
+
+  it("fails closed when global and agent roots overlap with the same mode", () => {
+    const cfg = {
+      tools: {
+        fs: {
+          workspaceOnly: true,
+          extraRoots: [{ path: "/shared-root", mode: "ro" }],
+        },
+      },
+      agents: {
+        entries: {
+          main: {
+            tools: {
+              fs: {
+                extraRoots: [{ path: "/shared-root/reference", mode: "ro" }],
+              },
+            },
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    expect(() => resolveToolFsConfig({ cfg, agentId: "main" })).toThrow(/overlap|redundant/i);
+  });
+});
 
 describe("resolveEffectiveToolFsWorkspaceOnly", () => {
   it("returns false by default when tools.fs.workspaceOnly is unset", () => {
@@ -52,40 +159,6 @@ describe("resolveEffectiveToolFsWorkspaceOnly", () => {
       },
     };
     expect(resolveEffectiveToolFsWorkspaceOnly({ cfg, agentId: "main" })).toBe(true);
-  });
-});
-
-describe("resolveToolFsConfig", () => {
-  it("merges global and agent extra roots while normalizing string entries to read-write", () => {
-    const cfg: OpenClawConfig = {
-      tools: {
-        fs: {
-          workspaceOnly: true,
-          extraRoots: ["/global", { path: "/read-only", mode: "ro" }],
-        },
-      },
-      agents: {
-        list: [
-          {
-            id: "main",
-            tools: {
-              fs: {
-                extraRoots: [{ path: "/agent", mode: "rw" }],
-              },
-            },
-          },
-        ],
-      },
-    };
-
-    expect(resolveToolFsConfig({ cfg, agentId: "main" })).toStrictEqual({
-      workspaceOnly: true,
-      extraRoots: [
-        { path: "/global", mode: "rw" },
-        { path: "/read-only", mode: "ro" },
-        { path: "/agent", mode: "rw" },
-      ],
-    });
   });
 });
 

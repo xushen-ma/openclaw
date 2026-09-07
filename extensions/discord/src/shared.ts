@@ -1,10 +1,12 @@
-// Discord plugin module implements shared behavior.
 import { describeAccountSnapshot } from "openclaw/plugin-sdk/account-helpers";
 import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import { formatAllowFromLowercase } from "openclaw/plugin-sdk/allow-from";
-import { adaptScopedAccountAccessor } from "openclaw/plugin-sdk/channel-config-helpers";
-import { createScopedChannelConfigAdapter } from "openclaw/plugin-sdk/channel-config-helpers";
+import {
+  adaptScopedAccountAccessor,
+  createScopedChannelConfigAdapter,
+} from "openclaw/plugin-sdk/channel-config-helpers";
 import type { ChannelDoctorAdapter } from "openclaw/plugin-sdk/channel-contract";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-contracts";
 import { createLazyRuntimeModule } from "openclaw/plugin-sdk/lazy-runtime";
 import { inspectDiscordAccount } from "./account-inspect.js";
 import {
@@ -25,7 +27,6 @@ import {
 import { DiscordChannelConfigSchema } from "./config-schema.js";
 import { normalizeCompatibilityConfig } from "./doctor-contract.js";
 import { DISCORD_LEGACY_CONFIG_RULES } from "./doctor-shared.js";
-import type { OpenClawConfig } from "./runtime-api.js";
 import {
   collectRuntimeConfigAssignments,
   secretTargetRegistryEntries,
@@ -94,7 +95,7 @@ export const discordConfigAdapter = createScopedChannelConfigAdapter<
 });
 
 export function createDiscordPluginBase(params: {
-  setup: NonNullable<ChannelPlugin<ResolvedDiscordAccount>["setup"]>;
+  setupContract: NonNullable<ChannelPlugin<ResolvedDiscordAccount>["setupContract"]>;
   setupWizard?: ChannelPlugin<ResolvedDiscordAccount>["setupWizard"];
 }): Pick<
   ChannelPlugin<ResolvedDiscordAccount>,
@@ -108,13 +109,14 @@ export function createDiscordPluginBase(params: {
   | "reload"
   | "configSchema"
   | "config"
-  | "setup"
+  | "setupContract"
   | "messaging"
   | "security"
   | "secrets"
 > {
   return {
     id: DISCORD_CHANNEL,
+    setupContract: params.setupContract,
     ...(params.setupWizard ? { setupWizard: params.setupWizard } : {}),
     meta: { ...getChatChannelMeta(DISCORD_CHANNEL) },
     capabilities: {
@@ -140,7 +142,10 @@ export function createDiscordPluginBase(params: {
     streaming: {
       blockStreamingCoalesceDefaults: { minChars: 1500, idleMs: 1000 },
     },
-    reload: { configPrefixes: ["channels.discord"] },
+    reload: {
+      configPrefixes: ["channels.discord"],
+      noopPrefixes: ["messages.inbound", "messages.ackReactionScope"],
+    },
     configSchema: DiscordChannelConfigSchema,
     config: {
       ...discordConfigAdapter,
@@ -171,22 +176,5 @@ export function createDiscordPluginBase(params: {
       collectUnsupportedSecretRefConfigCandidates,
       collectRuntimeConfigAssignments,
     },
-    setup: params.setup,
-  } as Pick<
-    ChannelPlugin<ResolvedDiscordAccount>,
-    | "id"
-    | "meta"
-    | "setupWizard"
-    | "capabilities"
-    | "commands"
-    | "doctor"
-    | "streaming"
-    | "reload"
-    | "configSchema"
-    | "config"
-    | "setup"
-    | "messaging"
-    | "security"
-    | "secrets"
-  >;
+  };
 }
