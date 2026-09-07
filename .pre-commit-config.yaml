@@ -36,8 +36,9 @@ repos:
       - id: actionlint
 
   # GitHub Actions security audit
+  # v1.29 understands the YAML-anchor shape used by v2026.9.2 workflows.
   - repo: https://github.com/zizmorcore/zizmor-pre-commit
-    rev: v1.22.0
+    rev: 451b56af716f9f0d0c2b816503a3fd0cf8b036fa # v1.29.0
     hooks:
       - id: zizmor
         args:
