@@ -16,19 +16,21 @@ Linux-compatible Gateway runtime.
 ## Recommended: Windows Hub
 
 Windows Hub is the native WinUI companion app for Windows 10 20H2+ and
-Windows 11. It installs without administrator privileges and ships as signed
-x64 and ARM64 installers on OpenClaw releases.
+Windows 11. It installs without administrator privileges and ships signed x64
+and ARM64 installers from its own release page.
 
-Download the latest stable installer from the
-[OpenClaw releases page](https://github.com/openclaw/openclaw/releases) or
-directly via `releases/latest/download`:
+Windows Hub publishes independently from the OpenClaw CLI and Gateway. Download
+the latest stable Hub installer from the
+[Windows Hub releases page](https://github.com/openclaw/openclaw-windows-node/releases/latest)
+or directly via `releases/latest/download`:
 
-- [OpenClawCompanion-Setup-x64.exe](https://github.com/openclaw/openclaw/releases/latest/download/OpenClawCompanion-Setup-x64.exe)
-- [OpenClawCompanion-Setup-arm64.exe](https://github.com/openclaw/openclaw/releases/latest/download/OpenClawCompanion-Setup-arm64.exe)
-- [Checksums](https://github.com/openclaw/openclaw/releases/latest/download/OpenClawCompanion-SHA256SUMS.txt)
+- [OpenClawCompanion-Setup-x64.exe](https://github.com/openclaw/openclaw-windows-node/releases/latest/download/OpenClawCompanion-Setup-x64.exe)
+- [OpenClawCompanion-Setup-arm64.exe](https://github.com/openclaw/openclaw-windows-node/releases/latest/download/OpenClawCompanion-Setup-arm64.exe)
 
-If a link above 404s, visit the [releases page](https://github.com/openclaw/openclaw/releases)
-and look for `OpenClawCompanion-Setup-*` assets on the latest release.
+If a link above 404s, visit the [Windows Hub releases page](https://github.com/openclaw/openclaw-windows-node/releases)
+and open the newest stable Windows Hub release. Regular OpenClaw stable releases
+also mirror a pinned, release-validated Windows Hub build; that mirror can lag a
+newer standalone Hub release.
 
 After install, launch **OpenClaw Companion** from the Start menu or system
 tray. The installer also adds shortcuts for Gateway Setup, Chat, Settings,
@@ -42,8 +44,8 @@ Check for Updates, and uninstall.
 - Native chat window plus access to the browser Control UI.
 - Command Center diagnostics for sessions, usage, channels, nodes, pairing,
   and repair commands.
-- Windows node mode for agent-controlled canvas, screen, camera,
-  notifications, device status, talk, and controlled `system.run`.
+- Windows node mode for screen, camera, notifications, device status, talk,
+  and controlled `system.run`.
 - Local MCP server mode for MCP clients such as Claude Desktop, Claude Code,
   and Cursor.
 
@@ -74,14 +76,13 @@ declared by the node and allowed by Gateway policy before they run; see
 
 Common commands:
 
-| Family | Commands                                                                             |
-| ------ | ------------------------------------------------------------------------------------ |
-| Canvas | `canvas.present`, `canvas.hide`, `canvas.navigate`, `canvas.eval`, `canvas.snapshot` |
-| Screen | `screen.snapshot`; `screen.record` requires explicit opt-in                          |
-| Camera | `camera.list`; `camera.snap`, `camera.clip` require explicit opt-in                  |
-| System | `system.notify`, `system.run`, `system.run.prepare`, `system.which`                  |
-| Device | `location.get`, `device.info`, `device.status`                                       |
-| Talk   | `talk.ptt.start`, `talk.ptt.stop`, `talk.ptt.cancel`, `talk.ptt.once`, `talk.speak`  |
+| Family | Commands                                                                            |
+| ------ | ----------------------------------------------------------------------------------- |
+| Screen | `screen.snapshot`; `screen.record` requires explicit opt-in                         |
+| Camera | `camera.list`; `camera.snap`, `camera.clip` require explicit opt-in                 |
+| System | `system.notify`, `system.run`, `system.run.prepare`, `system.which`                 |
+| Device | `location.get`, `device.info`, `device.status`                                      |
+| Talk   | `talk.ptt.start`, `talk.ptt.stop`, `talk.ptt.cancel`, `talk.ptt.once`, `talk.speak` |
 
 Node mode requires Gateway pairing. If the app shows a pairing request,
 approve it from the Gateway host:
@@ -94,7 +95,7 @@ openclaw nodes status
 
 The Gateway only forwards commands the node declares and server policy
 allows. Privacy-sensitive commands such as `screen.record`, `camera.snap`,
-and `camera.clip` need explicit `gateway.nodes.allowCommands` opt-in.
+and `camera.clip` need explicit `gateway.nodes.commands.allow` opt-in.
 
 ## Local MCP mode
 
@@ -136,6 +137,15 @@ through a generated `gateway.vbs` WScript wrapper, so the background Gateway
 does not open a visible console window. If task creation is denied, OpenClaw
 falls back to a per-user Startup-folder login item.
 
+Gateway status and Doctor read the Scheduled Task's numeric current state, independently of the Windows display language or console code page. A previous task exit result does not prove whether it is running now. Queued or unknown tasks do not count as safely stopped for Doctor maintenance. Stop a queued task through its service owner; if inspection is inaccessible, restore Task Scheduler inspection permissions before retrying.
+
+Gateway startup creates private SQLite staging directories through Windows APIs,
+without compiling C# or launching PowerShell for their permissions. The owner,
+SYSTEM, and Administrators retain full access; other inherited access is removed
+at creation. Update restart helpers also avoid runtime C# compilation and
+`Invoke-Expression`. If antivirus software still interrupts a start, include its
+detection name and the output of `openclaw gateway status --json` in your report.
+
 Install the Gateway service:
 
 ```powershell
@@ -146,7 +156,7 @@ openclaw gateway status --json
 For CLI-only use without a managed Gateway service:
 
 ```powershell
-openclaw onboard --non-interactive --skip-health
+openclaw onboard --non-interactive --accept-risk --skip-health
 openclaw gateway run
 ```
 

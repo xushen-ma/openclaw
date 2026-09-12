@@ -29,11 +29,13 @@ Auto-background the command after this delay (ms).
 </ParamField>
 
 <ParamField path="background" type="boolean" default="false">
-Background the command immediately instead of waiting for `yieldMs`.
+Background the command immediately instead of waiting for `yieldMs`. The process timeout still applies after the tool returns.
 </ParamField>
 
-<ParamField path="timeout" type="number" default="tools.exec.timeoutSec">
-Override the configured exec timeout for this call, in seconds. Applies to foreground, background, `yieldMs`, gateway, sandbox, and node `system.run` execution. `timeout: 0` disables the exec process timeout for that call.
+<ParamField path="timeoutSeconds" type="number" default="tools.exec.timeoutSeconds">
+Limit the command's total lifetime, in **seconds**, overriding the configured exec timeout for this call. Expiry terminates the process even after `background` or `yieldMs` returns a session ID. `yieldMs` controls how long the tool waits before backgrounding; the `process` tool's `timeout` controls how long a poll waits, also in milliseconds.
+
+Applies to gateway, sandbox, and node `system.run` execution. `timeoutSeconds: 0` disables the exec process timeout for that call. For a persistent service on the gateway or in a sandbox, use `background: true` with `timeoutSeconds: 0`, then stop it with `process` action `kill` when finished. Disabling this timeout does not make the process survive its host or worker shutting down.
 </ParamField>
 
 <ParamField path="pty" type="boolean" default="false">
@@ -41,15 +43,11 @@ Run in a pseudo-terminal when available. Use for TTY-only CLIs, coding agents, a
 </ParamField>
 
 <ParamField path="host" type="'auto' | 'sandbox' | 'gateway' | 'node'" default="auto">
-Where to execute. `auto` resolves to `sandbox` when a sandbox runtime is active and `gateway` otherwise.
-</ParamField>
-
-<ParamField path="security" type="'deny' | 'allowlist' | 'full'">
-Ignored for normal tool calls. `gateway`/`node` security is controlled by `tools.exec.security` and the host approvals file; elevated mode can force `security=full` only when the operator explicitly grants elevated access.
+Where to execute. Omit `host` or use `auto` to inherit the configured exec host, including agent and session overrides. When that configured host is also `auto`, it resolves to `sandbox` when a sandbox runtime is active and `gateway` otherwise. A session that requires a sandbox stays sandboxed regardless of the configured host.
 </ParamField>
 
 <ParamField path="ask" type="'off' | 'on-miss' | 'always'">
-The baseline ask mode comes from `tools.exec.ask` and host approvals. For channel-origin model calls, per-call `ask` is ignored when the effective host ask is `off`; otherwise it can only harden to a stricter mode. Trusted internal/API callers that construct exec tools with an explicit `ask` value are unchanged.
+The baseline ask mode is derived from `tools.exec.mode` and host approvals. For channel-origin model calls, per-call `ask` is ignored when the effective host ask is `off`; otherwise it can only harden to a stricter mode.
 </ParamField>
 
 <ParamField path="node" type="string">
@@ -57,50 +55,56 @@ Node id/name when `host=node`.
 </ParamField>
 
 <ParamField path="elevated" type="boolean" default="false">
-Request elevated mode: escape the sandbox onto the configured host path. `security=full` is forced only when elevated resolves to `full`.
+Request elevated mode: escape the sandbox onto the configured host path when the operator permits it. Elevated `full` skips approvals only when the effective security and ask policy already allow `full` and `off`.
 </ParamField>
 
 Notes:
 
 - `host` only accepts `auto`, `sandbox`, `gateway`, or `node`. It is not a hostname selector; hostname-like values are rejected before the command runs.
-- Per-call `host=node` is allowed from `auto`; per-call `host=gateway` is only allowed when no sandbox runtime is active.
+- Per-call `host=node` and `host=gateway` are allowed from `auto` only when no sandbox runtime is active. While a sandbox runtime is active, `auto` keeps exec in the sandbox and rejects both overrides; set `tools.exec.host=node` (or `gateway`) explicitly to run there.
 - With no extra config, `host=auto` still "just works": no sandbox means it resolves to `gateway`; a live sandbox means it stays in the sandbox.
 - `elevated` escapes the sandbox onto the configured host path: `gateway` by default, or `node` when `tools.exec.host=node` (or the session default is `host=node`). It is only available when elevated access is enabled for the current session/provider.
 - `gateway`/`node` approvals are controlled by the host approvals file.
-- `node` requires a paired node (companion app or headless node host). If multiple nodes are available, set `exec.node` or `tools.exec.node` to select one.
+- `node` requires a paired, connected node that supports `system.run` (companion app or headless node host). With no target set, exec selects the sole eligible node. If multiple eligible nodes are connected, set `exec.node`, `tools.exec.node`, or `/exec node=...` to select one; it never uses the active Canvas target. An explicit or bound target must itself be connected and executable. Completed results identify the selected node alongside command output.
 - `exec host=node` is the only shell-execution path for nodes; the legacy `nodes.run` wrapper has been removed.
 - On non-Windows hosts, exec uses `SHELL` when set; if `SHELL` is `fish`, it prefers `bash` (or `sh`) from `PATH` to avoid fish-incompatible bashisms, then falls back to `SHELL` if neither exists.
 - On Windows hosts, exec prefers PowerShell 7 (`pwsh`) discovery (Program Files, ProgramW6432, then PATH), then falls back to Windows PowerShell 5.1.
 - On non-Windows gateway hosts, bash and zsh exec commands use a startup snapshot. OpenClaw captures sourceable aliases/functions and a small safe environment set from shell startup files into `$OPENCLAW_STATE_DIR/cache/shell-snapshots/`, then sources that snapshot before each exec command. Secret-looking variables are excluded; sandbox and node exec do not use this snapshot. Set `OPENCLAW_EXEC_SHELL_SNAPSHOT=0` in the Gateway process environment to disable this snapshot path.
 - Host execution (`gateway`/`node`) rejects `env.PATH` and loader overrides (`LD_*`/`DYLD_*`) to prevent binary hijacking or injected code.
+- Exact `"cat"` or empty `GIT_PAGER` and `PAGER` overrides are normalized to empty values, including on node shell-wrapper execution. This disables Git paging without passing an executable pager name through `PATH`. Other programs may interpret an empty `PAGER` differently; use their noninteractive flags when needed. Other pager commands, paths, whitespace variants, and `MANPAGER` overrides remain blocked.
 - OpenClaw sets `OPENCLAW_SHELL=exec` in the spawned command environment (including PTY and sandbox execution) so shell/profile rules can detect exec-tool context.
+- With the default-off [secret egress proxy](/gateway/secrets#secret-egress-proxy), Gateway-hosted exec receives shared-store `secret` entries only as process-local sentinels. The authenticated loopback proxy substitutes plaintext at outbound HTTPS request time; the exact run token expires when the agent run closes.
+- Shared-store `env` entries are intentionally plaintext and reach Gateway-hosted exec from the next agent run. They do not reach sandbox, remote `node`, ACP, or Codex-native shell execution. Under the Codex harness, use `gateway_exec` for this OpenClaw-managed environment path.
+- With a [managed GitHub identity](/gateway/config-tools#tools.github), Gateway-hosted exec validates the selected profile and binds its credential privately at each process launch. An unavailable profile blocks that local execution with reconnect guidance instead of falling back to native keyring credentials. Running shells retain their launch token; later exec launches observe refreshes. Codex-native shell does not share this launch binding.
+- Secret egress sets `NODE_USE_ENV_PROXY=1` so supported Node.js global `fetch` clients honor the run-scoped proxy. It does not use `NODE_OPTIONS`.
 - For channel-origin runs, OpenClaw also exposes a narrow sender/chat identity JSON payload in `OPENCLAW_CHANNEL_CONTEXT` when the channel provided those ids.
 - `exec` cannot run `openclaw channels login` or `/approve` shell commands: `openclaw channels login` is an interactive channel-auth flow, and `/approve` needs to go through the approval command handler, not a shell. Run channel login in a terminal on the gateway host, or use a channel-specific login agent tool when one exists (for example `whatsapp_login`).
 - Important: sandboxing is **off by default**. If sandboxing is off, implicit `host=auto` resolves to `gateway`. Explicit `host=sandbox` still fails closed instead of silently running on the gateway host. Enable sandboxing or use `host=gateway` with approvals.
 - Script preflight checks (for common Python/Node shell-syntax mistakes) only inspect files inside the effective `workdir` boundary. If a script path resolves outside `workdir`, preflight is skipped for that file. Preflight also skips entirely when `host=gateway` and the effective policy is `security=full` with `ask=off`.
 - For long-running work that starts now, start it once and rely on automatic completion wake when it is enabled and the command emits output or fails. Use `process` for logs, status, input, or intervention; do not emulate scheduling with sleep loops, timeout loops, or repeated polling.
+- Agent-started background commands appear in the Web, iOS, and Android background-task views until they finish. The task ledger is finalized before the completion heartbeat wakes the agent again.
 - For work that should happen later or on a schedule, use cron instead of `exec` sleep/delay patterns.
 
 ## Config
 
-| Key                                  | Default                                                | Notes                                                                                                                                                   |
-| ------------------------------------ | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tools.exec.timeoutSec`              | `1800`                                                 | Default per-command exec timeout in seconds. Per-call `timeout` overrides it; per-call `timeout: 0` disables the exec process timeout.                  |
-| `tools.exec.host`                    | `auto`                                                 | Resolves to `sandbox` when a sandbox runtime is active, `gateway` otherwise.                                                                            |
-| `tools.exec.security`                | `deny` for sandbox, `full` for gateway/node when unset |                                                                                                                                                         |
-| `tools.exec.ask`                     | `off`                                                  |                                                                                                                                                         |
-| `tools.exec.mode`                    | unset                                                  | Normalized policy knob. See [Modes](#modes) below. Cannot be combined with `tools.exec.security`/`tools.exec.ask`.                                      |
-| `tools.exec.node`                    | unset                                                  |                                                                                                                                                         |
-| `tools.exec.notifyOnExit`            | `true`                                                 | When true, backgrounded exec sessions enqueue a system event and request a heartbeat on exit.                                                           |
-| `tools.exec.approvalRunningNoticeMs` | `10000`                                                | Emit a single "running" notice when an approval-gated exec runs longer than this (`0` disables).                                                        |
-| `tools.exec.strictInlineEval`        | `false`                                                | See [Inline eval](#inline-eval-strictinlineeval).                                                                                                       |
-| `tools.exec.commandHighlighting`     | `false`                                                | When true, approval prompts can highlight parser-derived command spans in the command text. Set globally or per agent; does not change approval policy. |
-| `tools.exec.pathPrepend`             | unset                                                  | List of directories to prepend to `PATH` for exec runs (gateway + sandbox only).                                                                        |
-| `tools.exec.safeBins`                | unset                                                  | Stdin-only safe binaries that can run without explicit allowlist entries. See [Safe bins](/tools/exec-approvals-advanced#safe-bins-stdin-only).         |
-| `tools.exec.safeBinTrustedDirs`      | `/bin`, `/usr/bin`                                     | Additional explicit directories trusted for `safeBins` path checks. `PATH` entries are never auto-trusted.                                              |
-| `tools.exec.safeBinProfiles`         | unset                                                  | Optional custom argv policy per safe bin (`minPositional`, `maxPositional`, `allowedValueFlags`, `deniedFlags`).                                        |
+| Key                                  | Default                  | Notes                                                                                                                                                   |
+| ------------------------------------ | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tools.exec.timeoutSeconds`          | `1800`                   | Default per-command exec timeout in seconds. Per-call `timeoutSeconds` overrides it; per-call `timeoutSeconds: 0` disables the exec process timeout.    |
+| `tools.exec.host`                    | `auto`                   | Resolves to `sandbox` when a sandbox runtime is active, `gateway` otherwise.                                                                            |
+| `tools.exec.mode`                    | host-derived             | Canonical policy knob. See [Modes](#modes) below.                                                                                                       |
+| `tools.exec.reviewer.model`          | configured agent primary | Optional provider/model override for `mode=auto` review.                                                                                                |
+| `tools.exec.reviewer.timeoutMs`      | `30000`                  | Per-stage timeout for reviewer model preparation and completion before human fallback.                                                                  |
+| `tools.exec.node`                    | unset                    |                                                                                                                                                         |
+| `tools.exec.notifyOnExit`            | `true`                   | When true, backgrounded exec sessions enqueue a system event and request a heartbeat on exit.                                                           |
+| `tools.exec.approvalRunningNoticeMs` | `10000`                  | Emit a single "running" notice when an approval-gated exec runs longer than this (`0` disables).                                                        |
+| `tools.exec.strictInlineEval`        | `false`                  | See [Inline eval](#inline-eval-strictinlineeval).                                                                                                       |
+| `tools.exec.commandHighlighting`     | `false`                  | When true, approval prompts can highlight parser-derived command spans in the command text. Set globally or per agent; does not change approval policy. |
+| `tools.exec.pathPrepend`             | unset                    | List of directories to prepend to `PATH` for exec runs (gateway + sandbox only).                                                                        |
+| `tools.exec.safeBins`                | unset                    | Stdin-only safe binaries that can run without explicit allowlist entries. See [Safe bins](/tools/exec-approvals-advanced#safe-bins-stdin-only).         |
+| `tools.exec.safeBinTrustedDirs`      | `/bin`, `/usr/bin`       | Additional explicit directories trusted for `safeBins` path checks. `PATH` entries are never auto-trusted.                                              |
+| `tools.exec.safeBinProfiles`         | unset                    | Optional custom argv policy per safe bin (`minPositional`, `maxPositional`, `allowedValueFlags`, `deniedFlags`).                                        |
 
-No-approval host exec is the default for gateway and node (`security=full`, `ask=off`) — this comes from the host-policy defaults, not from `host=auto`. If you want approvals/allowlist behavior, tighten both `tools.exec.*` and the host approvals file; see [Exec approvals](/tools/exec-approvals#yolo-mode-no-approval). To force gateway or node routing regardless of sandbox state, set `tools.exec.host` or use `/exec host=...`.
+No-approval host exec is the default for gateway and node (`mode=full`) — this comes from the host-policy defaults, not from `host=auto`. If you want approvals/allowlist behavior, set `tools.exec.mode` and tighten the host approvals file; see [Exec approvals](/tools/exec-approvals#yolo-mode-no-approval). To force gateway or node routing regardless of sandbox state, set `tools.exec.host` or use `/exec host=...`.
 
 Example:
 
@@ -116,7 +120,7 @@ Example:
 
 ### Modes
 
-`tools.exec.mode` is the normalized policy knob. Setting it derives `security`/`ask` and cannot be combined with explicit `tools.exec.security`/`tools.exec.ask`.
+`tools.exec.mode` is the canonical persisted policy knob. Runtime security and approval behavior are derived from it.
 
 | Mode        | security    | ask       | Behavior                                                                                                                       |
 | ----------- | ----------- | --------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -126,7 +130,11 @@ Example:
 | `auto`      | `allowlist` | `on-miss` | Allowlist/safe-bin matches run directly; everything else routes through OpenClaw's native auto reviewer before asking a human. |
 | `full`      | `full`      | `off`     | No approval gate.                                                                                                              |
 
-`ask`/`ask=always` still asks a human every time regardless of mode.
+Use `/exec ask=always` with a message to require human approval for that run. It does not persist to later messages. Use [session permission modes](/gateway/permission-modes) for session-wide policy.
+
+Auto-review approval is single-use. On the gateway, OpenClaw supplies the resolved executable path to the reviewer and pins execution to that same path. An enforceable command chain or pipeline can be reviewed as one request when every executable resolves and OpenClaw can rebuild the complete command with those exact paths. Commands that cannot be reduced to one enforceable execution plan—such as heredocs, shell expansions, or unsupported wrapper quoting—fall back to human approval even if the model would otherwise allow them.
+
+Codex app-server command approvals that are not already decided by explicit runtime or native policy use the human approval route. OpenClaw does not run its configured exec reviewer for these requests because Codex does not expose an enforceable resolved executable that can bind the review decision to the command Codex runs.
 
 ### Inline eval (`strictInlineEval`)
 
@@ -141,28 +149,47 @@ When `tools.exec.strictInlineEval` is `true`, inline interpreter-eval forms requ
 - `host=sandbox`: runs `sh -lc` (login shell) inside the container, so `/etc/profile` may reset `PATH`. OpenClaw prepends `env.PATH` after profile sourcing via an internal env var (no shell interpolation); `tools.exec.pathPrepend` applies here too.
 - `host=node`: only non-blocked env overrides you pass are sent to the node. `env.PATH` overrides are rejected for host execution and ignored by node hosts. If you need additional PATH entries on a node, configure the node host service environment (systemd/launchd) or install tools in standard locations.
 
-Per-agent node binding (use the agent list index in config):
+Per-agent node binding (use the keyed agent ID in config):
 
 ```bash
-openclaw config get agents.list
-openclaw config set 'agents.list[0].tools.exec.node' "node-id-or-name"
+openclaw config get agents.entries
+openclaw config set 'agents.entries.main.tools.exec.node' "node-id-or-name"
 ```
 
-Control UI: the Nodes tab includes a small "Exec node binding" panel for the same settings.
+Control UI: the **Devices** page includes a small "Exec node binding" panel for the same settings. If a saved target cannot be resolved or no longer advertises execution support, its binding stays selected and is marked **Unavailable**. Supported names, addresses, and ID prefixes resolve without rewriting the saved reference.
+
+### Python environments (`uv`)
+
+In a [uv-managed project](https://docs.astral.sh/uv/guides/projects/), a bare `python` or `python3` uses the interpreter selected by the exec host's `PATH`. If the project environment is not on that path, imports of dependencies installed there can fail with `ModuleNotFoundError`.
+
+Set `workdir` to the project directory and run `uv run python3 script.py` to use its environment. A bare interpreter also works when the project environment is already on `PATH`.
+
+For repeated agent work, record the project convention in the workspace's `AGENTS.md`, for example:
+
+```md
+- Run Python scripts from this project with `uv run python3 script.py` so they use its dependencies.
+```
 
 ## Session overrides (`/exec`)
 
-Use `/exec` to set **per-session** defaults for `host`, `security`, `ask`, and `node`. Send `/exec` with no arguments to show the current values.
+Send `/exec host=... node=...` on its own to set **per-session** placement defaults. `security` and `ask` apply to the **current message only**; include them with the task you want to run. Send `/exec` with no arguments to show the resolved defaults.
 
 Example:
 
 ```text
-/exec host=auto security=allowlist ask=on-miss node=mac-1
+/exec host=node node=worker-1
+/exec security=allowlist ask=always inspect the build output
 ```
 
-`/exec` is only honored for **authorized senders** (channel allowlists/pairing plus `commands.useAccessGroups`). It updates **session state only** and does not write config. Authorized external channel senders may set these session defaults. Internal gateway/webchat clients need `operator.admin` to persist them.
+`/exec` is only honored for **authorized senders** through channel allowlists/pairing and access groups. Access-group enforcement is always on. It does not write config. Authorized external channel senders may persist placement defaults; internal gateway/webchat clients need `operator.admin` to do so. Turn-scoped `security` and `ask` do not require that persistence permission.
 
-To hard-disable exec, deny it via tool policy (`tools.deny: ["exec"]` or per-agent). Host approvals still apply unless you explicitly set `security=full` and `ask=off`.
+A standalone `/exec security=deny` acknowledges the run-only setting but starts no agent run and does not affect the next message. Use [session permission modes](/gateway/permission-modes) to keep a policy across messages.
+
+The `execSecurity` and `execAsk` fields in `sessions.patch` and `sessions.patchMany` are retired. They remain in the protocol v4 wire schema, but requests containing either field (including `null`) are rejected with `INVALID_REQUEST` and replacement guidance. Set `permissionMode` (`read-only`, `guarded`, `workspace`, or `full`) for session-wide policy, or use `/exec` with a message for a single run.
+
+When a session has a permission mode, per-turn `/exec` overrides can only tighten its security and approval policy. For example, `/exec security=deny` blocks exec for that turn even in a full-access session; an override requesting looser security or fewer approvals leaves the session mode's limits unchanged. Full-access sessions bypass host approval-file floors only while effective security remains `full`. Tightening `ask` alone still applies the requested approval level without restoring those floors.
+
+To hard-disable exec, deny it via tool policy (`tools.deny: ["exec"]` or per-agent). Outside the full-access session exception above, host approval-file floors still apply.
 
 ## Exec approvals (companion app / node host)
 
@@ -218,6 +245,19 @@ Send keys (tmux-style):
 {"tool":"process","action":"send-keys","sessionId":"<id>","keys":["Up","Up","Enter"]}
 ```
 
+For text, use `literal`; for exact input bytes, use `hex`. A mixed request sends literal UTF-8 text, hex bytes, then named keys, in that order:
+
+```json
+{
+  "tool": "process",
+  "action": "send-keys",
+  "sessionId": "<id>",
+  "literal": "hello ",
+  "hex": ["c3", "a9"],
+  "keys": ["Enter"]
+}
+```
+
 Submit (send CR only):
 
 ```json
@@ -238,7 +278,7 @@ Paste (bracketed by default):
 {
   tools: {
     exec: {
-      applyPatch: { workspaceOnly: true, allowModels: ["gpt-5.5"] },
+      applyPatch: { workspaceOnly: true, allowModels: ["gpt-5.6-sol"] },
     },
   },
 }

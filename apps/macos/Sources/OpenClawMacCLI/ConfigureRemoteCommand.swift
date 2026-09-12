@@ -87,6 +87,8 @@ func runConfigureRemote(_ args: [String]) {
               openclaw-mac configure-remote --direct-url <ws://host:port|wss://host> [--token <token>]
                                           [--password <password>] [--project-root <path>] [--cli-path <path>] [--json]
 
+            Offline preconfiguration; prefer openclaw-mac primary set when the app is running.
+
             Options:
               --ssh-target <t>    SSH target for the remote gateway host.
               --direct-url <url>  Direct remote gateway URL; skips SSH tunneling.
@@ -141,7 +143,7 @@ private func configureSSHRemote(
             userInfo: [NSLocalizedDescriptionKey: "SSH target must look like user@host[:port]"])
     }
 
-    let configURL = openClawConfigURL()
+    let configURL = resolveOpenClawConfigURL()
     var root = try loadConfigRoot(from: configURL)
     var gateway = root["gateway"] as? [String: Any] ?? [:]
     var remote = gateway["remote"] as? [String: Any] ?? [:]
@@ -170,7 +172,7 @@ private func configureSSHRemote(
     root["gateway"] = gateway
 
     try saveConfigRoot(root, to: configURL)
-    writeAppDefaults(opts: opts, target: target, suites: defaultsSuites)
+    writeAppDefaults(opts: opts, target: target, targetChanged: existingTarget != target, suites: defaultsSuites)
 
     return ConfigureRemoteOutput(
         status: "ok",
@@ -195,15 +197,19 @@ private func configureDirectRemote(
             domain: "ConfigureRemote",
             code: 2,
             userInfo: [
-                NSLocalizedDescriptionKey: "Direct URL must be ws:// for private/Tailscale hosts or wss:// for remote hosts",
+                NSLocalizedDescriptionKey: """
+                Direct URL must be ws:// for private/Tailscale hosts or wss:// for remote hosts
+                """,
             ])
     }
 
-    let configURL = openClawConfigURL()
+    let configURL = resolveOpenClawConfigURL()
     var root = try loadConfigRoot(from: configURL)
     var gateway = root["gateway"] as? [String: Any] ?? [:]
     var remote = gateway["remote"] as? [String: Any] ?? [:]
 
+    let targetChanged = remote["transport"] as? String != "direct"
+        || remote["url"] as? String != directURL.absoluteString
     gateway["mode"] = "remote"
     remote["transport"] = "direct"
     remote["url"] = directURL.absoluteString
@@ -217,7 +223,7 @@ private func configureDirectRemote(
     root["gateway"] = gateway
 
     try saveConfigRoot(root, to: configURL)
-    writeAppDefaults(opts: opts, target: "", suites: defaultsSuites)
+    writeAppDefaults(opts: opts, target: "", targetChanged: targetChanged, suites: defaultsSuites)
 
     return ConfigureRemoteOutput(
         status: "ok",
@@ -232,15 +238,6 @@ private func configureDirectRemote(
         onboardingSkipped: true)
 }
 
-private func openClawConfigURL() -> URL {
-    if let raw = ProcessInfo.processInfo.environment["OPENCLAW_CONFIG_PATH"],
-       !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    {
-        return URL(fileURLWithPath: NSString(string: raw).expandingTildeInPath)
-    }
-    return FileManager().homeDirectoryForCurrentUser.appendingPathComponent(".openclaw/openclaw.json")
-}
-
 private func loadConfigRoot(from url: URL) throws -> [String: Any] {
     guard FileManager().isReadableFile(atPath: url.path) else { return [:] }
     let data = try Data(contentsOf: url)
@@ -253,9 +250,15 @@ private func saveConfigRoot(_ root: [String: Any], to url: URL) throws {
     try data.write(to: url, options: [.atomic])
 }
 
-private func writeAppDefaults(opts: ConfigureRemoteOptions, target: String, suites: [String]) {
+private func writeAppDefaults(opts: ConfigureRemoteOptions, target: String, targetChanged: Bool, suites: [String]) {
     for suite in suites {
         guard let defaults = UserDefaults(suiteName: suite) else { continue }
+        let previousTarget = defaults.string(forKey: "openclaw.remoteTarget") ?? ""
+        if targetChanged || previousTarget != target {
+            for key in ["openclaw.remoteIdentity", "openclaw.remoteProjectRoot", "openclaw.remoteCliPath"] {
+                defaults.removeObject(forKey: key)
+            }
+        }
         defaults.set("remote", forKey: "openclaw.connectionMode")
         setDefaultString(defaults, key: "openclaw.remoteTarget", value: target)
         defaults.set(true, forKey: "openclaw.onboardingSeen")

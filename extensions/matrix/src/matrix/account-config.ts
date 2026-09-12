@@ -1,12 +1,11 @@
 // Matrix helper module supports account config behavior.
-import { normalizeAccountId } from "openclaw/plugin-sdk/account-id";
-import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk/account-id";
+import { DEFAULT_ACCOUNT_ID, normalizeAccountId } from "openclaw/plugin-sdk/account-id";
 import {
   listConfiguredAccountIds,
   resolveMergedAccountConfig,
   resolveNormalizedAccountEntry,
 } from "openclaw/plugin-sdk/account-resolution-runtime";
-import { hasConfiguredSecretInput } from "openclaw/plugin-sdk/secret-input-runtime";
+import { hasConfiguredSecretInput } from "openclaw/plugin-sdk/secret-input";
 import type { CoreConfig, MatrixAccountConfig, MatrixConfig } from "../types.js";
 
 type MatrixRoomEntries = Record<string, NonNullable<MatrixConfig["groups"]>[string]>;
@@ -68,23 +67,6 @@ function mergeMatrixRoomEntries(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-function resolveMatrixAccountDefaultConfig(
-  cfg: CoreConfig,
-  accountId: string,
-): MatrixAccountConfig | undefined {
-  if (accountId === DEFAULT_ACCOUNT_ID) {
-    return undefined;
-  }
-  return findMatrixAccountConfig(cfg, DEFAULT_ACCOUNT_ID);
-}
-
-function mergeMatrixAccountDefaultRoomEntries(params: {
-  inherited: MatrixRoomEntries | undefined;
-  defaultEntries: MatrixRoomEntries | undefined;
-}): MatrixRoomEntries | undefined {
-  return mergeMatrixRoomEntries(params.inherited, params.defaultEntries, false);
-}
-
 export function listNormalizedMatrixAccountIds(cfg: CoreConfig): string[] {
   return listConfiguredAccountIds({
     accounts: resolveMatrixAccountsMap(cfg),
@@ -132,70 +114,36 @@ export function resolveMatrixAccountConfig(params: {
 }): MatrixConfig {
   const accountId = normalizeAccountId(params.accountId);
   const base = resolveMatrixBaseConfig(params.cfg);
-  const accounts = params.cfg.channels?.matrix?.accounts as
-    | Record<string, Partial<MatrixConfig>>
-    | undefined;
   const merged = resolveMergedAccountConfig<MatrixConfig>({
     channelConfig: base,
-    accounts,
+    accounts: params.cfg.channels?.matrix?.accounts as
+      | Record<string, Partial<MatrixConfig>>
+      | undefined,
     accountId,
     normalizeAccountId,
     nestedObjectKeys: ["dm", "actions", "execApprovals", "botLoopProtection"],
   });
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
-  const accountDefaultConfig = resolveMatrixAccountDefaultConfig(params.cfg, accountId);
-  const accountDm = accountConfig?.dm;
-  const accountDmHasAllowFrom = Boolean(accountDm && Object.hasOwn(accountDm, "allowFrom"));
-  const resolvedDmAllowFrom = accountDmHasAllowFrom
-    ? accountDm?.allowFrom
-    : (accountDefaultConfig?.dm?.allowFrom ?? merged.dm?.allowFrom);
-  const dm =
-    resolvedDmAllowFrom === undefined
-      ? merged.dm
-      : {
-          ...merged.dm,
-          allowFrom: resolvedDmAllowFrom,
-        };
-  const accountHasGroupAllowFrom = Boolean(
-    accountConfig && Object.hasOwn(accountConfig, "groupAllowFrom"),
-  );
-  const groupAllowFrom = accountHasGroupAllowFrom
-    ? accountConfig?.groupAllowFrom
-    : (accountDefaultConfig?.groupAllowFrom ?? merged.groupAllowFrom);
   const groups = mergeMatrixRoomEntries(
-    mergeMatrixAccountDefaultRoomEntries({
-      inherited: selectInheritedMatrixRoomEntries({
-        entries: base.groups,
-        accountId,
-      }),
-      defaultEntries: accountDefaultConfig?.groups,
+    selectInheritedMatrixRoomEntries({
+      entries: base.groups,
+      accountId,
     }),
     accountConfig?.groups,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "groups")),
   );
   const rooms = mergeMatrixRoomEntries(
-    mergeMatrixAccountDefaultRoomEntries({
-      inherited: selectInheritedMatrixRoomEntries({
-        entries: base.rooms,
-        accountId,
-      }),
-      defaultEntries: accountDefaultConfig?.rooms,
+    selectInheritedMatrixRoomEntries({
+      entries: base.rooms,
+      accountId,
     }),
     accountConfig?.rooms,
     Boolean(accountConfig && Object.hasOwn(accountConfig, "rooms")),
   );
   // Room maps need custom scoping, so keep the generic merge for all other fields.
-  const {
-    groups: _ignoredGroups,
-    rooms: _ignoredRooms,
-    dm: _ignoredDm,
-    groupAllowFrom: _ignoredGroupAllowFrom,
-    ...rest
-  } = merged;
+  const { groups: _ignoredGroups, rooms: _ignoredRooms, ...rest } = merged;
   return {
     ...rest,
-    ...(dm ? { dm } : {}),
-    ...(groupAllowFrom !== undefined ? { groupAllowFrom } : {}),
     ...(groups ? { groups } : {}),
     ...(rooms ? { rooms } : {}),
   };
@@ -210,16 +158,15 @@ export function resolveMatrixAccountAllowlistConfig(params: {
 } {
   const accountId = normalizeAccountId(params.accountId);
   const base = resolveMatrixBaseConfig(params.cfg);
-  const accountDefaultConfig = resolveMatrixAccountDefaultConfig(params.cfg, accountId);
   const accountConfig = findMatrixAccountConfig(params.cfg, accountId);
   const accountDm = accountConfig?.dm;
 
-  let dmAllowFrom = accountDefaultConfig?.dm?.allowFrom ?? base.dm?.allowFrom;
+  let dmAllowFrom = base.dm?.allowFrom;
   if (accountDm && Object.hasOwn(accountDm, "allowFrom")) {
     dmAllowFrom = accountDm.allowFrom;
   }
 
-  let groupAllowFrom = accountDefaultConfig?.groupAllowFrom ?? base.groupAllowFrom;
+  let groupAllowFrom = base.groupAllowFrom;
   if (accountConfig && Object.hasOwn(accountConfig, "groupAllowFrom")) {
     groupAllowFrom = accountConfig.groupAllowFrom;
   }

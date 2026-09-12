@@ -6,6 +6,7 @@ import {
   AcpSessionManager,
   baseCfg,
   createRuntime,
+  disposeAcpSessionManagerInstance,
   expectMockCallFields,
   expectNoMockCallFields,
   expectRecordFields,
@@ -100,6 +101,7 @@ describe("AcpSessionManager runtime config", () => {
     expect(runtimeState.setMode).not.toHaveBeenCalled();
 
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:codex:acp:session-1",
       text: "do work",
@@ -171,6 +173,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:codex:acp:session-1",
       text: "do work",
@@ -245,6 +248,7 @@ describe("AcpSessionManager runtime config", () => {
     });
 
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:codex:acp:session-1",
       text: "do work",
@@ -334,6 +338,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey,
       text: "learn prompt session",
@@ -409,6 +414,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:codex:acp:session-1",
       text: "do work",
@@ -464,6 +470,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:opencode:acp:session-1",
       text: "do work",
@@ -503,6 +510,7 @@ describe("AcpSessionManager runtime config", () => {
     const manager = new AcpSessionManager();
     await expectRejectedRecord(
       manager.runTurn({
+        provenance: "system",
         cfg: baseCfg,
         sessionKey: "agent:opencode:acp:session-1",
         text: "do work",
@@ -549,6 +557,7 @@ describe("AcpSessionManager runtime config", () => {
     const manager = new AcpSessionManager();
     await expectRejectedRecord(
       manager.runTurn({
+        provenance: "system",
         cfg: baseCfg,
         sessionKey: "agent:opencode:acp:session-1",
         text: "do work",
@@ -586,6 +595,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:claude:acp:session-1",
       text: "do work",
@@ -628,6 +638,7 @@ describe("AcpSessionManager runtime config", () => {
 
     const manager = new AcpSessionManager();
     await manager.runTurn({
+      provenance: "system",
       cfg: baseCfg,
       sessionKey: "agent:gemini:acp:session-1",
       text: "do work",
@@ -658,75 +669,100 @@ describe("AcpSessionManager runtime config", () => {
     });
   });
 
-  it("re-ensures runtime handles after cwd runtime option updates", async () => {
-    const runtimeState = createRuntime();
-    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
-      id: "acpx",
-      runtime: runtimeState.runtime,
-    });
-    const sessionKey = "agent:codex:acp:session-cwd-update";
-    let currentEntry = {
-      sessionKey,
-      storeSessionKey: sessionKey,
-      acp: readySessionMeta(),
-    };
-    hoisted.readAcpSessionEntryMock.mockImplementation(() => currentEntry);
-    hoisted.upsertAcpSessionMetaMock.mockImplementation((paramsUnknown: unknown) => {
-      const params = paramsUnknown as {
-        mutate: (
-          current: SessionAcpMeta | undefined,
-          entry: { acp?: SessionAcpMeta } | undefined,
-        ) => SessionAcpMeta | null | undefined;
+  it.each(["next turn", "shutdown"])(
+    "closes the previous runtime after cwd updates before %s",
+    async (operation) => {
+      const runtimeState = createRuntime();
+      const lifecycle: string[] = [];
+      runtimeState.ensureSession.mockImplementation(async (input) => {
+        lifecycle.push(`ensure:${input.cwd ?? "default"}`);
+        return {
+          sessionKey: input.sessionKey,
+          backend: "acpx",
+          runtimeSessionName: `runtime:${input.cwd ?? "default"}`,
+          cwd: input.cwd,
+        };
+      });
+      runtimeState.close.mockImplementation(async ({ handle }) => {
+        lifecycle.push(`close:${handle.cwd ?? "default"}`);
+      });
+      hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+        id: "acpx",
+        runtime: runtimeState.runtime,
+      });
+      const sessionKey = "agent:codex:acp:session-cwd-update";
+      let currentEntry = {
+        sessionKey,
+        storeSessionKey: sessionKey,
+        acp: readySessionMeta(),
       };
-      const nextMeta = params.mutate(currentEntry.acp, currentEntry);
-      if (nextMeta === null) {
-        return null;
-      }
-      currentEntry = {
-        ...currentEntry,
-        acp: nextMeta ?? currentEntry.acp,
-      };
-      return currentEntry;
-    });
+      hoisted.readAcpSessionEntryMock.mockImplementation(() => currentEntry);
+      hoisted.upsertAcpSessionMetaMock.mockImplementation((paramsUnknown: unknown) => {
+        const params = paramsUnknown as {
+          mutate: (
+            current: SessionAcpMeta | undefined,
+            entry: { acp?: SessionAcpMeta } | undefined,
+          ) => SessionAcpMeta | null | undefined;
+        };
+        const nextMeta = params.mutate(currentEntry.acp, currentEntry);
+        if (nextMeta === null) {
+          return null;
+        }
+        currentEntry = {
+          ...currentEntry,
+          acp: nextMeta ?? currentEntry.acp,
+        };
+        return currentEntry;
+      });
 
-    const manager = new AcpSessionManager();
-    await manager.runTurn({
-      cfg: baseCfg,
-      sessionKey,
-      text: "first",
-      mode: "prompt",
-      requestId: "r1",
-    });
-
-    await expect(
-      manager.updateSessionRuntimeOptions({
+      const manager = new AcpSessionManager();
+      await manager.runTurn({
+        provenance: "system",
         cfg: baseCfg,
         sessionKey,
-        patch: { cwd: "/workspace/next" },
-      }),
-    ).resolves.toEqual({
-      cwd: "/workspace/next",
-    });
+        text: "first",
+        mode: "prompt",
+        requestId: "r1",
+      });
 
-    expect(currentEntry.acp.runtimeOptions).toEqual({
-      cwd: "/workspace/next",
-    });
-    expect(currentEntry.acp.cwd).toBe("/workspace/next");
+      await expect(
+        manager.updateSessionRuntimeOptions({
+          cfg: baseCfg,
+          sessionKey,
+          patch: { cwd: "/workspace/next" },
+        }),
+      ).resolves.toEqual({
+        cwd: "/workspace/next",
+      });
 
-    await manager.runTurn({
-      cfg: baseCfg,
-      sessionKey,
-      text: "second",
-      mode: "prompt",
-      requestId: "r2",
-    });
+      expect(currentEntry.acp.runtimeOptions).toEqual({
+        cwd: "/workspace/next",
+      });
+      expect(currentEntry.acp.cwd).toBe("/workspace/next");
 
-    expect(runtimeState.ensureSession).toHaveBeenCalledTimes(2);
-    expectRecordFields(mockCallArg(runtimeState.ensureSession, 1), {
-      sessionKey,
-      cwd: "/workspace/next",
-    });
-  });
+      if (operation === "shutdown") {
+        await disposeAcpSessionManagerInstance(manager, "gateway-shutdown");
+        expect(lifecycle).toEqual(["ensure:default", "close:default"]);
+        return;
+      }
+
+      await manager.runTurn({
+        provenance: "system",
+        cfg: baseCfg,
+        sessionKey,
+        text: "second",
+        mode: "prompt",
+        requestId: "r2",
+      });
+
+      expect(runtimeState.ensureSession).toHaveBeenCalledTimes(2);
+      expectRecordFields(mockCallArg(runtimeState.ensureSession, 1), {
+        sessionKey,
+        cwd: "/workspace/next",
+      });
+      expect(lifecycle).toEqual(["ensure:default", "close:default", "ensure:/workspace/next"]);
+    },
+  );
 
   it("returns unsupported-control error when backend does not support set_config_option", async () => {
     const runtimeState = createRuntime();
@@ -757,6 +793,101 @@ describe("AcpSessionManager runtime config", () => {
       }),
       { code: "ACP_BACKEND_UNSUPPORTED_CONTROL" },
     );
+  });
+
+  it("does not send automatic thinking when the backend advertises no thinking control", async () => {
+    const runtimeState = createRuntime();
+    runtimeState.getCapabilities.mockResolvedValue({
+      controls: ["session/set_config_option"],
+      configOptionKeys: ["mode", "model"],
+    });
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue({
+      sessionKey: "agent:opencode:acp:session-1",
+      storeSessionKey: "agent:opencode:acp:session-1",
+      acp: readySessionMeta({
+        agent: "opencode",
+        runtimeOptions: { thinking: "high" },
+      }),
+    });
+
+    const manager = new AcpSessionManager();
+    await manager.runTurn({
+      provenance: "system",
+      cfg: baseCfg,
+      sessionKey: "agent:opencode:acp:session-1",
+      text: "do work",
+      mode: "prompt",
+      requestId: "run-opencode-no-thinking",
+    });
+
+    expect(runtimeState.setConfigOption).not.toHaveBeenCalled();
+    expect(runtimeState.runTurn).toHaveBeenCalledOnce();
+  });
+
+  it("maps automatic Codex thinking to the advertised reasoning effort control", async () => {
+    const runtimeState = createRuntime();
+    runtimeState.getCapabilities.mockResolvedValue({
+      controls: ["session/set_config_option"],
+      configOptionKeys: ["model", "reasoning_effort"],
+    });
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue({
+      sessionKey: "agent:codex:acp:session-1",
+      storeSessionKey: "agent:codex:acp:session-1",
+      acp: readySessionMeta({ runtimeOptions: { thinking: "high" } }),
+    });
+
+    const manager = new AcpSessionManager();
+    await manager.runTurn({
+      provenance: "system",
+      cfg: baseCfg,
+      sessionKey: "agent:codex:acp:session-1",
+      text: "do work",
+      mode: "prompt",
+      requestId: "run-codex-reasoning",
+    });
+
+    expectMockCallFields(runtimeState.setConfigOption, {
+      key: "reasoning_effort",
+      value: "high",
+    });
+  });
+
+  it("rejects an explicit thinking write when the backend does not advertise it", async () => {
+    const runtimeState = createRuntime();
+    runtimeState.getCapabilities.mockResolvedValue({
+      controls: ["session/set_config_option"],
+      configOptionKeys: ["mode", "model"],
+    });
+    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
+      id: "acpx",
+      runtime: runtimeState.runtime,
+    });
+    hoisted.readAcpSessionEntryMock.mockReturnValue({
+      sessionKey: "agent:opencode:acp:session-1",
+      storeSessionKey: "agent:opencode:acp:session-1",
+      acp: readySessionMeta({ agent: "opencode" }),
+    });
+
+    const manager = new AcpSessionManager();
+    await expectRejectedRecord(
+      manager.setSessionConfigOption({
+        cfg: baseCfg,
+        sessionKey: "agent:opencode:acp:session-1",
+        key: "thinking",
+        value: "high",
+      }),
+      { code: "ACP_BACKEND_UNSUPPORTED_CONTROL" },
+    );
+
+    expect(runtimeState.setConfigOption).not.toHaveBeenCalled();
   });
 
   it("maps explicit thinking config updates to advertised effort keys", async () => {
@@ -887,39 +1018,5 @@ describe("AcpSessionManager runtime config", () => {
       value: "strict",
     });
     expect(nextOptions).toEqual({ permissionProfile: "strict" });
-  });
-
-  it("rejects invalid runtime option values before backend controls run", async () => {
-    const runtimeState = createRuntime();
-    hoisted.requireAcpRuntimeBackendMock.mockReturnValue({
-      id: "acpx",
-      runtime: runtimeState.runtime,
-    });
-    hoisted.readAcpSessionEntryMock.mockReturnValue({
-      sessionKey: "agent:codex:acp:session-1",
-      storeSessionKey: "agent:codex:acp:session-1",
-      acp: readySessionMeta(),
-    });
-
-    const manager = new AcpSessionManager();
-    await expectRejectedRecord(
-      manager.setSessionConfigOption({
-        cfg: baseCfg,
-        sessionKey: "agent:codex:acp:session-1",
-        key: "timeout",
-        value: "not-a-number",
-      }),
-      { code: "ACP_INVALID_RUNTIME_OPTION" },
-    );
-    expect(runtimeState.setConfigOption).not.toHaveBeenCalled();
-
-    await expectRejectedRecord(
-      manager.updateSessionRuntimeOptions({
-        cfg: baseCfg,
-        sessionKey: "agent:codex:acp:session-1",
-        patch: { cwd: "relative/path" },
-      }),
-      { code: "ACP_INVALID_RUNTIME_OPTION" },
-    );
   });
 });

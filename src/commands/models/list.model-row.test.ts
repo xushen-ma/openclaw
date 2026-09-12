@@ -15,6 +15,26 @@ const OPENROUTER_MODEL = {
 } as const;
 
 describe("toModelRow", () => {
+  it("retains configured aliases when a model is missing from the catalog", () => {
+    const row = toModelRow({
+      key: "ollama/qa-missing-local",
+      tags: ["fallback#1", "configured"],
+      aliases: ["local-draft"],
+      authAvailability: undefined,
+    });
+
+    expect(row).toMatchObject({
+      key: "ollama/qa-missing-local",
+      name: "ollama/qa-missing-local",
+      input: "-",
+      contextWindow: null,
+      local: null,
+      available: null,
+      tags: ["fallback#1", "configured", "alias:local-draft", "missing"],
+      missing: true,
+    });
+  });
+
   it("keeps native context metadata and effective runtime context tokens distinct", () => {
     const row = toModelRow({
       model: {
@@ -24,6 +44,7 @@ describe("toModelRow", () => {
       } as never,
       key: "openrouter/openai/gpt-5.4",
       tags: [],
+      authAvailability: false,
     });
 
     expect(row.contextWindow).toBe(400_000);
@@ -35,10 +56,23 @@ describe("toModelRow", () => {
       model: OPENROUTER_MODEL as never,
       key: "openrouter/openai/gpt-5.4",
       tags: [],
-      hasAuthForProvider: (provider) => provider === "openrouter",
+      authAvailability: true,
     });
 
     expect(row.available).toBe(true);
+  });
+
+  it("keeps authoritative route auth unknown despite provider-level registry auth", () => {
+    const row = toModelRow({
+      model: OPENROUTER_MODEL as never,
+      key: "openai/gpt-5.5",
+      tags: [],
+      availableKeys: new Set(["openai/gpt-5.5"]),
+      authAvailability: undefined,
+      authAvailabilityAuthoritative: true,
+    });
+
+    expect(row.available).toBeNull();
   });
 
   it("marks bracketed IPv6 loopback base URLs as local", () => {
@@ -51,6 +85,7 @@ describe("toModelRow", () => {
         } as never,
         key: "ollama/llama3.2",
         tags: [],
+        authAvailability: undefined,
       });
 
       expect(row.local).toBe(true);
@@ -69,6 +104,7 @@ describe("toModelRow", () => {
       key: "ollama/qwen3.6:35b-a3b",
       tags: [],
       availableKeys: new Set(["ollama/llama3.2"]),
+      authAvailability: undefined,
     });
 
     expect(row.local).toBe(true);

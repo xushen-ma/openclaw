@@ -1,6 +1,5 @@
-// Model Catalog Core module implements provider model id normalization behavior.
+import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { parseModelCatalogRef } from "./model-catalog-refs.js";
-import { normalizeLowercaseStringOrEmpty } from "./provider-id.js";
 import {
   normalizeGooglePreviewModelId,
   normalizeTogetherModelId,
@@ -44,19 +43,10 @@ export function collectManifestModelIdNormalizationPolicies(
 }
 
 /** Replace the process-local manifest normalization policy snapshot. */
-export function setCurrentManifestModelIdNormalizationRecords(
-  plugins: readonly ManifestModelIdNormalizationRecord[] | undefined,
+export function setCurrentManifestModelIdNormalizationPolicies(
+  policies: ReadonlyMap<string, ManifestModelIdNormalizationProvider> | undefined,
 ): void {
-  currentManifestModelIdNormalizationPolicies = plugins
-    ? collectManifestModelIdNormalizationPolicies(plugins)
-    : undefined;
-}
-
-/** Return the current process-local manifest normalization policy snapshot. */
-export function getCurrentManifestModelIdNormalizationPolicies():
-  | ReadonlyMap<string, ManifestModelIdNormalizationProvider>
-  | undefined {
-  return currentManifestModelIdNormalizationPolicies;
+  currentManifestModelIdNormalizationPolicies = policies;
 }
 
 /** Return true when a model id already includes a provider namespace. */
@@ -136,8 +126,9 @@ export function normalizeBuiltInProviderModelId(provider: string, model: string)
   }
   if (normalizedProvider === "anthropic") {
     const anthropicAliases: Record<string, string> = {
+      "opus-5": "claude-opus-5",
+      opus: "claude-opus-5",
       "opus-4.8": "claude-opus-4-8",
-      opus: "claude-opus-4-8",
       "opus-4.6": "claude-opus-4-6",
       "sonnet-5": "claude-sonnet-5",
       sonnet: "claude-sonnet-5",
@@ -174,12 +165,11 @@ export function normalizeBuiltInProviderModelId(provider: string, model: string)
   }
   if (normalizedProvider === "xai") {
     const xaiAliases: Record<string, string> = {
+      "grok-4.3-latest": "grok-4.3",
+      "grok-4.5-latest": "grok-4.5",
+      "grok-build-latest": "grok-4.5",
       "grok-4-fast-reasoning": "grok-4-fast",
       "grok-4-1-fast-reasoning": "grok-4-1-fast",
-      "grok-4.20-experimental-beta-0304-reasoning": "grok-4.20-beta-latest-reasoning",
-      "grok-4.20-experimental-beta-0304-non-reasoning": "grok-4.20-beta-latest-non-reasoning",
-      "grok-4.20-reasoning": "grok-4.20-beta-latest-reasoning",
-      "grok-4.20-non-reasoning": "grok-4.20-beta-latest-non-reasoning",
     };
     return xaiAliases[normalizeLowercaseStringOrEmpty(model)] ?? model;
   }
@@ -215,7 +205,7 @@ export function normalizeStaticProviderModelIdWithPolicies(
 export function normalizeConfiguredProviderCatalogModelId(
   provider: string,
   model: string,
-  policies = getCurrentManifestModelIdNormalizationPolicies(),
+  policies = currentManifestModelIdNormalizationPolicies,
 ): string {
   const providerModel = normalizeStaticProviderModelIdWithPolicies(provider, model, policies);
   return normalizeConfiguredProviderCatalogModelRef(providerModel);
