@@ -16,6 +16,7 @@ import { normalizeLowercaseStringOrEmpty } from "../../packages/normalization-co
 import { normalizeUniqueStringEntries } from "../../packages/normalization-core/src/string-normalization.js";
 
 type ManifestModelCatalogPlugin = {
+  providerEndpoints?: readonly import("../plugins/manifest-types.js").PluginManifestProviderEndpoint[];
   id: string;
   providers?: readonly string[];
   modelCatalog?: Pick<
@@ -86,6 +87,7 @@ export function planManifestModelCatalogRows(params: {
   mergeKeyFilter?: ReadonlySet<string>;
   remoteOverlay?: Readonly<Record<string, ModelCatalogProvider>>;
   resolveRemoteProvider?: (provider: string) => ModelCatalogProvider | undefined;
+  includeProvider?: (provider: string, plugin: ManifestModelCatalogPlugin) => boolean;
   selection?: ManifestModelCatalogRowSelection;
 }): ManifestModelCatalogPlan {
   const hasProviderFilter = Boolean(params.providerFilter) || params.providerFilters !== undefined;
@@ -104,6 +106,7 @@ export function planManifestModelCatalogRows(params: {
   for (const plugin of params.registry.plugins) {
     for (const entry of planManifestModelCatalogPluginEntries({
       plugin,
+      includeProvider: params.includeProvider,
       providerFilters,
       mergeKeyFilter: params.mergeKeyFilter,
       remoteOverlay: params.remoteOverlay,
@@ -163,19 +166,19 @@ export function planManifestModelCatalogRows(params: {
     rows.push(row);
   }
 
+  rows.sort(
+    (left, right) => left.provider.localeCompare(right.provider) || left.id.localeCompare(right.id),
+  );
   return {
     entries,
     conflicts: [...conflicts.values()],
-    // oxlint-disable-next-line unicorn/no-array-sort -- Selection owns this array until publication.
-    rows: rows.sort(
-      (left, right) =>
-        left.provider.localeCompare(right.provider) || left.id.localeCompare(right.id),
-    ),
+    rows,
   };
 }
 
 function planManifestModelCatalogPluginEntries(params: {
   plugin: ManifestModelCatalogPlugin;
+  includeProvider: ((provider: string, plugin: ManifestModelCatalogPlugin) => boolean) | undefined;
   providerFilters: ReadonlySet<string> | undefined;
   mergeKeyFilter: ReadonlySet<string> | undefined;
   remoteOverlay: Readonly<Record<string, ModelCatalogProvider>> | undefined;
@@ -206,6 +209,9 @@ function planManifestModelCatalogPluginEntries(params: {
       ? params.resolveRemoteProvider(normalizedProvider)
       : params.remoteOverlay?.[normalizedProvider];
     return plannedProviders.flatMap((plannedProvider) => {
+      if (params.includeProvider?.(plannedProvider, params.plugin) === false) {
+        return [];
+      }
       const mergeKeyFilter = params.mergeKeyFilter;
       const selectModels = (models: ModelCatalogModel[]) =>
         mergeKeyFilter
@@ -367,13 +373,11 @@ export function planManifestModelCatalogSuppressions(params: {
       });
     }
   }
-  return {
-    // oxlint-disable-next-line unicorn/no-array-sort -- This plan owns the newly collected array.
-    suppressions: suppressions.sort(
-      (left, right) =>
-        left.provider.localeCompare(right.provider) ||
-        left.model.localeCompare(right.model) ||
-        left.pluginId.localeCompare(right.pluginId),
-    ),
-  };
+  suppressions.sort(
+    (left, right) =>
+      left.provider.localeCompare(right.provider) ||
+      left.model.localeCompare(right.model) ||
+      left.pluginId.localeCompare(right.pluginId),
+  );
+  return { suppressions };
 }

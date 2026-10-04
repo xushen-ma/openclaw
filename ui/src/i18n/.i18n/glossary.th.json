@@ -40,7 +40,7 @@
     "target": "iMessage"
   },
   {
-    "source": "parent session",
-    "target": "เซสชันแม่"
+    "source": "Question dismissed.",
+    "target": "ปิดคำถามแล้ว"
   }
 ]

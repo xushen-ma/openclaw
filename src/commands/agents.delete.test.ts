@@ -1,10 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   readPersistedAuthProfileStoreRaw,
   writePersistedAuthProfileStoreRaw,
 } from "../agents/auth-profiles/sqlite.js";
+import { runCommandWithRuntime } from "../cli/cli-utils.js";
 import { retainLegacyDefaultAgentId } from "../config/legacy.default-agent-owner.js";
 import { resolveSessionStorePathCore } from "../config/sessions.js";
 import { listSessionEntriesReadOnly } from "../config/sessions/session-accessor.js";
@@ -46,7 +47,6 @@ const fsSafeMocks = vi.hoisted(() => ({
 
 const gatewayMocks = vi.hoisted(() => ({
   callGateway: vi.fn(),
-  isGatewayCredentialsRequiredError: vi.fn(),
 }));
 
 const workspaceStateMocks = vi.hoisted(() => ({
@@ -74,12 +74,9 @@ vi.mock("../config/config.js", async () => ({
   replaceConfigFile: configMocks.replaceConfigFile,
 }));
 
-vi.mock("../gateway/call.js", async () => ({
-  ...(await vi.importActual<typeof import("../gateway/transport-error.js")>(
-    "../gateway/transport-error.js",
-  )),
+vi.mock("../gateway/call.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../gateway/call.js")>()),
   callGateway: gatewayMocks.callGateway,
-  isGatewayCredentialsRequiredError: gatewayMocks.isGatewayCredentialsRequiredError,
 }));
 
 vi.mock("../infra/fs-safe.js", async (importOriginal) => ({
@@ -161,6 +158,7 @@ function expectSessionStore(
 
 describe("agents delete command", () => {
   beforeEach(() => {
+    vi.stubEnv("OPENCLAW_GATEWAY_URL", undefined);
     configMocks.readConfigFileSnapshot.mockReset();
     configMocks.replaceConfigFile.mockReset();
     fsSafeMocks.movePathToTrash
@@ -170,16 +168,15 @@ describe("agents delete command", () => {
     processMocks.runCommandWithTimeout.mockClear();
     gatewayMocks.callGateway.mockReset();
     gatewayMocks.callGateway.mockRejectedValue(gatewayTransportError("closed"));
-    gatewayMocks.isGatewayCredentialsRequiredError.mockReset();
-    gatewayMocks.isGatewayCredentialsRequiredError.mockImplementation(
-      (error: unknown) =>
-        error instanceof Error && error.name === "GatewayCredentialsRequiredError",
-    );
     runtime.log.mockClear();
     runtime.error.mockClear();
     runtime.exit.mockClear();
     terminalMocks.isTerminalInteractive.mockReset().mockReturnValue(true);
     wizardMocks.createClackPrompter.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("requires --force when confirmation cannot use an interactive terminal", async () => {
@@ -247,6 +244,52 @@ describe("agents delete command", () => {
       expect(readPersistedAuthProfileStoreRaw()).toEqual(sharedAuthStore);
     });
   });
+
+  it.each(["relocated", "agent directory"])(
+    "refuses deleting a shared session database owner at a %s locator before any mutation",
+    async (location) => {
+      await withStateDirEnv("openclaw-agents-delete-shared-owner-", async ({ stateDir }) => {
+        const storePath =
+          location === "relocated"
+            ? path.join(stateDir, "shared.sqlite")
+            : path.join(stateDir, "agents", "alpha", "agent", "openclaw-agent.sqlite");
+        const cfg: OpenClawConfig = {
+          agents: {
+            ownership: "explicit",
+            entries: { alpha: {}, ops: {} },
+          },
+          session: { store: storePath },
+        };
+        openOpenClawAgentDatabase({ agentId: "alpha", path: storePath });
+        const sessions = {
+          "agent:alpha:main": { sessionId: "alpha-session", updatedAt: 1 },
+          ...(location === "relocated"
+            ? { "agent:ops:main": { sessionId: "ops-session", updatedAt: 2 } }
+            : {}),
+        };
+        await arrangeAgentsDeleteTest({ stateDir, cfg, deletedAgentId: "alpha", sessions });
+        saveExecApprovals({ version: 1, agents: { alpha: { security: "deny" } } });
+        const approvals = readExecApprovalsSnapshot();
+
+        await agentsDeleteCommand({ id: "alpha", force: true, json: true }, runtime);
+
+        expect(readJsonLogs()).toEqual([
+          expect.objectContaining({
+            ok: false,
+            error: expect.objectContaining({
+              message: expect.stringContaining('still used by agent "ops"'),
+            }),
+          }),
+        ]);
+        expect(configMocks.replaceConfigFile).not.toHaveBeenCalled();
+        expect(gatewayMocks.callGateway).not.toHaveBeenCalled();
+        expect(fsSafeMocks.movePathToTrash).not.toHaveBeenCalled();
+        expect(readAgentDeletionJournal("alpha")).toBeUndefined();
+        expect(readExecApprovalsSnapshot()).toEqual(approvals);
+        expectSessionStore(cfg, sessions, "alpha");
+      });
+    },
+  );
 
   it("deletes main normally after shared auth ownership moves to state SQLite", async () => {
     await withStateDirEnv("openclaw-agents-delete-relocated-auth-", async ({ stateDir }) => {
@@ -399,16 +442,18 @@ describe("agents delete command", () => {
         `Warning: path could not be moved to Trash: trash unavailable; remove it manually at ${workspace}`,
       );
       expect(runtime.error).toHaveBeenCalledWith(
-        'Warning: session-store purge failed for deleted agent "ops"; stale shared-store rows may remain.',
+        'Warning: session-store purge failed for deleted agent "ops"; source data was retained. Retry deletion after resolving the storage error.',
       );
       expect(runtime.exit).not.toHaveBeenCalled();
     });
   });
 
-  it("includes purge failure in delegated JSON output", async () => {
+  it("includes purge failure in remote Gateway JSON output", async () => {
     await withStateDirEnv("openclaw-agents-delete-gateway-purge-json-", async ({ stateDir }) => {
+      const url = "ws://127.0.0.1:18789";
       const cfg: OpenClawConfig = {
         agents: { list: [{ id: "main" }, { id: "ops" }] },
+        gateway: { mode: "remote", remote: { url } },
       };
       await arrangeAgentsDeleteTest({ stateDir, cfg, sessions: {} });
       gatewayMocks.callGateway.mockResolvedValue({
@@ -423,6 +468,12 @@ describe("agents delete command", () => {
       await agentsDeleteCommand({ id: "ops", force: true, json: true }, runtime);
 
       expect(readJsonLogs()[0]).toMatchObject({ purgeFailed: true, transport: "gateway" });
+      expect(gatewayMocks.callGateway).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: expect.objectContaining({ gateway: cfg.gateway }),
+          expectUrl: url,
+        }),
+      );
     });
   });
 
@@ -450,6 +501,50 @@ describe("agents delete command", () => {
       expect(fsSafeMocks.movePathToTrash).not.toHaveBeenCalled();
       expectSessionStore(cfg, sessions);
     });
+  });
+
+  describe.each(["remote config", "environment override"])("%s", (source) => {
+    it.each(["unreachable", "credentials required"])(
+      "refuses local deletion when the selected Gateway is %s",
+      async (failure) => {
+        await withStateDirEnv("openclaw-agents-delete-remote-", async ({ stateDir }) => {
+          const url = "ws://127.0.0.1:18789";
+          const cfg: OpenClawConfig = {
+            agents: { list: [{ id: "main" }, { id: "ops" }] },
+            ...(source === "remote config" ? { gateway: { mode: "remote", remote: { url } } } : {}),
+          };
+          const sessions = { "agent:ops:main": { sessionId: "sess-ops", updatedAt: 1 } };
+          await arrangeAgentsDeleteTest({ stateDir, cfg, sessions });
+          if (source === "environment override") {
+            vi.stubEnv("OPENCLAW_GATEWAY_URL", url);
+          }
+          gatewayMocks.callGateway.mockRejectedValue(
+            failure === "unreachable"
+              ? gatewayTransportError("closed")
+              : Object.assign(new Error("Gateway credentials required"), {
+                  name: "GatewayCredentialsRequiredError",
+                  method: "agents.delete",
+                  configPath: path.join(stateDir, "openclaw.json"),
+                }),
+          );
+
+          await runCommandWithRuntime(runtime, () =>
+            agentsDeleteCommand({ id: "ops", force: true }, runtime),
+          );
+
+          expect(configMocks.replaceConfigFile).not.toHaveBeenCalled();
+          expect(fsSafeMocks.movePathToTrash).not.toHaveBeenCalled();
+          expect(workspaceStateMocks.deleteWorkspaceState).not.toHaveBeenCalled();
+          expect(readAgentDeletionJournal("ops")).toBeUndefined();
+          expectSessionStore(cfg, sessions);
+          expect(runtime.exit).toHaveBeenCalledWith(1);
+          expect(runtime.error).toHaveBeenCalledWith(
+            expect.stringMatching(/restore.*connection.*Gateway host/i),
+          );
+          expect(gatewayMocks.callGateway).toHaveBeenCalledOnce();
+        });
+      },
+    );
   });
 
   it("falls back to local deletion when the optional Gateway probe needs credentials", async () => {

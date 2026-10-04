@@ -9,6 +9,7 @@ import {
   shouldShowInsecureContextHint,
 } from "../lib/connection-hints.ts";
 import { formatGatewayHost } from "../lib/gateway-host.ts";
+import { classifyGatewaySecret } from "../lib/gateway-secret-shape.ts";
 
 function isPasswordModeErrorCode(code: string | null): boolean {
   return (
@@ -21,15 +22,18 @@ function isPasswordModeErrorCode(code: string | null): boolean {
 type LoginFailureKind =
   | "auth-required"
   | "auth-failed"
+  | "bootstrap-invalid"
   | "trusted-proxy"
   | "auth-rate-limited"
   | "profile-unavailable"
   | "verified-user-required"
+  | "access-denied"
   | "pairing-required"
   | "insecure-context"
   | "origin-not-allowed"
   | "build-mismatch"
   | "protocol-mismatch"
+  | "busy"
   | "network";
 
 /**
@@ -74,7 +78,9 @@ export type LoginFailureFeedback = {
 
 export type LoginFailureFeedbackParams = Parameters<typeof resolveAuthHintKind>[0] & {
   gatewayUrl?: string;
+  secret?: string;
   reconnectPending?: boolean;
+  reconnectAt?: number;
 };
 
 function buildFeedback(params: {
@@ -124,6 +130,36 @@ export function resolveLoginFailureFeedback(
   const lower = normalizeLowercaseStringOrEmpty(rawError);
   const host = formatGatewayHost(params.gatewayUrl);
 
+  if (lastErrorCode === "GATEWAY_BUSY" && params.reconnectPending) {
+    return buildFeedback({
+      kind: "busy",
+      tone: "pending",
+      rawError,
+      titleKey: "login.failure.busy.title",
+      summaryKey: "login.failure.busy.summary",
+      stepKeys: [],
+    });
+  }
+
+  if (lastErrorCode === ConnectErrorDetailCodes.AUTH_BOOTSTRAP_TOKEN_INVALID) {
+    return buildFeedback({
+      kind: "bootstrap-invalid",
+      tone: "warn",
+      rawError,
+      titleKey: "login.failure.bootstrapInvalid.title",
+      summaryKey: "login.failure.bootstrapInvalid.summary",
+      primaryCommand: "openclaw dashboard",
+      stepKeys: [
+        "login.failure.bootstrapInvalid.stepOpen",
+        {
+          key: "login.failure.bootstrapInvalid.stepJson",
+          commands: ["openclaw dashboard --json"],
+        },
+      ],
+      docsHref: "https://docs.openclaw.ai/cli/dashboard",
+    });
+  }
+
   if (lastErrorCode === ConnectErrorDetailCodes.AUTHENTICATED_PROFILE_UNAVAILABLE) {
     return buildFeedback({
       kind: "profile-unavailable",
@@ -149,6 +185,25 @@ export function resolveLoginFailureFeedback(
         "login.failure.verifiedUserRequired.stepSharedSecret",
       ],
       docsHref: "https://docs.openclaw.ai/gateway/operator-scopes",
+    });
+  }
+
+  if (lastErrorCode === ConnectErrorDetailCodes.OPERATOR_ACCESS_DENIED) {
+    return buildFeedback({
+      kind: "access-denied",
+      tone: "warn",
+      rawError,
+      titleKey: "login.failure.accessDenied.title",
+      summaryKey: "login.failure.accessDenied.summary",
+      stepKeys: [
+        "login.failure.accessDenied.stepAdmin",
+        {
+          key: "login.failure.accessDenied.stepFindProfile",
+          commands: ["openclaw users list --json"],
+        },
+        "login.failure.accessDenied.stepReconnect",
+      ],
+      docsHref: "https://docs.openclaw.ai/gateway/operator-scopes#named-operator-roles",
     });
   }
 
@@ -236,7 +291,7 @@ export function resolveLoginFailureFeedback(
       kind: "origin-not-allowed",
       rawError,
       docsHref:
-        "https://docs.openclaw.ai/web/control-ui#debuggingtesting-dev-server--remote-gateway",
+        "https://docs.openclaw.ai/web/control-ui/development#debugging%2Ftesting%3A-dev-server-%2B-remote-gateway",
       titleKey: "login.failure.origin.title",
       summaryKey: "login.failure.origin.summary",
       stepKeys: [
@@ -252,7 +307,7 @@ export function resolveLoginFailureFeedback(
       kind: "protocol-mismatch",
       rawError,
       docsHref:
-        "https://docs.openclaw.ai/web/control-ui#debuggingtesting-dev-server--remote-gateway",
+        "https://docs.openclaw.ai/web/control-ui/development#debugging%2Ftesting%3A-dev-server-%2B-remote-gateway",
       titleKey: "login.failure.protocol.title",
       summaryKey: "login.failure.protocol.summary",
       refreshAction: { label: t("login.failure.protocol.refresh") },
@@ -318,7 +373,12 @@ export function resolveLoginFailureFeedback(
         : lastErrorCode === ConnectErrorDetailCodes.AUTH_TOKEN_MISMATCH
           ? "login.failure.authRequired.title"
           : "login.failure.authFailed.title",
-      summaryKey: "login.failure.authFailed.summary",
+      summaryKey:
+        (lastErrorCode === ConnectErrorDetailCodes.AUTH_TOKEN_MISMATCH ||
+          lastErrorCode === ConnectErrorDetailCodes.AUTH_PASSWORD_MISMATCH) &&
+        classifyGatewaySecret(params.secret ?? "") === "setup-code"
+          ? "login.setupCodeHint"
+          : "login.failure.authFailed.summary",
       stepKeys: expectsPassword
         ? ["login.failure.authRequired.stepPassword", "login.failure.authRequired.stepConnect"]
         : [
