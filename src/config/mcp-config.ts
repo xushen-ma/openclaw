@@ -128,6 +128,7 @@ async function commitConfiguredMcpServers(params: {
   errorLabel: string;
   success?: { removed?: boolean; updated?: boolean };
   independentlyOwnedName?: string;
+  assertCurrent?: () => void;
   mutation?: { name: string; onCommitted?: McpConfigMutationHook };
 }): Promise<ConfigMcpWriteResult> {
   const next = structuredClone(params.loaded.config);
@@ -153,7 +154,13 @@ async function commitConfiguredMcpServers(params: {
   const committed = await replaceConfigFile({
     sourceConfig: next,
     baseHash: params.loaded.baseHash,
-    writeOptions: params.writeOptions,
+    writeOptions: {
+      ...params.writeOptions,
+      assertCurrent: () => {
+        params.writeOptions.assertCurrent?.();
+        params.assertCurrent?.();
+      },
+    },
   });
   if (params.mutation?.onCommitted) {
     const previous = params.loaded.mcpServers[params.mutation.name];
@@ -269,6 +276,7 @@ async function setConfiguredMcpServer(
     createOnly?: boolean;
     recordIndependentOwner?: boolean;
     expectedServer?: Record<string, unknown>;
+    assertCurrent?: () => void;
   },
   onCommitted?: McpConfigMutationHook,
 ): Promise<ConfigMcpWriteResult> {
@@ -349,6 +357,7 @@ async function setConfiguredMcpServer(
     servers,
     errorLabel: "set",
     independentlyOwnedName: params.recordIndependentOwner === false ? undefined : name,
+    assertCurrent: params.assertCurrent,
     mutation: { name, onCommitted },
   });
 }
@@ -357,6 +366,7 @@ async function unsetConfiguredMcpServer(
   params: {
     name: string;
     expectedServer?: Record<string, unknown>;
+    assertCurrent?: () => void;
   },
   onCommitted?: McpConfigMutationHook,
 ): Promise<ConfigMcpWriteResult> {
@@ -396,6 +406,7 @@ async function unsetConfiguredMcpServer(
     servers,
     errorLabel: "unset",
     success: { removed: true },
+    assertCurrent: params.assertCurrent,
     mutation: { name, onCommitted },
   });
 }

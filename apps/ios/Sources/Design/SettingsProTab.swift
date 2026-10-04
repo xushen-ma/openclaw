@@ -45,6 +45,7 @@ struct SettingsProTab: View {
     @State var setupStatusText: String?
     @State var gatewayActionStatusText: String?
     @State var setupAttemptID: UUID?
+    @State var manualConnectGeneration: UInt64 = 0
     @State var stagedGatewaySetupLink: GatewayConnectDeepLink?
     @State var pendingManualAuthOverride: GatewayConnectionController.ManualAuthOverride?
     @State var scannerResultHandoff = QRScannerResultHandoff()
@@ -140,7 +141,7 @@ struct SettingsProTab: View {
                 self.syncSettingsState()
                 self.refreshNotificationSettings()
                 self.applyGatewaySetupRequestIfNeeded()
-                self.notifyRouteChange()
+                self.onRouteChange?(self.directRoute)
             }
             .onDisappear {
                 self.scannerResultHandoff.cancel()
@@ -301,9 +302,5 @@ struct SettingsProTab: View {
     func openNotificationsRouteFromApprovals() {
         let approvalID = ExecApprovalIdentifier.exact(self.appModel.pendingExecApprovalPrompt?.id)
         self.onApprovalNotificationsRoute?(approvalID)
-    }
-
-    private func notifyRouteChange() {
-        self.onRouteChange?(self.directRoute)
     }
 }

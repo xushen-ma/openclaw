@@ -6,9 +6,10 @@ import {
   NODE_WORKER_WORKSPACE_EXEC_COMMAND,
 } from "../../infra/node-commands.js";
 import {
-  formatNodeRunnerUpdateRequired,
+  formatNodeRunnerInventoryIssue,
   NODE_RUNNER_UPDATE_REQUIRED_ISSUE,
   NODE_WORKER_ENVIRONMENT_SESSION_VERSION,
+  resolveNodeWorkerLaunchToolNames,
 } from "../../infra/node-runner-inventory.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { SpawnResult } from "../../process/exec.js";
@@ -33,6 +34,7 @@ import type {
 } from "../node-registry-private.js";
 import {
   measureNodeWorkerLaunchBytes,
+  RETRYABLE_NODE_WORKER_TRANSPORT_CODES,
   type createNodeWorkerLaunchAdapter,
 } from "./node-launch-adapter.js";
 import { raceNodeWorkerOperation } from "./node-worker-abort.js";
@@ -44,6 +46,7 @@ import {
 import { drainNodeWorkerWorkspace } from "./node-worker-workspace-drain.js";
 import type { NodeWorkspaceTransferService } from "./node-workspace-transfer-service.js";
 import type { WorkerSessionTurnClaim } from "./placement-record.js";
+import { readWorkerProjectPreparation } from "./preparation-identity.js";
 import type { WorkerEnvironmentRecord } from "./store.js";
 import {
   joinWorkerTunnelStops,
@@ -59,15 +62,6 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 const COMMAND_RESULT_GRACE_MS = 5_000;
 const RETRY_DELAY_MS = 100;
 const tunnelLog = createSubsystemLogger("gateway/worker-tunnel");
-const RETRYABLE_TRANSPORT_CODES = new Set([
-  "DISCONNECTED",
-  "NOT_CONNECTED",
-  "PAIRING_CHANGED",
-  "PRIVATE_DIALECT_UNAVAILABLE",
-  "ROUTE_CHANGED",
-  "TIMEOUT",
-  "UNAVAILABLE",
-]);
 
 export type NodeWorkerWorkspaceBindingResolver = (binding: {
   environmentId: string;
@@ -92,9 +86,10 @@ type NodeWorkerTunnelStartRequest = {
   deviceId: string;
   sessionId: string;
   expectedBuild: WorkerAdmissionHandshake;
+  authorize?: () => void;
 };
 
-type NodeEnvironmentOwner = Omit<NodeWorkerTunnelStartRequest, "expectedBuild"> & {
+type NodeEnvironmentOwner = Omit<NodeWorkerTunnelStartRequest, "expectedBuild" | "authorize"> & {
   stopPromise?: Promise<void>;
   stopReason?: WorkerTunnelStopReason;
   drainLocalWork?: () => Promise<void>;
@@ -111,25 +106,16 @@ type NodeTunnelEntry = NodeEnvironmentOwner & {
 };
 
 function spawnResultFromReceipt(receipt: NodeWorkerSupervisorReceipt): SpawnResult {
-  if (receipt.state === "completed") {
-    return {
-      stdout: receipt.resultJson,
-      stderr: "",
-      code: 0,
-      signal: null,
-      killed: false,
-      termination: "exit",
-    };
-  }
   if (
+    receipt.state === "completed" ||
     receipt.state === "failed" ||
     receipt.state === "interrupted" ||
     receipt.state === "cancelled"
   ) {
     return {
-      stdout: "",
-      stderr: receipt.errorText,
-      code: 1,
+      stdout: receipt.state === "completed" ? receipt.resultJson : "",
+      stderr: receipt.state === "completed" ? "" : receipt.errorText,
+      code: receipt.state === "completed" ? 0 : 1,
       signal: null,
       killed: receipt.state === "cancelled" || receipt.state === "interrupted",
       termination: "exit",
@@ -175,6 +161,10 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
   const isEnvironmentOwner = (entry: NodeTunnelEntry): boolean =>
     hasDurableBinding(entry) && isLiveEntry(entry);
 
+  const readPreparation = (entry: NodeTunnelEntry) =>
+    readWorkerProjectPreparation(
+      options.getEnvironment(entry.environmentId)?.profileSnapshot.project,
+    );
   const findNode = async (
     entry: NodeEnvironmentOwner,
     signal: AbortSignal,
@@ -183,9 +173,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
     if (!transport) {
       throw new Error("device worker node transport is unavailable");
     }
-    const node = (await raceNodeWorkerOperation(transport.listCurrentNodes(), signal)).find(
-      (candidate) => candidate.nodeId === entry.deviceId,
-    );
+    const node = await raceNodeWorkerOperation(transport.getCurrentNode(entry.deviceId), signal);
     if (!node) {
       throw new WorkerTunnelOwnerDisconnectedError(
         "device worker node is not connected with the supervisor dialect",
@@ -205,7 +193,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
 
   const invokeWorkspaceCommand = async (
     entry: NodeTunnelEntry,
-    command: WorkerWorkspaceCommand & { resetWorkspace?: boolean },
+    command: WorkerWorkspaceCommand & { resetWorkspace?: boolean; sessionKey?: string },
     onDispatchReady: () => void,
   ): Promise<NodeWorkerWorkspaceExecResult> => {
     const assertCurrent = () => {
@@ -225,10 +213,12 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       signals.push(command.signal);
     }
     const signal = AbortSignal.any(signals);
+    const preparationKey = readPreparation(entry)?.key;
     const input: NodeWorkerWorkspaceExecInput = {
       gatewayNamespace,
       environmentId: entry.environmentId,
       sessionId: entry.sessionId,
+      ...(preparationKey === undefined ? {} : { preparationKey, sessionKey: command.sessionKey }),
       generation: entry.ownerEpoch,
       argv: [...command.argv],
       ...(command.input === undefined ? {} : { input: command.input }),
@@ -236,6 +226,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       ...(command.resetWorkspace === undefined ? {} : { resetWorkspace: command.resetWorkspace }),
       ...(command.transfer === undefined ? {} : { transfer: command.transfer }),
       ...(command.seed === undefined ? {} : { seed: command.seed }),
+      ...(command.process === undefined ? {} : { process: command.process }),
     };
     while (true) {
       assertCurrent();
@@ -278,7 +269,10 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
             result.error?.message ?? "workspace-transfer-failed: transfer did not complete",
           );
         }
-        if (command.transportRetry === "idempotent" && RETRYABLE_TRANSPORT_CODES.has(code)) {
+        if (
+          command.transportRetry === "idempotent" &&
+          RETRYABLE_NODE_WORKER_TRANSPORT_CODES.has(code)
+        ) {
           await sleepWithAbort(Math.min(RETRY_DELAY_MS, remainingMs), signal);
           continue;
         }
@@ -301,7 +295,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
 
   const runWorkspaceCommand = (
     entry: NodeTunnelEntry,
-    command: WorkerWorkspaceCommand & { resetWorkspace?: boolean },
+    command: WorkerWorkspaceCommand & { resetWorkspace?: boolean; sessionKey?: string },
   ): Promise<NodeWorkerWorkspaceExecResult> => {
     let dispatched = false;
     const operation = invokeWorkspaceCommand(entry, command, () => {
@@ -325,7 +319,10 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
   const createHandle = (
     entry: NodeTunnelEntry,
     restoredWorkspace: NodeWorkerWorkspaceBinding | undefined,
-  ): { handle: WorkerTurnTunnelHandle; validateRestoredWorkspace: () => Promise<void> } => {
+  ): {
+    handle: WorkerTurnTunnelHandle;
+    validateRestoredWorkspace: (authorize?: () => void) => Promise<void>;
+  } => {
     const buildLaunchInput = (
       plan: NodeWorkerLaunchInput["descriptor"],
       claim: WorkerSessionTurnClaim,
@@ -335,24 +332,30 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
       gatewayNamespace,
       expectedBundleHash: entry.expectedBuild.bundleHash,
       placementGeneration: claim.placementGeneration,
+      ...(readPreparation(entry) ? { sessionKey: getSessionKey() } : {}),
       descriptor: plan,
     });
-    const { validateRestoredWorkspace, ...workspaceActions } = createNodeWorkerWorkspaceActions({
-      environmentId: entry.environmentId,
-      ownerEpoch: entry.ownerEpoch,
-      sessionId: entry.sessionId,
-      ownerSignal: entry.abortController.signal,
-      isOwnerCurrent: () => isLiveEntry(entry),
-      restoredWorkspace,
-      workspaceTransfer: options.workspaceTransfer,
-      runWorkspaceCommand: (command) => runWorkspaceCommand(entry, command),
-    });
+    const { validateRestoredWorkspace, getSessionKey, ...workspaceActions } =
+      createNodeWorkerWorkspaceActions({
+        environmentId: entry.environmentId,
+        ownerEpoch: entry.ownerEpoch,
+        sessionId: entry.sessionId,
+        ownerSignal: entry.abortController.signal,
+        isOwnerCurrent: () => isLiveEntry(entry),
+        restoredWorkspace,
+        workspaceTransfer: options.workspaceTransfer,
+        runWorkspaceCommand: (command) => runWorkspaceCommand(entry, command),
+      });
     const handle: WorkerTurnTunnelHandle = {
       ...workspaceActions,
       environmentId: entry.environmentId,
       ownerEpoch: entry.ownerEpoch,
       measureLaunchTurn: (plan, claim) =>
         measureNodeWorkerLaunchBytes(entry.deviceId, buildLaunchInput(plan, claim)),
+      readLaunchToolNames: async () => {
+        const node = await options.getTransport()?.getCurrentNode(entry.deviceId);
+        return resolveNodeWorkerLaunchToolNames(node?.workerHost);
+      },
       launchTurn: async (request) => {
         if (entry.executionMode !== "worker-turn") {
           throw new Error("remote-exec environments do not launch embedded worker turns");
@@ -443,7 +446,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           const { transport, node } = await findNode(entry, signal);
           if (node.workerHost.environmentSession !== NODE_WORKER_ENVIRONMENT_SESSION_VERSION) {
             throw new Error(
-              formatNodeRunnerUpdateRequired(node.nodeId, NODE_RUNNER_UPDATE_REQUIRED_ISSUE),
+              formatNodeRunnerInventoryIssue(node.nodeId, NODE_RUNNER_UPDATE_REQUIRED_ISSUE),
             );
           }
           // Retirement retains only authority to stop this exact old scope, including after
@@ -465,7 +468,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           if (!result.ok) {
             const code = result.error?.code ?? "UNAVAILABLE";
             const message = `node worker environment stop failed (${code})`;
-            throw RETRYABLE_TRANSPORT_CODES.has(code)
+            throw RETRYABLE_NODE_WORKER_TRANSPORT_CODES.has(code)
               ? new WorkerTunnelOwnerDisconnectedError(message)
               : new Error(message);
           }
@@ -539,10 +542,53 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
   }
 
   return {
+    async runSessionCommand(
+      binding: { environmentId: string; ownerEpoch: number; sessionId: string; sessionKey: string },
+      command: WorkerWorkspaceCommand,
+    ): Promise<NodeWorkerWorkspaceExecResult> {
+      const authorize = () => {
+        command.signal?.throwIfAborted();
+        command.assertCurrent?.();
+      };
+      authorize();
+      const record = options.getEnvironment(binding.environmentId);
+      if (
+        !record ||
+        record.ownerEpoch !== binding.ownerEpoch ||
+        !record.nodeDeviceId ||
+        record.sharedHost !== false ||
+        !record.bootstrapReceipt ||
+        record.bootstrapReceipt.installKind !== "bundle"
+      ) {
+        throw new Error("Attached environment node workspace is unavailable");
+      }
+      await this.start({
+        environmentId: binding.environmentId,
+        ownerEpoch: binding.ownerEpoch,
+        sessionId: binding.sessionId,
+        deviceId: record.nodeDeviceId,
+        // The node workspace owns attached apps independently of this Gateway connection.
+        // Closing its transport must not retire the still-live attachment's process scope.
+        executionMode: "remote-exec",
+        expectedBuild: record.bootstrapReceipt,
+        authorize,
+      });
+      authorize();
+      const entry = entries.get(binding.environmentId);
+      if (
+        !entry ||
+        entry.ownerEpoch !== binding.ownerEpoch ||
+        entry.sessionId !== binding.sessionId
+      ) {
+        throw new Error("Attached environment execution owner changed");
+      }
+      return await runWorkspaceCommand(entry, { ...command, sessionKey: binding.sessionKey });
+    },
     bindWorkspaceBindingResolver(resolver: NodeWorkerWorkspaceBindingResolver): void {
       resolveWorkspaceBinding = resolver;
     },
     async start(request: NodeWorkerTunnelStartRequest): Promise<WorkerTurnTunnelHandle> {
+      request.authorize?.();
       const current = entries.get(request.environmentId);
       const retiring = [...retiredEntries].filter(
         (entry) => entry.environmentId === request.environmentId,
@@ -564,13 +610,21 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           ) {
             throw new Error("node worker tunnel owner binding changed within one epoch");
           }
-          return current.readiness.promise; // Share restored-workspace validation without false readiness.
+          const handle = await current.readiness.promise;
+          // Recheck the joining caller without stopping the independently owned tunnel.
+          request.authorize?.();
+          return handle;
         }
       }
       const readiness = createDeferredCore<WorkerTurnTunnelHandle>();
       void readiness.promise.catch(() => undefined);
       const entry: NodeTunnelEntry = {
-        ...request,
+        executionMode: request.executionMode,
+        environmentId: request.environmentId,
+        ownerEpoch: request.ownerEpoch,
+        deviceId: request.deviceId,
+        sessionId: request.sessionId,
+        expectedBuild: request.expectedBuild,
         abortController: new AbortController(),
         launchTasks: new Set(),
         workspaceTasks: new Set(),
@@ -589,6 +643,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
           await stopEntry(current);
         }
         await Promise.all(retiring.map((owner) => stopEnvironmentOwner(owner)));
+        request.authorize?.();
         if (!isLiveEntry(entry)) {
           return;
         }
@@ -602,6 +657,7 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
               entry.abortController.signal,
             )
           : undefined;
+        request.authorize?.();
         if (!isLiveEntry(entry)) {
           return;
         }
@@ -609,7 +665,8 @@ export function createNodeWorkerTunnelManager(options: NodeWorkerTunnelManagerOp
         if (restoredWorkspace) {
           await drainWorkspace(entry, () => isEnvironmentOwner(entry));
         }
-        await created.validateRestoredWorkspace();
+        await created.validateRestoredWorkspace(request.authorize);
+        request.authorize?.();
         if (!isLiveEntry(entry)) {
           return;
         }

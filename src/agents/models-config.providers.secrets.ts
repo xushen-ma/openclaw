@@ -7,9 +7,11 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { resolveConfigSecretRef } from "../config/resolution-facts.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { resolveProviderSyntheticAuthWithPlugin } from "../plugins/provider-runtime.js";
-import type { ProviderAuthEvidence } from "../secrets/provider-env-vars.js";
+import { resolveNonEnvSecretRefApiKeyMarker } from "../secrets/provider-credential-values.js";
 import { secretRefKey } from "../secrets/ref-contract.js";
 import { SecretSurfaceUnavailableError } from "../secrets/runtime-degraded-state.js";
+import { appendConfigPathSegment } from "../shared/dot-path.js";
+import { isOAuthRefreshFence } from "./auth-profiles/oauth-refresh-marker.js";
 import { resolveAuthProfileOrder } from "./auth-profiles/order.js";
 import type { AuthProfileStore } from "./auth-profiles/types.js";
 import { resolveProviderEnvAuthLookupMaps } from "./model-auth-env-vars.js";
@@ -17,7 +19,6 @@ import {
   isKnownEnvApiKeyMarker,
   isNonSecretApiKeyMarker,
   resolveOAuthApiKeyMarker,
-  resolveNonEnvSecretRefApiKeyMarker,
 } from "./model-auth-markers.js";
 import { resolveDirectProviderCredentialMode } from "./model-auth-runtime-shared.js";
 import {
@@ -43,11 +44,7 @@ export {
 } from "./models-config.providers.secret-helpers.js";
 
 type AuthProfileStoreInput = AuthProfileStore | (() => AuthProfileStore);
-type ProviderAuthLookupCaches = {
-  aliasMap: Readonly<Record<string, string>>;
-  candidateMap: Readonly<Record<string, readonly string[]>>;
-  authEvidenceMap: Readonly<Record<string, readonly ProviderAuthEvidence[]>>;
-};
+type ProviderAuthLookupCaches = ReturnType<typeof resolveProviderEnvAuthLookupMaps>;
 
 function resolveAuthProfileStoreInput(input: AuthProfileStoreInput) {
   return typeof input === "function" ? input() : input;
@@ -105,6 +102,9 @@ export function createProviderApiKeyResolverFromPreparedCredentials(
       return resolveConfiguredOrEnvironment(provider);
     }
     if (credential.type === "oauth") {
+      if (isOAuthRefreshFence(credential)) {
+        return resolveConfiguredOrEnvironment(provider);
+      }
       return {
         apiKey: resolveOAuthApiKeyMarker(authProvider),
         discoveryApiKey: toDiscoveryApiKey(credential.access),
@@ -140,19 +140,7 @@ function createProviderAuthLookupCaches(
   config?: OpenClawConfig,
 ): () => ProviderAuthLookupCaches {
   let caches: ProviderAuthLookupCaches | undefined;
-  return () => {
-    if (!caches) {
-      // Env auth lookup maps are process-stable for a resolver instance, so one
-      // cached normalization pass avoids repeating alias/candidate expansion.
-      const lookupMaps = resolveProviderEnvAuthLookupMaps({ config, env });
-      caches = {
-        aliasMap: lookupMaps.aliasMap,
-        candidateMap: lookupMaps.envCandidateMap,
-        authEvidenceMap: lookupMaps.authEvidenceMap,
-      };
-    }
-    return caches;
-  };
+  return () => (caches ??= resolveProviderEnvAuthLookupMaps({ config, env }));
 }
 
 function resolveProviderIdForAuthFromCaches(
@@ -181,7 +169,7 @@ export function createProviderApiKeyResolver(
     const authProvider = resolveProviderIdForAuthFromCaches(provider, lookupCaches);
     const envVar = resolveEnvApiKeyVarName(authProvider, env, {
       aliasMap: lookupCaches.aliasMap,
-      candidateMap: lookupCaches.candidateMap,
+      candidateMap: lookupCaches.envCandidateMap,
       authEvidenceMap: lookupCaches.authEvidenceMap,
     });
     if (envVar) {
@@ -261,10 +249,14 @@ export function createProviderAuthResolver(
         continue;
       }
       if (cred.type === "oauth") {
+        if (isOAuthRefreshFence(cred)) {
+          continue;
+        }
         return {
           apiKey: options?.oauthMarker,
           discoveryApiKey: toDiscoveryApiKey(cred.access),
           mode: "oauth",
+          ...(cred.authFlow ? { authFlow: cred.authFlow } : {}),
           source: "profile",
           profileId: id,
         };
@@ -284,7 +276,7 @@ export function createProviderAuthResolver(
 
     const envVar = resolveEnvApiKeyVarName(authProvider, env, {
       aliasMap: lookupCaches.aliasMap,
-      candidateMap: lookupCaches.candidateMap,
+      candidateMap: lookupCaches.envCandidateMap,
       authEvidenceMap: lookupCaches.authEvidenceMap,
     });
     if (envVar) {
@@ -337,7 +329,7 @@ function resolveConfigBackedProviderAuth(params: {
   | undefined {
   const authProvider = params.provider;
   const mode = resolveCatalogDirectAuthMode(params.config, authProvider);
-  const apiKeyPath = `models.providers.${authProvider}.apiKey`;
+  const apiKeyPath = `${appendConfigPathSegment("models.providers", authProvider)}.apiKey`;
   const sourceRef = resolveConfigSecretRef({
     config: params.sourceConfigForSecrets,
     path: apiKeyPath,
@@ -353,7 +345,7 @@ function resolveConfigBackedProviderAuth(params: {
         ownerKind: "provider",
         ownerId: authProvider,
         state: "unavailable",
-        paths: [`models.providers.${authProvider}.apiKey`],
+        paths: [apiKeyPath],
         refKeys: [secretRefKey(sourceRef)],
         reason: "secret reference was not materialized by the active runtime",
       });

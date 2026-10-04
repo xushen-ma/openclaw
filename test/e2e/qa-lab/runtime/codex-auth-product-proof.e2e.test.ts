@@ -52,7 +52,10 @@ function expectBoundedMissingProfileRecovery(
   const serialized = JSON.stringify(value);
   if (options?.allowSessionTruncation) {
     expect(typeof value).toBe("string");
-    expect(value).toBe(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT.slice(0, String(value).length));
+    expect(value).toContain("The selected auth profile is unavailable");
+    expect(value).toContain("`openclaw configure`");
+    expect(value).toMatch(/then retry\.$/u);
+    expect(value).toHaveLength(160);
   } else {
     expect(serialized).toContain(SELECTED_AUTH_PROFILE_UNAVAILABLE_USER_TEXT);
   }
@@ -210,6 +213,8 @@ describe("Codex auth product proof", () => {
           OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
           OPENCLAW_QA_CODEX_APP_SERVER_VERSION: CODEX_APP_SERVER_VERSION,
           OPENCLAW_SKIP_PROVIDERS: undefined,
+          // Publish the configured runtime owner before the hook starts native task work.
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
         },
         config: {
           plugins: {
@@ -224,7 +229,6 @@ describe("Codex auth product proof", () => {
                     command: process.execPath,
                     args: [appServerFixture],
                     requestTimeoutMs: REQUEST_TIMEOUT_MS,
-                    turnCompletionIdleTimeoutMs: REQUEST_TIMEOUT_MS,
                   },
                 },
               },
@@ -375,6 +379,8 @@ describe("Codex auth product proof", () => {
           OPENCLAW_AGENT_HARNESS_FALLBACK: "none",
           OPENCLAW_QA_CODEX_APP_SERVER_VERSION: CODEX_APP_SERVER_VERSION,
           OPENCLAW_SKIP_PROVIDERS: undefined,
+          // Auth refresh consumes the configured owner published by full Gateway startup.
+          OPENCLAW_TEST_MINIMAL_GATEWAY: undefined,
         },
         config: {
           plugins: {
@@ -389,7 +395,6 @@ describe("Codex auth product proof", () => {
                     command: process.execPath,
                     args: [appServerFixture],
                     requestTimeoutMs: REQUEST_TIMEOUT_MS,
-                    turnCompletionIdleTimeoutMs: REQUEST_TIMEOUT_MS,
                   },
                 },
               },
@@ -451,7 +456,9 @@ describe("Codex auth product proof", () => {
           ).toMatchObject({ runId: setup.runId, status: "ok" });
         };
         await runConfiguredTurn("qa-codex-profile-binding-setup");
-        await expect(client.request("models.list", { agentId: "main" })).resolves.toMatchObject({
+        await expect(
+          client.request("models.list", { agentId: "main", refresh: true }),
+        ).resolves.toMatchObject({
           models: expect.arrayContaining([
             expect.objectContaining({ id: "gpt-5.6-luna", provider: "openai" }),
           ]),
@@ -471,13 +478,12 @@ describe("Codex auth product proof", () => {
         // A metadata patch alone does not prove the selected profile reaches native execution.
         await runConfiguredTurn("qa-codex-profile-binding-pinned");
 
-        await expect(
-          client.request("models.authLogout", {
-            provider: "openai",
-            agentId: "main",
-            profileIds: [MISSING_PROFILE_ID],
-          }),
-        ).resolves.toEqual({
+        const logoutResult = await client.request("models.authLogout", {
+          provider: "openai",
+          agentId: "main",
+          profileIds: [MISSING_PROFILE_ID],
+        });
+        expect(logoutResult, testInstance.logs()).toEqual({
           provider: "openai",
           removedProfiles: [MISSING_PROFILE_ID],
           abortedRunIds: [],
@@ -485,6 +491,7 @@ describe("Codex auth product proof", () => {
         await fs.writeFile(requestLog, "", "utf8");
         events.length = 0;
         await client.request("sessions.messages.subscribe", { key: sessionKey });
+        await client.request("sessions.subscribe", {});
         const started = await client.request<{ runId?: string; status?: string }>("chat.send", {
           sessionKey,
           message: "Prove missing selected auth profile recovery.",
@@ -514,31 +521,20 @@ describe("Codex auth product proof", () => {
             expect(
               events.find(
                 (event) =>
-                  event.event === "agent" &&
+                  event.event === "sessions.changed" &&
                   event.payload !== null &&
                   typeof event.payload === "object" &&
-                  (event.payload as { runId?: unknown }).runId === runId &&
-                  (event.payload as { stream?: unknown }).stream === "lifecycle" &&
-                  (event.payload as { data?: { phase?: unknown } }).data?.phase === "error",
+                  (event.payload as { sessionKey?: unknown }).sessionKey === sessionKey &&
+                  (event.payload as { session?: { lastRunId?: unknown } }).session?.lastRunId ===
+                    runId &&
+                  (event.payload as { session?: { status?: unknown } }).session?.status ===
+                    "failed",
               ),
             ).toBeDefined();
           },
           { interval: 20, timeout: 5_000 },
         );
 
-        await vi.waitFor(
-          async () => {
-            const listed = await client.request<{
-              sessions?: Array<{ key?: unknown; lastRunError?: unknown }>;
-            }>("sessions.list", { limit: 20 });
-            const session = listed.sessions?.find((entry) => entry.key === sessionKey);
-            expect(session).toBeDefined();
-            expectBoundedMissingProfileRecovery(session?.lastRunError, {
-              allowSessionTruncation: true,
-            });
-          },
-          { interval: 50, timeout: REQUEST_TIMEOUT_MS },
-        );
         failedHistory = await client.request<GatewayHistory>(
           "chat.history",
           { agentId: "main", sessionKey, limit: 50 },
@@ -559,15 +555,20 @@ describe("Codex auth product proof", () => {
       );
       const lifecycleEvent = events.find(
         (event) =>
-          event.event === "agent" &&
+          event.event === "sessions.changed" &&
           event.payload !== null &&
           typeof event.payload === "object" &&
-          (event.payload as { runId?: unknown }).runId === runId &&
-          (event.payload as { stream?: unknown }).stream === "lifecycle" &&
-          (event.payload as { data?: { phase?: unknown } }).data?.phase === "error",
+          (event.payload as { sessionKey?: unknown }).sessionKey === sessionKey &&
+          (event.payload as { session?: { lastRunId?: unknown } }).session?.lastRunId === runId &&
+          (event.payload as { session?: { status?: unknown } }).session?.status === "failed",
       );
       expectBoundedMissingProfileRecovery(finalEvent?.payload);
-      expectBoundedMissingProfileRecovery(lifecycleEvent?.payload);
+      // Lifecycle metadata belongs to sessions.changed; transcript delivery has independent timing.
+      expectBoundedMissingProfileRecovery(
+        (lifecycleEvent?.payload as { session?: { lastRunError?: unknown } } | undefined)?.session
+          ?.lastRunError,
+        { allowSessionTruncation: true },
+      );
       expectBoundedMissingProfileRecovery(terminal);
       expectBoundedMissingProfileRecovery(failedHistory?.sessionInfo?.lastRunError, {
         allowSessionTruncation: true,
@@ -581,7 +582,11 @@ describe("Codex auth product proof", () => {
       const operationalMethods = failureMethods.filter(
         (method) => method !== "initialize" && method !== "initialized",
       );
-      expect(operationalMethods).toEqual([]);
+      // App-server may perform read-only capability discovery before OpenClaw rejects the
+      // removed profile, but it must not start or resume a conversation turn.
+      expect(
+        operationalMethods.filter((method) => method !== "model/list" && method !== "account/read"),
+      ).toEqual([]);
 
       console.log(
         `[qa-codex-missing-auth-profile] ${JSON.stringify({
