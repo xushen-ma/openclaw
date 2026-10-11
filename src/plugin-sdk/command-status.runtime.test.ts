@@ -1,7 +1,8 @@
 /**
  * Tests command status runtime lazy loading and direct status reply behavior.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as logger from "../logger.js";
 
 const buildStatusReply = vi.fn(async (params: unknown) => params);
 const loadSessionEntry = vi.fn();
@@ -56,6 +57,34 @@ function requireBuildStatusReplyParams(index = 0): unknown {
 }
 
 describe("resolveDirectStatusReplyForSessionCore", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("preserves the direct read rejection when the diagnostic sink throws", async () => {
+    vi.stubEnv("OPENCLAW_STATUS_DIAGNOSTICS", "1");
+    const error = new DOMException("private request cancellation", "AbortError");
+    loadSessionEntry.mockImplementation(() => {
+      throw error;
+    });
+    const sink = vi.spyOn(logger, "logError").mockImplementation(() => {
+      throw new Error("sink failed");
+    });
+    await expect(
+      resolveDirectStatusReplyForSessionCore({
+        cfg: {},
+        sessionKey: "agent:main:private",
+        channel: "discord",
+        senderIsOwner: true,
+        isAuthorizedSender: true,
+        isGroup: false,
+        defaultGroupActivation: () => "always",
+      }),
+    ).rejects.toBe(error);
+    expect(sink).toHaveBeenCalledWith(expect.stringContaining('"phase":"session-read"'));
+    expect(sink).not.toHaveBeenCalledWith(expect.stringContaining("private"));
+  });
   beforeEach(() => {
     buildStatusReply.mockReset();
     loadSessionEntry.mockReset();

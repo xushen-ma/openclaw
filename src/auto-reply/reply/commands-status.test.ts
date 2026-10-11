@@ -1,4 +1,5 @@
 // Tests status command rendering for sessions, agents, diagnostics, and model defaults.
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,6 +22,7 @@ import {
 import type { ModelDefinitionConfig } from "../../config/types.models.js";
 import * as logger from "../../logger.js";
 import type { ProviderThinkingProfile } from "../../plugins/provider-thinking.types.js";
+import { AsyncWorkScope } from "../../shared/async-work-scope.js";
 import * as statusText from "../../status/status-text.js";
 import { withEnvAsync } from "../../test-utils/env.js";
 import { buildStatusPluginsReply, buildStatusReply, buildStatusText } from "./commands-status.js";
@@ -2014,6 +2016,25 @@ describe("buildStatusReply error handling", () => {
     // error text reaches the channel; diagnostics belong to the log sink only.
     expect(reply).toEqual({ text: "⚠️ Status: error rendering response" });
     expect(logError).toHaveBeenCalledWith(expect.stringContaining("Unexpected rendering error"));
+  });
+
+  it("diagnoses a closed caller at the real subagent read without hiding cancellation", async () => {
+    await withEnvAsync({ OPENCLAW_STATUS_DIAGNOSTICS: "1" }, async () => {
+      const logError = vi.spyOn(logger, "logError").mockImplementation(() => {});
+      const work = new AsyncWorkScope();
+      const callback = work.run(() => AsyncLocalStorage.snapshot());
+      await work.drain();
+      const reply = await callback(() =>
+        buildStatusReplyForTest({ sessionKey: "agent:main:main" }),
+      );
+      expect(reply).toEqual({ text: "⚠️ Status: error rendering response" });
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('"phase":"subagents"'));
+      expect(logError).toHaveBeenCalledWith(
+        expect.stringContaining('"entrySignal":{"aborted":true'),
+      );
+      expect(logError).toHaveBeenCalledWith(expect.stringContaining('"kind":"AbortError"'));
+      expect(logError).not.toHaveBeenCalledWith(expect.stringContaining("agent:main:main"));
+    });
   });
 
   it("keeps the structured rich payload on the success path", async () => {

@@ -178,3 +178,20 @@ Set `channels.discord.activities` to let the core `show_widget` tool post self-c
     Native command behavior.
   </Card>
 </CardGroup>
+
+### Direct status render diagnostics
+
+For an isolated development or staging reproduction of a native `/status` failure,
+set `OPENCLAW_STATUS_DIAGNOSTICS=1` in that process environment. Failed direct
+status reads and render failures then include a bounded `statusDiagnostic` log
+record: render phase, a process-local opaque session correlation, ambient work
+signal state at entry and failure, prepared model owner currency, and at most
+three error causes with six basename/line/column stack locations each. Error
+messages, sender IDs, session keys, absolute paths, and config/auth objects are
+not included in this diagnostic record. The channel reply remains generic.
+
+This switch only observes the existing callback context; it does not create a
+new request scope or suppress cancellation. A signal already aborted at entry
+is evidence of an inherited cancellation context, not proof of its owner or
+root cause. Compare it with a genuine request cancellation and shutdown before
+changing lifecycle behavior. Unset the switch after capture.

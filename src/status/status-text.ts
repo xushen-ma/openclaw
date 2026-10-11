@@ -53,6 +53,7 @@ import {
 } from "./codex-synthetic-usage.js";
 import { resolveActiveFallbackState } from "./fallback-notice-state.js";
 import { readSessionFallbackModel } from "./session-fallback-model.js";
+import { markStatusPhase, observeStatusOwner } from "./status-diagnostics.js";
 import type { StatusMessageParts } from "./status-message.js";
 import { createStatusModelResolver } from "./status-model-auth.js";
 import { formatCompactPluginHealthLine } from "./status-plugin-health.js";
@@ -293,6 +294,7 @@ export async function buildStatusReplyParts(
   });
   const selectedLookupProvider = modelRefs.selected.provider || selectedProvider || provider;
   const selectedLookupModel = modelRefs.selected.model || selectedModel || model;
+  markStatusPhase("harness");
   const effectiveHarness =
     params.resolvedHarness ??
     (await resolveStatusHarnessId({
@@ -303,6 +305,7 @@ export async function buildStatusReplyParts(
       sessionKey,
       sessionEntry,
     }));
+  markStatusPhase("owner");
   const { getPreparedModelCatalogOwnerSnapshot, materializePreparedModelCatalogOwner } =
     await import("../agents/prepared-model-catalog.js");
   const preparedOwner = getPreparedModelCatalogOwnerSnapshot({
@@ -312,6 +315,7 @@ export async function buildStatusReplyParts(
     workspaceDir: statusWorkspaceDir,
     readOnly: true,
   });
+  observeStatusOwner(preparedOwner);
   // This lookup borrows existing facts; status never starts inventory discovery.
   const resolveModel = createStatusModelResolver({
     cfg,
@@ -340,6 +344,7 @@ export async function buildStatusReplyParts(
     harnessRuntime: effectiveHarness,
     config: cfg,
   });
+  markStatusPhase("model");
   const selectedResolution = await resolveModel({
     provider: selectedStatusProvider,
     model: selectedLookupModel,
@@ -414,6 +419,7 @@ export async function buildStatusReplyParts(
   const currentUsageProvider =
     resolveUsageProviderId(usageStatusProvider, { credentialType: usageCredentialType }) ??
     resolveUsageProviderId(usageProvider, { credentialType: usageCredentialType });
+  markStatusPhase("usage");
   let usageLine: string | null = null;
   if (
     currentUsageProvider &&
@@ -462,7 +468,9 @@ export async function buildStatusReplyParts(
       usageLine = null;
     }
   }
+  markStatusPhase("cost");
   usageLine = await appendSessionCostLine(usageLine, cfg, statusAgentId, sessionEntry, storePath);
+  markStatusPhase("queue");
   const { getFollowupQueueDepth, resolveQueueSettings } = await loadStatusQueueRuntime();
   const queueSettings = resolveQueueSettings({
     cfg,
@@ -479,6 +487,7 @@ export async function buildStatusReplyParts(
   if (sessionKey) {
     const { mainKey, alias } = resolveMainSessionAlias(cfg);
     const requesterKey = resolveInternalSessionKey({ key: sessionKey, alias, mainKey });
+    markStatusPhase("subagents");
     const { buildControlledSubagentRunsReadContext, buildSubagentsStatusLine } =
       await loadStatusSubagentsRuntime();
     const subagentReadContext = await buildControlledSubagentRunsReadContext(
@@ -513,6 +522,7 @@ export async function buildStatusReplyParts(
     allowPluginNormalization: false,
   });
   const configuredDefaultModelLabel = `${configuredDefaultRef.provider}/${configuredDefaultRef.model}`;
+  markStatusPhase("plugins");
   const pluginHealthLine = Object.hasOwn(params, "pluginHealthLineOverride")
     ? params.pluginHealthLineOverride
     : await resolveRuntimePluginHealthLine();
@@ -523,6 +533,7 @@ export async function buildStatusReplyParts(
     sessionEntry,
   });
   const { buildStatusMessageParts } = await loadStatusMessageRuntime();
+  markStatusPhase("context-window");
   await waitForContextWindowCacheLoad();
   const configuredThinkingDefault = resolveConfiguredThinkingDefault({
     cfg,
@@ -542,6 +553,7 @@ export async function buildStatusReplyParts(
     activeProvider,
     modelRefs.active.model || model,
   );
+  markStatusPhase("thinking");
   const requestedThinkLevel =
     resolvedThinkLevel ??
     normalizeThinkLevel(sessionEntry?.thinkingLevel) ??
@@ -587,6 +599,7 @@ export async function buildStatusReplyParts(
               ? "active-or-bundled"
               : "active",
         });
+  markStatusPhase("presentation");
   return buildStatusMessageParts({
     config: cfg,
     agent: {
