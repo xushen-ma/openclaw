@@ -1,4 +1,3 @@
-// Command status runtime helpers collect agent/session state for plugin command status output.
 import { listAgentEntries, resolveSessionAgentId } from "../agents/agent-scope.js";
 import { resolveDefaultModelForAgent } from "../agents/model-selection.js";
 import { buildStatusReply } from "../auto-reply/reply/commands-status.js";
@@ -9,6 +8,14 @@ import { createModelSelectionState } from "../auto-reply/reply/model-selection.j
 import type { ReplyPayload } from "../auto-reply/types.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { loadGatewaySessionEntryReadOnly } from "../gateway/session-utils.js";
+// Command status runtime helpers collect agent/session state for plugin command status output.
+import { logError } from "../logger.js";
+import {
+  withStatusDiagnostics,
+  markStatusPhase,
+  observeStatusSession,
+  formatStatusDiagnostic,
+} from "../status/status-diagnostics.js";
 
 /** Inputs for rendering direct-session status replies outside the active channel turn. */
 export type ResolveDirectStatusReplyForSessionParams = {
@@ -38,11 +45,33 @@ export type ResolveDirectStatusReplyForSessionParams = {
 export async function resolveDirectStatusReplyForSessionCore(
   params: ResolveDirectStatusReplyForSessionParams,
 ): Promise<ReplyPayload | undefined> {
+  return await withStatusDiagnostics(async () => {
+    try {
+      return await resolveDirectStatusReply(params);
+    } catch (error) {
+      const diagnostic = formatStatusDiagnostic(error);
+      if (diagnostic) {
+        try {
+          logError(`/status direct failed:${diagnostic}`);
+        } catch {
+          /* Observation must not replace the original read or cancellation failure. */
+        }
+      }
+      throw error;
+    }
+  }, "session-read");
+}
+
+async function resolveDirectStatusReply(
+  params: ResolveDirectStatusReplyForSessionParams,
+): Promise<ReplyPayload | undefined> {
   const requestedSessionKey = params.sessionKey.trim();
   if (!requestedSessionKey) {
     return undefined;
   }
 
+  observeStatusSession(requestedSessionKey);
+  markStatusPhase("session-read");
   const statusLoaded = loadGatewaySessionEntryReadOnly(requestedSessionKey);
   const statusCfg = statusLoaded.cfg ?? params.cfg;
   const statusSessionKey = statusLoaded.canonicalKey;
@@ -69,6 +98,7 @@ export async function resolveDirectStatusReplyForSessionCore(
     statusModel.provider;
   const selectedModel =
     statusEntry?.modelOverride?.trim() || statusEntry?.model?.trim() || statusModel.model;
+  markStatusPhase("model-selection");
   const modelState = await createModelSelectionState({
     cfg: statusCfg,
     agentId: statusAgentId,
@@ -84,6 +114,7 @@ export async function resolveDirectStatusReplyForSessionCore(
     model: selectedModel,
     hasModelDirective: false,
   });
+  markStatusPhase("directive-levels");
   const {
     currentThinkLevel,
     currentFastMode,
@@ -96,6 +127,7 @@ export async function resolveDirectStatusReplyForSessionCore(
     agentCfg,
     resolveDefaultThinkingLevel: () => modelState.resolveDefaultThinkingLevel(),
   });
+  markStatusPhase("thinking-catalog");
   const thinkingCatalog = await modelState.resolveThinkingCatalog();
   let resolvedReasoningLevel = currentReasoningLevel;
   const hasAgentReasoningDefault =

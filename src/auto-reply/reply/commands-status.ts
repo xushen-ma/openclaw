@@ -2,6 +2,12 @@
 import { logVerbose } from "../../globals.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { logError } from "../../logger.js";
+import {
+  formatStatusDiagnostic,
+  markStatusPhase,
+  withStatusDiagnostics,
+  observeStatusSession,
+} from "../../status/status-diagnostics.js";
 import { formatDetailedPluginHealth } from "../../status/status-plugin-health.js";
 import { buildStatusReplyParts } from "../../status/status-text.js";
 import type { BuildStatusTextParams } from "../../status/status-text.types.js";
@@ -25,27 +31,33 @@ export async function buildStatusReply(
     return undefined;
   }
 
-  try {
-    const { text, presentation } = await buildStatusReplyParts({
-      ...params,
-      statusChannel: command.channel,
-      statusAccountId: command.accountId,
-    });
-    // The text body is the authored plain rendering of the same facts; channels
-    // with native table support render the presentation instead.
-    return setReplyPayloadMetadata<ReplyPayload>(
-      { text, presentation, presentationTextMode: "fallback" },
-      { contextFreeCommand: true },
-    );
-  } catch (error) {
-    // Diagnostics stay in logs only; the channel reply is a fixed generic
-    // message so internal module paths or runtime details never reach users.
-    logError(`/status render failed: ${formatErrorMessage(error)}`);
-    return setReplyPayloadMetadata(
-      { text: "⚠️ Status: error rendering response" },
-      { contextFreeCommand: true },
-    );
-  }
+  return await withStatusDiagnostics(async () => {
+    markStatusPhase("render");
+    observeStatusSession(params.sessionKey);
+    try {
+      const { text, presentation } = await buildStatusReplyParts({
+        ...params,
+        statusChannel: command.channel,
+        statusAccountId: command.accountId,
+      });
+      // The text body is the authored plain rendering of the same facts; channels
+      // with native table support render the presentation instead.
+      return setReplyPayloadMetadata<ReplyPayload>(
+        { text, presentation, presentationTextMode: "fallback" },
+        { contextFreeCommand: true },
+      );
+    } catch (error) {
+      // Diagnostics stay in logs only; the channel reply is a fixed generic
+      // message so internal module paths or runtime details never reach users.
+      logError(
+        `/status render failed:${formatStatusDiagnostic(error) || ` ${formatErrorMessage(error)}`}`,
+      );
+      return setReplyPayloadMetadata(
+        { text: "⚠️ Status: error rendering response" },
+        { contextFreeCommand: true },
+      );
+    }
+  }, "render");
 }
 
 export async function buildStatusPluginsReply(
